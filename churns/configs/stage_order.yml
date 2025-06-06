@@ -1,0 +1,11 @@
+# Pipeline Stage Execution Order
+# Each stage is executed in the order listed below
+# Stage files must exist in churns/stages/ and have a run() function
+
+stages:
+  - image_eval    # Vision-LLM subject analysis  
+  - strategy      # Marketing strategy generation (2-stage: niche ID + goal combinations)
+  - style_guide   # Style guider agent
+  - creative_expert # Detailed concept generator  
+  - prompt_assembly # Build final prompt string
+  - image_generation # Call gpt-image-1 API 
