@@ -87,6 +87,11 @@ docker-compose -f docker-compose.dev.yml up
 # Both backend and frontend hot-reload instantly
 ```
 
+### **Git Best Practices**
+- **Commit Frequently**: Make small, atomic commits for each logical change.
+- **Write Clear Messages**: Explain the "what" and "why" of your changes.
+- **Use Branches**: Create separate branches for new features or bug fixes to keep `main` stable.
+
 ### **Quick Reference**
 - **Production Testing**: Use `docker-compose.yml` (current default)
 - **Active Development**: Use `docker-compose.dev.yml` (faster iteration)
