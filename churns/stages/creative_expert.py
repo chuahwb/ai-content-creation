@@ -10,6 +10,7 @@ Extracted from combined_pipeline.py with 100% fidelity.
 import json
 import time
 import traceback
+import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from pydantic import ValidationError
 
@@ -446,7 +447,7 @@ The `source_strategy_index` field in the JSON will be added programmatically lat
     return "\n".join(user_prompt_parts)
 
 
-def _generate_visual_concept_for_strategy(
+async def _generate_visual_concept_for_strategy(
     ctx: PipelineContext,
     strategy: Dict[str, Any],
     strategy_index: int,
@@ -544,7 +545,7 @@ def _generate_visual_concept_for_strategy(
             if "tool_choice" in llm_args_ce: 
                 del llm_args_ce["tool_choice"]
 
-        completion_ce = effective_client_ce.chat.completions.create(**llm_args_ce)
+        completion_ce = await asyncio.to_thread(effective_client_ce.chat.completions.create, **llm_args_ce)
 
         if actually_use_instructor_parsing_ce:
             prompt_data_ce = completion_ce.model_dump()
@@ -629,7 +630,7 @@ def _generate_visual_concept_for_strategy(
         return None, None, error_details_ce
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """
     Generates structured visual concepts for all marketing strategies using style guidance.
     
@@ -678,33 +679,68 @@ def run(ctx: PipelineContext) -> None:
     generated_prompts_list = []
     all_concepts_generated = True
     
+    # Prepare tasks for parallel execution
+    tasks = []
+    valid_strategies = []
+    
     for idx, strategy_item in enumerate(strategies):
         style_item_dict = style_guidance_sets[idx]
         
         try:
             # Ensure style_item_dict can be parsed into StyleGuidance
             style_item_pydantic = StyleGuidance(**style_item_dict) if StyleGuidance else style_item_dict
+            
+            # Create async task for this strategy
+            task = _generate_visual_concept_for_strategy(
+                ctx, strategy_item, idx, style_item_pydantic
+            )
+            tasks.append(task)
+            valid_strategies.append((idx, strategy_item))
+            
         except ValidationError as ve:
             ctx.log(f"ERROR: Invalid style guidance format for strategy {idx}: {ve}. Skipping concept generation for this strategy.")
             all_concepts_generated = False
             continue
 
-        concept_dict, concept_usage, concept_error = _generate_visual_concept_for_strategy(
-            ctx, strategy_item, idx, style_item_pydantic
-        )
+    if not tasks:
+        ctx.log("No valid strategies to process")
+        ctx.generated_image_prompts = []
+        return
+
+    # Execute all tasks in parallel
+    ctx.log(f"Processing {len(tasks)} visual concepts in parallel...")
+    
+    try:
+        # Run all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        if concept_usage:
-            # Store usage in llm_usage
-            if not hasattr(ctx, 'llm_usage'):
-                ctx.llm_usage = {}
-            ctx.llm_usage[f"creative_expert_strategy_{idx}"] = concept_usage
+        # Process results
+        for i, result in enumerate(results):
+            idx, strategy_item = valid_strategies[i]
             
-        if concept_error or not concept_dict:
-            ctx.log(f"ERROR generating visual concept for Strategy {idx}: {concept_error}")
-            all_concepts_generated = False
-        else:
-            generated_prompts_list.append(concept_dict)
-            ctx.log(f"Visual Concept for Strategy {idx} (Source Strategy Index: {concept_dict.get('source_strategy_index')}) completed successfully")
+            if isinstance(result, Exception):
+                ctx.log(f"ERROR generating visual concept for Strategy {idx}: {result}")
+                all_concepts_generated = False
+                continue
+                
+            concept_dict, concept_usage, concept_error = result
+            
+            if concept_usage:
+                # Store usage in llm_usage
+                if not hasattr(ctx, 'llm_usage'):
+                    ctx.llm_usage = {}
+                ctx.llm_usage[f"creative_expert_strategy_{idx}"] = concept_usage
+                
+            if concept_error or not concept_dict:
+                ctx.log(f"ERROR generating visual concept for Strategy {idx}: {concept_error}")
+                all_concepts_generated = False
+            else:
+                generated_prompts_list.append(concept_dict)
+                ctx.log(f"Visual Concept for Strategy {idx} (Source Strategy Index: {concept_dict.get('source_strategy_index')}) completed successfully")
+                
+    except Exception as e:
+        ctx.log(f"ERROR during parallel processing: {e}")
+        all_concepts_generated = False
 
     # Store results
     ctx.generated_image_prompts = generated_prompts_list

@@ -9,6 +9,7 @@ import time
 import yaml
 import importlib
 import asyncio
+import inspect
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 from .context import PipelineContext
@@ -122,7 +123,7 @@ class PipelineExecutor:
             
             try:
                 # Dynamically import stage module
-                stage_module = importlib.import_module(f"ai_marketing.stages.{stage_name}")
+                stage_module = importlib.import_module(f"churns.stages.{stage_name}")
                 
                 # Inject clients into stage
                 self._inject_clients_into_stage(stage_module)
@@ -168,17 +169,22 @@ class PipelineExecutor:
             
             try:
                 # Dynamically import stage module
-                stage_module = importlib.import_module(f"ai_marketing.stages.{stage_name}")
+                stage_module = importlib.import_module(f"churns.stages.{stage_name}")
                 
                 # Inject clients into stage
                 self._inject_clients_into_stage(stage_module)
                 
-                # Execute stage in thread pool to avoid blocking
-                def run_stage():
-                    return stage_module.run(ctx)
-                
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, run_stage)
+                # Check if stage function is async and handle appropriately
+                if inspect.iscoroutinefunction(stage_module.run):
+                    # Stage is async, call directly
+                    await stage_module.run(ctx)
+                else:
+                    # Stage is sync, execute in thread pool to avoid blocking
+                    def run_stage():
+                        return stage_module.run(ctx)
+                    
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, run_stage)
                 
                 stage_duration = time.time() - stage_start_time
                 ctx.log(f"Stage {stage_name} completed in {stage_duration:.2f}s")
@@ -240,7 +246,7 @@ class PipelineExecutor:
         ctx.log(f"Running single stage: {stage_name}")
         
         try:
-            stage_module = importlib.import_module(f"ai_marketing.stages.{stage_name}")
+            stage_module = importlib.import_module(f"churns.stages.{stage_name}")
             self._inject_clients_into_stage(stage_module)
             stage_module.run(ctx)
             ctx.log(f"Stage {stage_name} completed successfully")

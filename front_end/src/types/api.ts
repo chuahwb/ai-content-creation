@@ -30,6 +30,7 @@ export interface PipelineRunRequest {
   mode: 'easy_mode' | 'custom_mode' | 'task_specific_mode';
   platform_name: string;
   creativity_level: 1 | 2 | 3;
+  num_variants: number;
   prompt?: string;
   task_type?: string;
   task_description?: string;
@@ -140,6 +141,7 @@ export interface PipelineFormData {
   mode: 'easy_mode' | 'custom_mode' | 'task_specific_mode';
   platform_name: string;
   creativity_level: 1 | 2 | 3;
+  num_variants: number;
   prompt?: string;
   task_type?: string;
   task_description?: string;

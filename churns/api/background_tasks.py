@@ -92,34 +92,105 @@ class PipelineTaskProcessor:
                                       error_message: Optional[str] = None,
                                       duration_seconds: Optional[float] = None):
                 
-                # Simple cost estimation based on stage type (in production, use actual API costs)
+                # Calculate cost based on actual API usage data, not estimates
                 nonlocal total_cost, stage_costs
                 if status == StageStatus.COMPLETED and duration_seconds:
-                    stage_cost = self._estimate_stage_cost(stage_name, duration_seconds)
-                    total_cost += stage_cost
-                    stage_costs.append({
-                        "stage_name": stage_name,
-                        "cost_usd": stage_cost,
-                        "duration_seconds": duration_seconds
-                    })
+                    stage_cost = 0.0
                     
-                    # Update context with cost information
-                    if not context.data:
-                        context.data = {}
-                    if not context.data.get("processing_context"):
-                        context.data["processing_context"] = {}
-                    context.data["processing_context"]["cost_summary"] = {
-                        "total_pipeline_cost_usd": total_cost,
-                        "stage_costs": stage_costs,
-                        "total_pipeline_duration_seconds": sum(c["duration_seconds"] for c in stage_costs)
-                    }
+                    # Try to get actual cost from real API usage data in context
+                    try:
+                        processing_context = (context.data or {}).get("processing_context", {})
+                        llm_usage = processing_context.get("llm_call_usage", {})
+                        
+                        # Calculate cost based on actual token usage for this stage
+                        if stage_name == "image_generation":
+                            # Use actual image generation results
+                            image_results = processing_context.get("generated_image_results", [])
+                            actual_images = len([r for r in image_results if r.get("status") == "success"])
+                            total_prompt_tokens = sum(r.get("prompt_tokens", 0) for r in image_results if r.get("prompt_tokens"))
+                            
+                            if actual_images > 0 and total_prompt_tokens > 0:
+                                # Use actual usage data
+                                text_cost = (total_prompt_tokens / 1_000_000) * 5.00  # $5/1M tokens
+                                image_cost = (1056 * actual_images / 1_000_000) * 40.00  # $40/1M tokens per image
+                                stage_cost = text_cost + image_cost
+                                logger.info(f"Image generation actual cost: ${text_cost:.6f} (text) + ${image_cost:.6f} ({actual_images} images) = ${stage_cost:.6f}")
+                            else:
+                                stage_cost = 0.0  # No successful generation
+                                
+                        elif stage_name == "image_eval":
+                            # Use actual VLM usage
+                            if "image_eval" in llm_usage:
+                                usage = llm_usage["image_eval"]
+                                input_tokens = usage.get("prompt_tokens", 0)
+                                output_tokens = usage.get("completion_tokens", 0)
+                                stage_cost = (input_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
+                                
+                        elif stage_name == "strategy":
+                            # Use actual strategy generation usage
+                            total_strategy_cost = 0.0
+                            for key in ["strategy_niche_id", "strategy_goal_gen"]:
+                                if key in llm_usage:
+                                    usage = llm_usage[key]
+                                    input_tokens = usage.get("prompt_tokens", 0)
+                                    output_tokens = usage.get("completion_tokens", 0)
+                                    total_strategy_cost += (input_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
+                            stage_cost = total_strategy_cost
+                            
+                        elif stage_name == "style_guide":
+                            # Use actual style guidance usage
+                            if "style_guider" in llm_usage:
+                                usage = llm_usage["style_guider"]
+                                input_tokens = usage.get("prompt_tokens", 0)
+                                output_tokens = usage.get("completion_tokens", 0)
+                                stage_cost = (input_tokens / 1_000_000) * 1.25 + (output_tokens / 1_000_000) * 10.00  # Gemini pricing
+                                
+                        elif stage_name == "creative_expert":
+                            # Use actual creative expert usage (multiple strategy calls)
+                            total_creative_cost = 0.0
+                            for key in llm_usage:
+                                if key.startswith("creative_expert_strategy_"):
+                                    usage = llm_usage[key]
+                                    input_tokens = usage.get("prompt_tokens", 0)
+                                    output_tokens = usage.get("completion_tokens", 0)
+                                    total_creative_cost += (input_tokens / 1_000_000) * 1.25 + (output_tokens / 1_000_000) * 10.00  # Gemini pricing
+                            stage_cost = total_creative_cost
+                            
+                        else:
+                            # Other stages - minimal cost
+                            stage_cost = 0.0001
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to calculate actual cost for stage {stage_name}: {e}")
+                        # Fallback to minimal cost, not hardcoded estimates
+                        stage_cost = 0.0001
+                    
+                    if stage_cost > 0:
+                        total_cost += stage_cost
+                        stage_costs.append({
+                            "stage_name": stage_name,
+                            "cost_usd": stage_cost,
+                            "duration_seconds": duration_seconds
+                        })
+                        logger.info(f"Stage {stage_name} actual cost: ${stage_cost:.6f}")
+                        
+                        # Update context with cost information
+                        if not context.data:
+                            context.data = {}
+                        if not context.data.get("processing_context"):
+                            context.data["processing_context"] = {}
+                        context.data["processing_context"]["cost_summary"] = {
+                            "total_pipeline_cost_usd": total_cost,
+                            "stage_costs": stage_costs,
+                            "total_pipeline_duration_seconds": sum(c["duration_seconds"] for c in stage_costs)
+                        }
                 
                 # Enhance message for image processing issues
                 enhanced_message = message
                 if stage_name == "image_eval" and output_data and "image_analysis" in output_data:
                     image_analysis = output_data["image_analysis"]
                     if image_analysis is None and request.image_reference:
-                        enhanced_message = f"⚠️ IMPORTANT: Your uploaded image '{request.image_reference.filename}' could not be analyzed. Using generic fallback instead. This may affect result quality."
+                        enhanced_message = f"IMPORTANT: Your uploaded image '{request.image_reference.filename}' could not be analyzed. Using generic fallback instead. This may affect result quality."
                         error_message = "Image analysis failed - using simulation mode"
                 
                 await self._send_stage_update(
@@ -281,7 +352,8 @@ class PipelineTaskProcessor:
         pipeline_data = {
             "pipeline_settings": {
                 "run_timestamp": datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f"),
-                "creativity_level_selected": request.creativity_level
+                "creativity_level_selected": request.creativity_level,
+                "num_variants": request.num_variants
             },
             "request_details": {
                 "mode": request.mode,
@@ -497,55 +569,63 @@ class PipelineTaskProcessor:
         return list(self.active_tasks.keys())
     
     def _estimate_stage_cost(self, stage_name: str, duration_seconds: float) -> float:
-        """Estimate cost for a stage based on model pricing and typical usage"""
-        # More realistic cost estimation based on model pricing from constants
-        if stage_name == "image_generation":
-            # For gpt-image-1, estimate based on token-based pricing
-            # Assume medium quality 1024x1024 images (most common)
-            # Text input: ~100 tokens, Image output: ~1056 tokens per image
-            # Assume 3 images generated per run (typical)
-            text_tokens = 100  # Estimated prompt tokens
-            image_output_tokens = 1056 * 3  # 3 medium quality images
-            
-            text_cost = (text_tokens / 1_000_000) * 5.00  # $5/1M tokens
-            image_cost = (image_output_tokens / 1_000_000) * 40.00  # $40/1M tokens
-            
-            total_cost = text_cost + image_cost
-            logger.info(f"Image generation cost: ${text_cost:.6f} (text) + ${image_cost:.6f} (images) = ${total_cost:.6f}")
-            return total_cost
-            
-        elif stage_name == "image_eval":
-            # Vision model: gpt-4.1-mini with image input
-            # Estimate ~500 text tokens input + image processing
-            text_tokens = 500
-            output_tokens = 200
-            cost = (text_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
-            return cost
-            
-        elif stage_name in ["strategy", "style_guide", "creative_expert"]:
-            # Text generation models
-            if stage_name == "creative_expert":
-                # More complex generation - gemini-2.5-pro-preview
-                input_tokens = 1000
-                output_tokens = 800
-                cost = (input_tokens / 1_000_000) * 1.25 + (output_tokens / 1_000_000) * 10.00
-            else:
-                # Simpler generation - gpt-4.1-mini 
-                input_tokens = 600
-                output_tokens = 400
-                cost = (input_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
-            return cost
-            
-        else:
-            # prompt_assembly and other stages - minimal cost
-            base_cost = 0.0001
-            
-        # Apply duration factor for very long runs (unusual cases)  
-        if duration_seconds > 120:  # More than 2 minutes is unusual
-            duration_multiplier = min(1.5, 1 + (duration_seconds - 120) / 600)  # Cap at 1.5x
-            base_cost *= duration_multiplier
-            
-        return base_cost
+        """
+        DEPRECATED: This method used hardcoded estimates and caused duplicate costs.
+        Cost calculation now uses actual API usage data in progress_callback.
+        """
+        logger.warning("_estimate_stage_cost is deprecated and should not be called")
+        return 0.0
+        
+        # OLD HARDCODED LOGIC (COMMENTED OUT):
+        # """Estimate cost for a stage based on model pricing and typical usage"""
+        # # More realistic cost estimation based on model pricing from constants
+        # if stage_name == "image_generation":
+        #     # For gpt-image-1, estimate based on token-based pricing
+        #     # Assume medium quality 1024x1024 images (most common)
+        #     # Text input: ~100 tokens, Image output: ~1056 tokens per image
+        #     # Assume 3 images generated per run (typical)
+        #     text_tokens = 100  # Estimated prompt tokens
+        #     image_output_tokens = 1056 * 3  # 3 medium quality images
+        #     
+        #     text_cost = (text_tokens / 1_000_000) * 5.00  # $5/1M tokens
+        #     image_cost = (image_output_tokens / 1_000_000) * 40.00  # $40/1M tokens
+        #     
+        #     total_cost = text_cost + image_cost
+        #     logger.info(f"Image generation cost: ${text_cost:.6f} (text) + ${image_cost:.6f} (images) = ${total_cost:.6f}")
+        #     return total_cost
+        #     
+        # elif stage_name == "image_eval":
+        #     # Vision model: gpt-4.1-mini with image input
+        #     # Estimate ~500 text tokens input + image processing
+        #     text_tokens = 500
+        #     output_tokens = 200
+        #     cost = (text_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
+        #     return cost
+        #     
+        # elif stage_name in ["strategy", "style_guide", "creative_expert"]:
+        #     # Text generation models
+        #     if stage_name == "creative_expert":
+        #         # More complex generation - gemini-2.5-pro-preview
+        #         input_tokens = 1000
+        #         output_tokens = 800
+        #         cost = (input_tokens / 1_000_000) * 1.25 + (output_tokens / 1_000_000) * 10.00
+        #     else:
+        #         # Simpler generation - gpt-4.1-mini 
+        #         input_tokens = 600
+        #         output_tokens = 400
+        #         cost = (input_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
+        #     return cost
+        #     
+        # else:
+        #     # prompt_assembly and other stages - minimal cost
+        #     base_cost = 0.0001
+        #     
+        # # Apply duration factor for very long runs (unusual cases)  
+        # if duration_seconds > 120:  # More than 2 minutes is unusual
+        #     duration_multiplier = min(1.5, 1 + (duration_seconds - 120) / 600)  # Cap at 1.5x
+        #     base_cost *= duration_multiplier
+        #     
+        # return base_cost
 
 
 # Global task processor instance

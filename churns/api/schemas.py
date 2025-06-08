@@ -26,6 +26,7 @@ class PipelineRunRequest(BaseModel):
     mode: str = Field(description="Pipeline mode: easy_mode, custom_mode, or task_specific_mode")
     platform_name: str = Field(description="Target social media platform")
     creativity_level: int = Field(default=2, ge=1, le=3, description="Creativity level 1-3")
+    num_variants: int = Field(default=3, ge=1, le=6, description="Number of strategy/image variants to generate")
     
     # Content inputs
     prompt: Optional[str] = Field(default=None, description="User's text prompt")

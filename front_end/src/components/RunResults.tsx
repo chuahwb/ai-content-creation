@@ -23,6 +23,9 @@ import {
   IconButton,
   Skeleton,
   Tooltip,
+  Switch,
+  FormControlLabel,
+  TextField,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -37,6 +40,10 @@ import {
   Fullscreen as FullscreenIcon,
   ContentCopy as ContentCopyIcon,
   ZoomIn as ZoomInIcon,
+  Code as CodeIcon,
+  DeveloperMode as DeveloperModeIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -67,6 +74,244 @@ interface LogEntry {
   message: string;
 }
 
+// Define all pipeline stages
+const PIPELINE_STAGES = [
+  { name: 'image_eval', label: 'Image Analysis', description: 'Analyzing uploaded image' },
+  { name: 'strategy', label: 'Strategy Generation', description: 'Creating marketing strategies' },
+  { name: 'style_guide', label: 'Style Guide', description: 'Defining visual style' },
+  { name: 'creative_expert', label: 'Creative Concepts', description: 'Developing visual concepts' },
+  { name: 'prompt_assembly', label: 'Prompt Assembly', description: 'Building generation prompts' },
+  { name: 'image_generation', label: 'Image Generation', description: 'Creating final images' },
+];
+
+// Component for visual pipeline stages display
+interface PipelineStageBoxProps {
+  stage: typeof PIPELINE_STAGES[0];
+  status: StageStatus;
+  message?: string;
+  duration?: number;
+  isActive: boolean;
+}
+
+const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({ 
+  stage, 
+  status, 
+  message, 
+  duration, 
+  isActive 
+}) => {
+  const getStatusColor = (status: StageStatus) => {
+    switch (status) {
+      case 'COMPLETED': return '#4caf50';
+      case 'RUNNING': return '#2196f3';
+      case 'FAILED': return '#f44336';
+      default: return '#9e9e9e';
+    }
+  };
+
+  const getStatusIcon = (status: StageStatus) => {
+    switch (status) {
+      case 'COMPLETED': return <CheckCircleIcon sx={{ color: '#4caf50', fontSize: 20 }} />;
+      case 'RUNNING': return <PlayArrowIcon sx={{ color: '#2196f3', fontSize: 20 }} />;
+      case 'FAILED': return <ErrorIcon sx={{ color: '#f44336', fontSize: 20 }} />;
+      default: return <AccessTimeIcon sx={{ color: '#9e9e9e', fontSize: 20 }} />;
+    }
+  };
+
+  const formatDuration = (seconds?: number) => {
+    if (!seconds) return null;
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m ${remainingSeconds.toFixed(1)}s`;
+  };
+
+  return (
+    <motion.div
+      initial={{ scale: 0.95, opacity: 0.7 }}
+      animate={{ 
+        scale: isActive ? 1.02 : 1, 
+        opacity: 1
+      }}
+      transition={{ duration: 0.3 }}
+      style={{ 
+        borderRadius: '12px', 
+        overflow: 'hidden',
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column'
+      }}
+    >
+      <Paper
+        elevation={0} // Remove default elevation to avoid conflicting shadows
+        sx={{
+          p: 2,
+          minHeight: 170, // Updated height for better spacing
+          maxHeight: 170, // Also set max height to force uniformity
+          height: 170, // Explicit height to ensure consistency
+          width: '100%', // Ensure full width consistency
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'flex-start', // Start from top to prevent overlapping
+          textAlign: 'center',
+          border: 2,
+          borderColor: getStatusColor(status),
+          borderRadius: 3, // Restored rounded corners
+          backgroundColor: status === 'RUNNING' ? 'rgba(33, 150, 243, 0.08)' : '#ffffff',
+          position: 'relative',
+          overflow: 'hidden',
+          transition: 'all 0.3s ease-in-out',
+          // Ensure clean border radius rendering and shadows
+          boxSizing: 'border-box',
+          boxShadow: '0 2px 12px -4px rgba(0, 0, 0, 0.12)',
+          '&:hover': {
+            transform: 'translateY(-3px)',
+            boxShadow: `0 12px 32px -8px ${getStatusColor(status)}25`,
+            borderColor: getStatusColor(status),
+          }
+        }}
+      >
+        {/* Animated progress bar for running state */}
+        {status === 'RUNNING' && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 3,
+              background: `linear-gradient(90deg, transparent, ${getStatusColor(status)}, transparent)`,
+              animation: 'slide 2s infinite linear',
+              '@keyframes slide': {
+                '0%': { transform: 'translateX(-100%)' },
+                '100%': { transform: 'translateX(100%)' }
+              }
+            }}
+          />
+        )}
+
+        {/* Icon section - fixed height 36px */}
+        <Box sx={{ 
+          height: 36, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          mt: 1
+        }}>
+          {getStatusIcon(status)}
+        </Box>
+
+        {/* Title section - fixed height 50px (enough for 2 lines) */}
+        <Box sx={{ 
+          height: 100, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          px: 1
+        }}>
+          <Typography 
+            variant="subtitle2" 
+            sx={{ 
+              fontWeight: 600, 
+              fontSize: '0.9rem',
+              color: status === 'RUNNING' ? 'primary.main' : 'text.primary',
+              lineHeight: 1.3,
+              textAlign: 'center',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden'
+            }}
+          >
+            {stage.label}
+          </Typography>
+        </Box>
+
+        {/* Status section - fixed height 32px (always at same position) */}
+        <Box sx={{ 
+          height: 32, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center'
+        }}>
+          <Chip
+            label={status.toLowerCase()}
+            size="small"
+            sx={{
+              backgroundColor: getStatusColor(status),
+              color: 'white',
+              fontWeight: 500,
+              fontSize: '0.7rem',
+              height: 22,
+              borderRadius: 3,
+              textTransform: 'capitalize'
+            }}
+          />
+        </Box>
+
+        {/* Duration section - fixed height 24px (always at same position) */}
+        <Box sx={{ 
+          height: 24, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center'
+        }}>
+          <Typography variant="caption" color="textSecondary" sx={{ 
+            fontWeight: 500, 
+            fontSize: '0.75rem',
+            fontFamily: 'monospace'
+          }}>
+            {duration ? formatDuration(duration) : '\u00A0'}
+          </Typography>
+        </Box>
+
+        {/* Message area - remaining space at bottom */}
+        <Box sx={{ 
+          flex: 1,
+          minHeight: 20, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          width: '100%'
+        }}>
+          {message && !message.includes('stage') && !message.includes('COMPLETED') && !message.includes('completed') ? (
+            <Tooltip title={message} placement="bottom">
+              <Typography 
+                variant="caption" 
+                color="textSecondary" 
+                sx={{ 
+                  fontSize: '0.7rem',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 1,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  lineHeight: 1.2,
+                  textAlign: 'center',
+                  px: 1,
+                  opacity: 0.8
+                }}
+              >
+                {message}
+              </Typography>
+            </Tooltip>
+          ) : (
+            <Typography 
+              variant="caption" 
+              color="transparent" 
+              sx={{ fontSize: '0.7rem', lineHeight: 1.2 }}
+            >
+              &nbsp;
+            </Typography>
+          )}
+        </Box>
+      </Paper>
+    </motion.div>
+  );
+};
+
 export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [runDetails, setRunDetails] = useState<PipelineRunDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -76,6 +321,44 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [showConfetti, setShowConfetti] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
+  const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
+  const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string} | null>(null);
+  
+  // Developer mode state
+  const [isDeveloperMode, setIsDeveloperMode] = useState(false);
+  const [developerDialog, setDeveloperDialog] = useState(false);
+  const [developerCode, setDeveloperCode] = useState('');
+  const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
+
+  // Initialize developer mode from localStorage
+  useEffect(() => {
+    const savedDevMode = localStorage.getItem('churns_developer_mode');
+    if (savedDevMode === 'true') {
+      setIsDeveloperMode(true);
+    }
+  }, []);
+
+  const handleDeveloperAccess = () => {
+    if (developerCode === DEVELOPER_CODE) {
+      setIsDeveloperMode(true);
+      localStorage.setItem('churns_developer_mode', 'true');
+      setDeveloperDialog(false);
+      setDeveloperCode('');
+      toast.success('Developer mode enabled!');
+    } else {
+      toast.error('Invalid developer code');
+    }
+  };
+
+  const toggleDeveloperMode = () => {
+    if (isDeveloperMode) {
+      setIsDeveloperMode(false);
+      localStorage.removeItem('churns_developer_mode');
+      toast.success('Developer mode disabled');
+    } else {
+      setDeveloperDialog(true);
+    }
+  };
 
   const addLog = useCallback((level: LogEntry['level'], message: string, stage?: string) => {
     const entry: LogEntry = {
@@ -161,7 +444,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         break;
         
       case 'run_complete':
-        addLog('success', 'Pipeline run completed successfully! 🎉');
+        addLog('success', 'Pipeline run completed successfully!');
         setShowConfetti(true);
         setTimeout(() => setShowConfetti(false), 5000);
         fetchRunDetails(); // Refresh final details
@@ -258,6 +541,53 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     }
   };
 
+  const copyPromptToClipboard = async (prompt: string) => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      toast.success('Prompt copied to clipboard!');
+      addLog('info', 'Prompt copied to clipboard');
+    } catch (err) {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = prompt;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      toast.success('Prompt copied to clipboard!');
+      addLog('info', 'Prompt copied to clipboard');
+    }
+  };
+
+  const loadOptionDetails = async (optionIndex: number) => {
+    try {
+      const results = await PipelineAPI.getResults(runId);
+      
+      // Get marketing strategy for this option
+      const marketingStrategy = results.marketing_strategies?.[optionIndex];
+      
+      // Get final prompt for this option
+      const finalPrompt = results.final_prompts?.[optionIndex];
+      
+      setOptionDetails({
+        marketingGoals: marketingStrategy,
+        finalPrompt: finalPrompt?.prompt || 'No prompt available'
+      });
+      
+      setDetailsDialog({open: true, optionIndex});
+      addLog('info', `Loaded details for Option ${optionIndex + 1}`);
+    } catch (err: any) {
+      const errorMsg = `Failed to load option details: ${err.message}`;
+      addLog('error', errorMsg);
+      toast.error(errorMsg);
+    }
+  };
+
+  const closeDetailsDialog = () => {
+    setDetailsDialog({open: false, optionIndex: null});
+    setOptionDetails(null);
+  };
+
   const getStatusIcon = (status: RunStatus | StageStatus) => {
     switch (status) {
       case 'COMPLETED':
@@ -286,6 +616,16 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}m ${remainingSeconds.toFixed(1)}s`;
+  };
+
+  // Helper function to get stage status for visual pipeline
+  const getStageStatus = (stageName: string): StageStatus => {
+    const stage = runDetails?.stages.find(s => s.stage_name === stageName);
+    return stage?.status || 'PENDING' as StageStatus;
+  };
+
+  const getStageData = (stageName: string) => {
+    return runDetails?.stages.find(s => s.stage_name === stageName);
   };
 
   useEffect(() => {
@@ -448,36 +788,55 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                   onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
                                 />
                               </Box>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                                 <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                                  Strategy {result.strategy_index + 1}
+                                  Option {result.strategy_index + 1}
                                 </Typography>
-                                <Box sx={{ display: 'flex', gap: 1 }}>
-                                  <Tooltip title="View full size">
-                                    <Button
-                                      size="small"
-                                      startIcon={<ZoomInIcon />}
-                                      onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
-                                      color="primary"
-                                      variant="outlined"
-                                      sx={{ fontWeight: 500 }}
-                                    >
-                                      Enlarge
-                                    </Button>
-                                  </Tooltip>
-                                  <Tooltip title="Download image">
-                                    <Button
-                                      size="small"
-                                      startIcon={<DownloadIcon />}
-                                      onClick={() => downloadImage(result.image_path!, result.image_path!)}
-                                      color="primary"
-                                      variant="contained"
-                                      sx={{ fontWeight: 500 }}
-                                    >
-                                      Download
-                                    </Button>
-                                  </Tooltip>
-                                </Box>
+                                <Chip 
+                                  label="Success" 
+                                  color="success" 
+                                  size="small" 
+                                  sx={{ fontWeight: 500 }} 
+                                />
+                              </Box>
+                              
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                <Tooltip title="View marketing strategy & prompt">
+                                  <Button
+                                    size="small"
+                                    startIcon={<ContentCopyIcon />}
+                                    onClick={() => loadOptionDetails(result.strategy_index)}
+                                    color="secondary"
+                                    variant="outlined"
+                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                                  >
+                                    Details
+                                  </Button>
+                                </Tooltip>
+                                <Tooltip title="View full size">
+                                  <Button
+                                    size="small"
+                                    startIcon={<ZoomInIcon />}
+                                    onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
+                                    color="primary"
+                                    variant="outlined"
+                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                                  >
+                                    Enlarge
+                                  </Button>
+                                </Tooltip>
+                                <Tooltip title="Download image">
+                                  <Button
+                                    size="small"
+                                    startIcon={<DownloadIcon />}
+                                    onClick={() => downloadImage(result.image_path!, result.image_path!)}
+                                    color="primary"
+                                    variant="contained"
+                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                                  >
+                                    Download
+                                  </Button>
+                                </Tooltip>
                               </Box>
                             </Box>
                           ) : (
@@ -498,106 +857,52 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 </Box>
               )}
 
-              {/* Progress */}
+              {/* Visual Pipeline Progress */}
               <Box sx={{ mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                  <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: '-0.01em' }}>
                     Pipeline Progress
                   </Typography>
                   <Typography variant="body1" color="textSecondary" sx={{ fontWeight: 500 }}>
-                    {runDetails.stages.filter(s => s.status === 'COMPLETED').length} / 6 stages completed
+                    {runDetails.stages.filter(s => s.status === 'COMPLETED').length} / {PIPELINE_STAGES.length} stages
                   </Typography>
                 </Box>
+                
+                                 {/* Visual Pipeline Stages Grid */}
+                 <Grid container spacing={2} sx={{ mb: 3 }}>
+                   {PIPELINE_STAGES.map((pipelineStage, index) => {
+                     const stageData = getStageData(pipelineStage.name);
+                     const status = getStageStatus(pipelineStage.name);
+                     const isActive = status === 'RUNNING';
+                     
+                     return (
+                       <Grid item xs={12} sm={6} md={4} lg={2} key={pipelineStage.name} sx={{ display: 'flex', flexDirection: 'column' }}>
+                         <PipelineStageBox
+                           stage={pipelineStage}
+                           status={status}
+                           message={stageData?.message}
+                           duration={stageData?.duration_seconds}
+                           isActive={isActive}
+                         />
+                       </Grid>
+                     );
+                   })}
+                 </Grid>
+
+                {/* Overall Progress Bar */}
                 <LinearProgress 
                   variant="determinate" 
                   value={getProgressValue()} 
                   sx={{ 
-                    height: 12, 
-                    borderRadius: 6,
+                    height: 8, 
+                    borderRadius: 4,
                     backgroundColor: 'grey.200',
                     '& .MuiLinearProgress-bar': {
-                      borderRadius: 6,
+                      borderRadius: 4,
                     }
                   }}
                 />
               </Box>
-
-              {/* Pipeline Stages */}
-              <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                Pipeline Stages
-              </Typography>
-              <Grid container spacing={2}>
-                {runDetails.stages.map((stage, index) => (
-                  <Grid item xs={12} key={stage.stage_name}>
-                    <motion.div
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: index * 0.1 }}
-                    >
-                      <Paper 
-                        sx={{ 
-                          p: 3, 
-                          border: 1, 
-                          borderColor: stage.status === 'RUNNING' ? 'primary.main' : 'divider',
-                          backgroundColor: stage.status === 'RUNNING' ? 'primary.50' : 'background.paper',
-                          borderRadius: 2,
-                        }}
-                      >
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            {getStatusIcon(stage.status)}
-                            <Typography variant="subtitle1" sx={{ fontWeight: 600, textTransform: 'capitalize' }}>
-                              {stage.stage_name.replace('_', ' ')}
-                            </Typography>
-                            <Chip 
-                              label={stage.status} 
-                              size="small"
-                              sx={{ 
-                                backgroundColor: statusColors[stage.status as keyof typeof statusColors] || '#6b7280',
-                                color: 'white',
-                                fontWeight: 500 
-                              }}
-                            />
-                          </Box>
-                          
-                          <Typography variant="body2" color="textSecondary" sx={{ fontWeight: 500 }}>
-                            {formatDuration(stage.duration_seconds)}
-                          </Typography>
-                        </Box>
-                        
-                        <Typography 
-                          variant="body2" 
-                          color={stage.message?.includes('⚠️ IMPORTANT') ? 'warning.main' : 'textSecondary'} 
-                          sx={{ 
-                            mt: 1,
-                            fontWeight: stage.message?.includes('⚠️ IMPORTANT') ? 600 : 400,
-                            backgroundColor: stage.message?.includes('⚠️ IMPORTANT') ? 'warning.50' : 'transparent',
-                            padding: stage.message?.includes('⚠️ IMPORTANT') ? 1 : 0,
-                            borderRadius: stage.message?.includes('⚠️ IMPORTANT') ? 1 : 0,
-                            border: stage.message?.includes('⚠️ IMPORTANT') ? '1px solid' : 'none',
-                            borderColor: stage.message?.includes('⚠️ IMPORTANT') ? 'warning.main' : 'transparent'
-                          }}
-                        >
-                          {stage.message}
-                        </Typography>
-                        
-                        {stage.error_message && (
-                          <Alert severity="error" sx={{ mt: 2 }}>
-                            {stage.error_message}
-                          </Alert>
-                        )}
-                        
-                        {stage.message?.includes('⚠️ IMPORTANT') && (
-                          <Alert severity="warning" sx={{ mt: 2 }}>
-                            <strong>Image Processing Issue:</strong> Your uploaded image couldn't be analyzed. 
-                            Results may be generic instead of tailored to your specific image.
-                          </Alert>
-                        )}
-                      </Paper>
-                    </motion.div>
-                  </Grid>
-                ))}
-              </Grid>
             </Grid>
 
             {/* RIGHT SIDE - Details & Metadata */}
@@ -800,93 +1105,127 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 </Grid>
               </Paper>
 
-              {/* Stage Outputs */}
+              {/* Developer Mode Toggle */}
               <Paper sx={{ p: 2, mb: 3, borderRadius: 2, border: 1, borderColor: 'divider' }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, px: 1 }}>
-                  Stage Outputs
-                </Typography>
-                {runDetails.stages.map((stage) => (
-                  stage.output_data && (
-                    <Accordion key={`output-${stage.stage_name}`} sx={{ mb: 1 }}>
-                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 600, textTransform: 'capitalize' }}>
-                          {stage.stage_name.replace('_', ' ')} Results
-                        </Typography>
-                      </AccordionSummary>
-                      <AccordionDetails>
-                        <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
-                          <pre style={{ 
-                            whiteSpace: 'pre-wrap', 
-                            fontSize: '0.75rem',
-                            fontFamily: 'monospace',
-                            margin: 0,
-                            maxHeight: '300px',
-                            overflow: 'auto'
-                          }}>
-                            {JSON.stringify(stage.output_data, null, 2)}
-                          </pre>
-                        </Paper>
-                      </AccordionDetails>
-                    </Accordion>
-                  )
-                ))}
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <DeveloperModeIcon color={isDeveloperMode ? 'primary' : 'disabled'} />
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      Developer Tools
+                    </Typography>
+                    {isDeveloperMode && (
+                      <Chip label="Active" color="primary" size="small" sx={{ fontWeight: 500 }} />
+                    )}
+                  </Box>
+                  <Button
+                    variant={isDeveloperMode ? 'outlined' : 'contained'}
+                    size="small"
+                    startIcon={isDeveloperMode ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                    onClick={toggleDeveloperMode}
+                    sx={{ fontWeight: 500 }}
+                  >
+                    {isDeveloperMode ? 'Hide' : 'Show'} Dev Tools
+                  </Button>
+                </Box>
               </Paper>
 
-              {/* Logs */}
-              <Paper sx={{ borderRadius: 2, border: 1, borderColor: 'divider' }}>
-                <Accordion>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      Live Logs ({logs.length})
+              {/* Stage Outputs - Developer Only */}
+              {isDeveloperMode && (
+                <Paper sx={{ p: 2, mb: 3, borderRadius: 2, border: 1, borderColor: 'warning.main', backgroundColor: 'warning.50' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <CodeIcon color="warning" />
+                    <Typography variant="h6" sx={{ fontWeight: 600, color: 'warning.dark' }}>
+                      Stage Outputs (Developer)
                     </Typography>
-                  </AccordionSummary>
-                  <AccordionDetails sx={{ p: 0 }}>
-                    <Paper 
-                      sx={{ 
-                        p: 2, 
-                        backgroundColor: 'grey.900', 
-                        color: 'grey.100',
-                        maxHeight: 300,
-                        overflow: 'auto',
-                        fontFamily: 'monospace',
-                        borderRadius: 0,
-                      }}
-                    >
-                      <AnimatePresence>
-                        {logs.map((log, index) => (
-                          <motion.div
-                            key={index}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -10 }}
-                          >
-                            <div 
-                              style={{ 
-                                marginBottom: '4px',
-                                color: log.level === 'error' ? '#ffcdd2' :
-                                       log.level === 'warning' ? '#fff3e0' :
-                                       log.level === 'success' ? '#c8e6c9' : 'inherit',
-                                fontSize: '0.7rem',
-                                lineHeight: 1.3,
-                                whiteSpace: 'pre-wrap',
-                                wordBreak: 'break-word',
-                                backgroundColor: log.message?.includes('⚠️ IMPORTANT') ? '#ff9800' : 'transparent',
-                                padding: log.message?.includes('⚠️ IMPORTANT') ? '4px 8px' : '0',
-                                borderRadius: log.message?.includes('⚠️ IMPORTANT') ? '4px' : '0',
-                                fontWeight: log.message?.includes('⚠️ IMPORTANT') ? 'bold' : 'normal'
-                              }}
+                  </Box>
+                  {runDetails.stages.map((stage) => (
+                    stage.output_data && (
+                      <Accordion key={`output-${stage.stage_name}`} sx={{ mb: 1 }}>
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600, textTransform: 'capitalize' }}>
+                            {stage.stage_name.replace('_', ' ')} Results
+                          </Typography>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                          <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                            <pre style={{ 
+                              whiteSpace: 'pre-wrap', 
+                              fontSize: '0.75rem',
+                              fontFamily: 'monospace',
+                              margin: 0,
+                              maxHeight: '300px',
+                              overflow: 'auto'
+                            }}>
+                              {JSON.stringify(stage.output_data, null, 2)}
+                            </pre>
+                          </Paper>
+                        </AccordionDetails>
+                      </Accordion>
+                    )
+                  ))}
+                </Paper>
+              )}
+
+              {/* Logs - Developer Only */}
+              {isDeveloperMode && (
+                <Paper sx={{ borderRadius: 2, border: 1, borderColor: 'warning.main', backgroundColor: 'warning.50' }}>
+                  <Accordion>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <CodeIcon color="warning" />
+                        <Typography variant="h6" sx={{ fontWeight: 600, color: 'warning.dark' }}>
+                          Live Logs ({logs.length}) (Developer)
+                        </Typography>
+                      </Box>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: 0 }}>
+                      <Paper 
+                        sx={{ 
+                          p: 2, 
+                          backgroundColor: 'grey.900', 
+                          color: 'grey.100',
+                          maxHeight: 300,
+                          overflow: 'auto',
+                          fontFamily: 'monospace',
+                          borderRadius: 0,
+                        }}
+                      >
+                        <AnimatePresence>
+                          {logs.map((log, index) => (
+                            <motion.div
+                              key={index}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -10 }}
                             >
-                              [{dayjs(log.timestamp).format('HH:mm:ss')}] 
-                              {log.stage && ` [${log.stage}]`} 
-                              {log.message}
-                            </div>
-                          </motion.div>
-                        ))}
-                      </AnimatePresence>
-                    </Paper>
-                  </AccordionDetails>
-                </Accordion>
-              </Paper>
+                              <div 
+                                style={{ 
+                                  marginBottom: '4px',
+                                  color: log.level === 'error' ? '#ffcdd2' :
+                                         log.level === 'warning' ? '#fff3e0' :
+                                         log.level === 'success' ? '#c8e6c9' : 'inherit',
+                                  fontSize: '0.7rem',
+                                  lineHeight: 1.3,
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
+                                                                  backgroundColor: log.message?.includes('IMPORTANT:') ? '#ff9800' : 'transparent',
+                                padding: log.message?.includes('IMPORTANT:') ? '4px 8px' : '0',
+                                borderRadius: log.message?.includes('IMPORTANT:') ? '4px' : '0',
+                                fontWeight: log.message?.includes('IMPORTANT:') ? 'bold' : 'normal'
+                                }}
+                              >
+                                [{dayjs(log.timestamp).format('HH:mm:ss')}] 
+                                {log.stage && ` [${log.stage}]`} 
+                                {log.message}
+                              </div>
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
+                      </Paper>
+                    </AccordionDetails>
+                  </Accordion>
+                </Paper>
+              )}
             </Grid>
           </Grid>
         </CardContent>
@@ -931,6 +1270,198 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           </Button>
         </DialogActions>
       </Dialog>
-    </motion.div>
-  );
+
+      {/* Option Details Dialog */}
+      <Dialog
+        open={detailsDialog.open}
+        onClose={closeDetailsDialog}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: { borderRadius: 2 }
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 2 }}>
+          <Typography variant="h5" component="div" sx={{ fontWeight: 600, color: 'primary.main' }}>
+            Option {(detailsDialog.optionIndex ?? 0) + 1} Details
+          </Typography>
+          <IconButton onClick={closeDetailsDialog} sx={{ color: 'grey.500' }}>
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        
+        <DialogContent sx={{ px: 3 }}>
+          {optionDetails && (
+            <Grid container spacing={3}>
+              {/* Marketing Strategy */}
+              {optionDetails.marketingGoals && (
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    Marketing Strategy
+                  </Typography>
+                  <Paper sx={{ p: 3, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2 }}>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} sm={6}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                          Target Audience
+                        </Typography>
+                        <Typography variant="body1" sx={{ fontWeight: 500, mb: 2 }}>
+                          {optionDetails.marketingGoals.target_audience || 'N/A'}
+                        </Typography>
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                          Niche
+                        </Typography>
+                        <Typography variant="body1" sx={{ fontWeight: 500, mb: 2 }}>
+                          {optionDetails.marketingGoals.target_niche || 'N/A'}
+                        </Typography>
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                          Objective
+                        </Typography>
+                        <Typography variant="body1" sx={{ fontWeight: 500, mb: 2 }}>
+                          {optionDetails.marketingGoals.target_objective || 'N/A'}
+                        </Typography>
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Typography variant="subtitle2" color="textSecondary" gutterBottom>
+                          Voice & Tone
+                        </Typography>
+                        <Typography variant="body1" sx={{ fontWeight: 500 }}>
+                          {optionDetails.marketingGoals.target_voice || 'N/A'}
+                        </Typography>
+                      </Grid>
+                    </Grid>
+                  </Paper>
+                </Grid>
+              )}
+
+              {/* Final Prompt */}
+              <Grid item xs={12}>
+                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+                  Image Generation Prompt
+                </Typography>
+                <Paper sx={{ p: 3, backgroundColor: 'grey.900', color: 'grey.100', borderRadius: 2, position: 'relative' }}>
+                  <Typography 
+                    variant="body2" 
+                    sx={{ 
+                      fontFamily: 'monospace',
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.5,
+                      fontSize: '0.85rem',
+                      maxHeight: '300px',
+                      overflow: 'auto'
+                    }}
+                  >
+                    {optionDetails.finalPrompt}
+                  </Typography>
+                  
+                  <Tooltip title="Copy prompt to clipboard">
+                    <IconButton
+                      onClick={() => copyPromptToClipboard(optionDetails.finalPrompt || '')}
+                      sx={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        color: 'grey.300',
+                        backgroundColor: 'rgba(255,255,255,0.1)',
+                        '&:hover': {
+                          backgroundColor: 'rgba(255,255,255,0.2)',
+                          color: 'white'
+                        }
+                      }}
+                      size="small"
+                    >
+                      <ContentCopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Paper>
+              </Grid>
+            </Grid>
+          )}
+        </DialogContent>
+        
+        <DialogActions sx={{ px: 3, py: 2, gap: 1 }}>
+          <Button 
+            onClick={() => optionDetails?.finalPrompt && copyPromptToClipboard(optionDetails.finalPrompt)} 
+            startIcon={<ContentCopyIcon />}
+            variant="outlined"
+            color="secondary"
+          >
+            Copy Prompt
+          </Button>
+          <Button onClick={closeDetailsDialog} variant="contained">
+                      Close
+        </Button>
+      </DialogActions>
+    </Dialog>
+
+    {/* Developer Access Dialog */}
+    <Dialog
+      open={developerDialog}
+      onClose={() => setDeveloperDialog(false)}
+      maxWidth="sm"
+      fullWidth
+      PaperProps={{
+        sx: { borderRadius: 2 }
+      }}
+    >
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 2, pb: 2 }}>
+        <DeveloperModeIcon color="primary" />
+        <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
+          Developer Access Required
+        </Typography>
+      </DialogTitle>
+      
+      <DialogContent sx={{ px: 3, pb: 2 }}>
+        <Typography variant="body1" color="textSecondary" sx={{ mb: 3 }}>
+          Enter the developer code to access stage outputs and system logs. This information is 
+          intended for developers and contains technical details.
+        </Typography>
+        
+        <TextField
+          fullWidth
+          label="Developer Code"
+          type="password"
+          value={developerCode}
+          onChange={(e) => setDeveloperCode(e.target.value)}
+          onKeyPress={(e) => {
+            if (e.key === 'Enter') {
+              handleDeveloperAccess();
+            }
+          }}
+          placeholder="Enter developer access code"
+          sx={{ mb: 2 }}
+          autoFocus
+        />
+        
+        <Alert severity="info" sx={{ fontSize: '0.85rem' }}>
+          <strong>For Developers:</strong> This mode reveals internal pipeline data including 
+          stage outputs, detailed logs, and debug information.
+        </Alert>
+      </DialogContent>
+      
+      <DialogActions sx={{ px: 3, py: 2, gap: 1 }}>
+        <Button 
+          onClick={() => {
+            setDeveloperDialog(false);
+            setDeveloperCode('');
+          }} 
+          variant="outlined"
+        >
+          Cancel
+        </Button>
+        <Button 
+          onClick={handleDeveloperAccess}
+          variant="contained"
+          disabled={!developerCode.trim()}
+        >
+          Access Developer Tools
+        </Button>
+      </DialogActions>
+    </Dialog>
+  </motion.div>
+);
 } 

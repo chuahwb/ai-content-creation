@@ -13,6 +13,7 @@ import os
 import base64
 import datetime
 import traceback
+import asyncio
 from typing import Optional, Dict, Any, Tuple
 import requests
 
@@ -45,7 +46,7 @@ def map_aspect_ratio_to_size_for_api(aspect_ratio: str, ctx: Optional[PipelineCo
         return "1024x1024"
 
 
-def generate_image(
+async def generate_image(
     final_prompt: str,
     platform_aspect_ratio: str,
     client,  # OpenAI client
@@ -111,7 +112,8 @@ def generate_image(
                 log_msg(f"   Reference Image: {reference_image_path}")
                 try:
                     with open(reference_image_path, "rb") as image_file:
-                        response = client.images.edit(
+                        response = await asyncio.to_thread(
+                            client.images.edit,
                             model=model_id,
                             image=image_file,
                             prompt=final_prompt,
@@ -137,7 +139,7 @@ def generate_image(
                 "quality": image_quality_setting
             }
 
-            response = client.images.generate(**generate_params)
+            response = await asyncio.to_thread(client.images.generate, **generate_params)
 
         # --- Process Response ---
         if response and response.data and len(response.data) > 0:
@@ -168,7 +170,7 @@ def generate_image(
                 log_msg(f"✅ Image {operation_type} successful (received URL). Downloading...")
                 image_url = image_data.url
                 try:
-                    img_response_download = requests.get(image_url, stream=True, timeout=30)
+                    img_response_download = await asyncio.to_thread(requests.get, image_url, stream=True, timeout=30)
                     img_response_download.raise_for_status()
                     timestamp_img_url = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
                     if operation_type == "editing":
@@ -216,7 +218,7 @@ def generate_image(
             return "error", f"Unexpected error: {e}", prompt_tokens_for_image_gen
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """
     Stage 6: Image Generation
     
@@ -288,13 +290,16 @@ def run(ctx: PipelineContext) -> None:
     
     ctx.log(f"Generating images for {len(assembled_prompts)} assembled prompts...")
     
+    # Prepare tasks for parallel execution
+    tasks = []
+    valid_prompts = []
     generated_image_results = []
     
     for prompt_data in assembled_prompts:
         strategy_index = prompt_data.get("index", "N/A")
         final_text_prompt = prompt_data.get("prompt", "")
         
-        ctx.log(f"Processing image generation for Strategy {strategy_index}...")
+        ctx.log(f"Preparing image generation for Strategy {strategy_index}...")
         
         if final_text_prompt.startswith("Error:"):
             ctx.log(f"   Skipping image generation due to prompt assembly error: {final_text_prompt}")
@@ -306,8 +311,8 @@ def run(ctx: PipelineContext) -> None:
             })
             continue
             
-        # Generate/edit the image using global client
-        img_status, img_result_path_or_msg, img_prompt_tokens = generate_image(
+        # Create async task for this image generation
+        task = generate_image(
             final_text_prompt,
             platform_aspect_ratio,
             image_gen_client,
@@ -317,28 +322,66 @@ def run(ctx: PipelineContext) -> None:
             image_quality_setting="medium",  # Default for gpt-image-1
             ctx=ctx
         )
+        tasks.append(task)
+        valid_prompts.append((strategy_index, final_text_prompt))
+    
+    if tasks:
+        ctx.log(f"Processing {len(tasks)} image generations in parallel...")
         
-        if img_status == "success":
-            # Store just the filename for frontend API compatibility
-            filename_only = os.path.basename(img_result_path_or_msg) if img_result_path_or_msg else None
+        try:
+            # Run all image generation tasks concurrently
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            generated_image_results.append({
-                "index": strategy_index, 
-                "status": "success", 
-                "result_path": filename_only, 
-                "error_message": None,
-                "prompt_tokens": img_prompt_tokens
-            })
-            ctx.log(f"   ✅ Image generated successfully: {img_result_path_or_msg}")
-        else:
-            generated_image_results.append({
-                "index": strategy_index, 
-                "status": "error", 
-                "result_path": None, 
-                "error_message": img_result_path_or_msg,
-                "prompt_tokens": img_prompt_tokens
-            })
-            ctx.log(f"   ❌ Image generation failed: {img_result_path_or_msg}")
+            # Process results
+            for i, result in enumerate(results):
+                strategy_index, final_text_prompt = valid_prompts[i]
+                
+                if isinstance(result, Exception):
+                    ctx.log(f"   ❌ Image generation failed for Strategy {strategy_index}: {result}")
+                    generated_image_results.append({
+                        "index": strategy_index, 
+                        "status": "error", 
+                        "result_path": None, 
+                        "error_message": str(result)
+                    })
+                    continue
+                
+                img_status, img_result_path_or_msg, img_prompt_tokens = result
+                
+                if img_status == "success":
+                    # Store just the filename for frontend API compatibility
+                    filename_only = os.path.basename(img_result_path_or_msg) if img_result_path_or_msg else None
+                    
+                    generated_image_results.append({
+                        "index": strategy_index, 
+                        "status": "success", 
+                        "result_path": filename_only, 
+                        "error_message": None,
+                        "prompt_tokens": img_prompt_tokens
+                    })
+                    ctx.log(f"   ✅ Image generated successfully: {img_result_path_or_msg}")
+                else:
+                    generated_image_results.append({
+                        "index": strategy_index, 
+                        "status": "error", 
+                        "result_path": None, 
+                        "error_message": img_result_path_or_msg,
+                        "prompt_tokens": img_prompt_tokens
+                    })
+                    ctx.log(f"   ❌ Image generation failed: {img_result_path_or_msg}")
+                    
+        except Exception as e:
+            ctx.log(f"ERROR during parallel image generation: {e}")
+            # Add error results for all remaining tasks
+            for strategy_index, _ in valid_prompts:
+                generated_image_results.append({
+                    "index": strategy_index, 
+                    "status": "error", 
+                    "result_path": None, 
+                    "error_message": f"Parallel execution error: {e}"
+                })
+    else:
+        ctx.log("No valid prompts to process for image generation")
     
     # Store results in context
     ctx.generated_image_results = generated_image_results

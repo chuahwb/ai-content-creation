@@ -193,7 +193,13 @@ def run(ctx: PipelineContext) -> None:
     """Generates N diverse marketing strategy combinations using a STAGED LLM approach."""
     ctx.log("Starting marketing strategy generation stage")
     
-    num_strategies = 3  # Default number of strategies to generate
+    # Get number of strategies from context, fallback to default
+    num_strategies = getattr(ctx, 'num_variants', None)
+    if num_strategies is None:
+        # Try to get from data dict for backward compatibility
+        num_strategies = ctx.data.get("request_details", {}).get("num_variants", 3) if ctx.data else 3
+    # Ensure it's within valid range
+    num_strategies = max(1, min(6, num_strategies))  # Clamp between 1 and 6
     
     # Extract inputs from context using direct attributes
     user_goals = ctx.marketing_goals

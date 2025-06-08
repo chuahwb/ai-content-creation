@@ -47,6 +47,7 @@ async def create_pipeline_run(
     mode: str = Form(..., description="Pipeline mode"),
     platform_name: str = Form(..., description="Target platform"),
     creativity_level: int = Form(2, description="Creativity level 1-3"),
+    num_variants: int = Form(3, description="Number of variants to generate"),
     
     # Optional text fields
     prompt: Optional[str] = Form(None, description="User prompt"),
@@ -83,6 +84,9 @@ async def create_pipeline_run(
     
     if creativity_level not in [1, 2, 3]:
         raise HTTPException(status_code=400, detail=f"Creativity level must be 1, 2, or 3")
+    
+    if num_variants < 1 or num_variants > 6:
+        raise HTTPException(status_code=400, detail=f"Number of variants must be between 1 and 6")
     
     if mode == "task_specific_mode" and not task_type:
         raise HTTPException(status_code=400, detail="Task type required for task_specific_mode")
@@ -129,6 +133,7 @@ async def create_pipeline_run(
         mode=mode,
         platform_name=platform_name,
         creativity_level=creativity_level,
+        num_variants=num_variants,
         prompt=prompt,
         task_type=task_type,
         task_description=task_description,

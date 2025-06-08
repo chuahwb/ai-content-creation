@@ -45,6 +45,7 @@ const formSchema = z.object({
   mode: z.enum(['easy_mode', 'custom_mode', 'task_specific_mode']),
   platform_name: z.string().min(1, 'Platform is required'),
   creativity_level: z.number().min(1).max(3),
+  num_variants: z.number().min(1).max(6),
   prompt: z.string().optional(),
   task_type: z.string().optional(),
   task_description: z.string().optional(),
@@ -106,6 +107,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       mode: 'easy_mode',
       platform_name: '',
       creativity_level: 2,
+      num_variants: 3,
       render_text: false,
       apply_branding: false,
     },
@@ -287,39 +289,88 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                     </Box>
                   )}
 
-                  {/* Creativity Level */}
+                  {/* Generation Settings */}
                   <Box sx={{ mb: 4 }}>
                     <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mb: 3 }}>
-                      Creativity Level: {creativityLabels[watch('creativity_level') as keyof typeof creativityLabels]}
+                      Generation Settings
                     </Typography>
-                    <Controller
-                      name="creativity_level"
-                      control={control}
-                      render={({ field }) => (
-                        <Slider
-                          {...field}
-                          min={1}
-                          max={3}
-                          step={1}
-                          marks={[
-                            { value: 1, label: 'Focused' },
-                            { value: 2, label: 'Stylized' },
-                            { value: 3, label: 'Abstract' },
-                          ]}
-                          valueLabelDisplay="off"
-                          sx={{ 
-                            mx: 3,
-                            '& .MuiSlider-mark': {
-                              backgroundColor: 'currentColor'
-                            },
-                            '& .MuiSlider-markLabel': {
-                              fontSize: '0.875rem',
-                              fontWeight: 500
-                            }
-                          }}
+                    <Grid container spacing={4}>
+                      {/* Creativity Level */}
+                      <Grid item xs={12} md={6}>
+                        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 500, mb: 2 }}>
+                          Style: {creativityLabels[watch('creativity_level') as keyof typeof creativityLabels]}
+                        </Typography>
+                        <Controller
+                          name="creativity_level"
+                          control={control}
+                          render={({ field }) => (
+                            <Slider
+                              {...field}
+                              min={1}
+                              max={3}
+                              step={1}
+                              marks={[
+                                { value: 1, label: 'Focused' },
+                                { value: 2, label: 'Stylized' },
+                                { value: 3, label: 'Abstract' },
+                              ]}
+                              valueLabelDisplay="off"
+                              sx={{ 
+                                mx: 2,
+                                '& .MuiSlider-mark': {
+                                  backgroundColor: 'currentColor'
+                                },
+                                '& .MuiSlider-markLabel': {
+                                  fontSize: '0.75rem',
+                                  fontWeight: 500
+                                }
+                              }}
+                            />
+                          )}
                         />
-                      )}
-                    />
+                      </Grid>
+
+                      {/* Number of Variants */}
+                      <Grid item xs={12} md={6}>
+                        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 500, mb: 2 }}>
+                          Variants: {watch('num_variants')}
+                        </Typography>
+                        <Controller
+                          name="num_variants"
+                          control={control}
+                          render={({ field }) => (
+                            <Slider
+                              {...field}
+                              min={1}
+                              max={6}
+                              step={1}
+                              marks={[
+                                { value: 1, label: '1' },
+                                { value: 2, label: '2' },
+                                { value: 3, label: '3' },
+                                { value: 4, label: '4' },
+                                { value: 5, label: '5' },
+                                { value: 6, label: '6' },
+                              ]}
+                              valueLabelDisplay="off"
+                              sx={{ 
+                                mx: 2,
+                                '& .MuiSlider-mark': {
+                                  backgroundColor: 'currentColor'
+                                },
+                                '& .MuiSlider-markLabel': {
+                                  fontSize: '0.75rem',
+                                  fontWeight: 500
+                                }
+                              }}
+                            />
+                          )}
+                        />
+                      </Grid>
+                    </Grid>
+                    <Typography variant="body2" color="textSecondary" sx={{ mt: 1, fontSize: '0.875rem' }}>
+                      Choose your creative style and how many different options to generate
+                    </Typography>
                   </Box>
 
                   {/* Prompt */}

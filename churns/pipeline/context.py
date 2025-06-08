@@ -19,6 +19,7 @@ class PipelineContext:
     # Pipeline settings
     run_id: str = field(default_factory=lambda: datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
     creativity_level: int = 2
+    num_variants: int = 3
     
     # Request details
     mode: str = "easy_mode"
@@ -92,7 +93,8 @@ class PipelineContext:
         return {
             "pipeline_settings": {
                 "run_timestamp": self.run_id,
-                "creativity_level_selected": self.creativity_level
+                "creativity_level_selected": self.creativity_level,
+                "num_variants": self.num_variants
             },
             "request_details": {
                 "mode": self.mode,
@@ -131,6 +133,7 @@ class PipelineContext:
         return cls(
             run_id=pipeline_settings.get("run_timestamp", datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")),
             creativity_level=pipeline_settings.get("creativity_level_selected", 2),
+            num_variants=pipeline_settings.get("num_variants", 3),
             mode=request_details.get("mode", "easy_mode"),
             task_type=request_details.get("task_type"),
             target_platform=request_details.get("target_platform"),
