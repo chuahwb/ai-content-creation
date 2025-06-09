@@ -122,6 +122,24 @@ def _map_to_supported_aspect_ratio_for_prompt(aspect_ratio: str) -> str:
         return "1:1"
 
 
+def _clean_platform_name(platform_name: str) -> str:
+    """
+    Removes aspect ratio information from platform names to avoid confusion.
+    
+    Examples:
+    - "Instagram Story/Reel (9:16 Vertical)" -> "Instagram Story/Reel"
+    - "Instagram Post (1:1 Square)" -> "Instagram Post"
+    - "Pinterest Pin (2:3 Vertical)" -> "Pinterest Pin"
+    """
+    import re
+    
+    # Remove patterns like "(9:16 Vertical)", "(1:1 Square)", "(3:4 Vertical)", etc.
+    pattern = r'\s*\([^)]*(?:\d+:\d+|Mixed)[^)]*\)\s*'
+    cleaned_name = re.sub(pattern, '', platform_name).strip()
+    
+    return cleaned_name if cleaned_name else platform_name
+
+
 def _get_creative_expert_system_prompt(
     creativity_level: int,
     task_type: str,
@@ -134,6 +152,9 @@ def _get_creative_expert_system_prompt(
     target_model_family: str = "openai"
 ) -> str:
     """Returns the system prompt for the Creative Expert agent."""
+    
+    # Clean platform name to remove aspect ratio information
+    clean_platform_name = _clean_platform_name(platform_name)
     
     base_persona_ce = """
 You are an expert Creative Director and Digital Marketing Strategist specializing in F&B social media visuals.
@@ -157,49 +178,49 @@ Fill in all the fields of the requested Pydantic JSON output format (`ImageGener
     task_type_guidance_map = {
         "1. Product Photography": {
             "description": "Create visuals with exceptional clarity to showcase the product's details, textures, and qualities for menu spotlight or sales.",
-            "platform_optimization": f"For {platform_name}, use compositions with vibrant product focus",
+            "platform_optimization": f"For {clean_platform_name}, use compositions with vibrant product focus",
             "text_guidance": "If text is enabled, place promotional text in a clear, bold sans-serif font",
             "branding_guidance": "If branding is enabled, integrate branding elements subtly"
         },
         "2. Promotional Graphics & Announcements": {
             "description": "Design for immediate visual impact and attention-grabbing power to drive engagement.",
-            "platform_optimization": f"For {platform_name}, ensure bold, centered compositions for shareability",
+            "platform_optimization": f"For {clean_platform_name}, ensure bold, centered compositions for shareability",
             "text_guidance": "If text is enabled, use large, bold headlines with clear hierarchy",
             "branding_guidance": "If branding is enabled, integrate branding without cluttering the promotional message"
         },
         "3. Store Atmosphere & Decor": {
             "description": "Focus on immersive environmental storytelling to capture the unique mood and ambiance.",
-            "platform_optimization": f"For {platform_name}, capture dynamic ambiance suitable for the platform",
+            "platform_optimization": f"For {clean_platform_name}, capture dynamic ambiance suitable for the platform",
             "text_guidance": "If text is enabled, place taglines in an elegant serif font as subtle overlay",
             "branding_guidance": "If branding is enabled, integrate branding subtly within the scene"
         },
         "4. Menu Spotlights": {
             "description": "Favor close-up or medium shots to highlight a specific menu item with appetizing appeal.",
-            "platform_optimization": f"For {platform_name}, create contextual lifestyle shots that make the dish look appealing",
+            "platform_optimization": f"For {clean_platform_name}, create contextual lifestyle shots that make the dish look appealing",
             "text_guidance": "If text is enabled, suggest bold promotional text positioned to enhance the dish",
             "branding_guidance": "If branding is enabled, integrate branding on tableware or as subtle elements"
         },
         "5. Cultural & Community Content": {
             "description": "Favor compositions with symbolic elements and culturally inspired color palettes.",
-            "platform_optimization": f"For {platform_name}, create lifestyle-oriented visuals with cultural significance",
+            "platform_optimization": f"For {clean_platform_name}, create lifestyle-oriented visuals with cultural significance",
             "text_guidance": "If text is enabled, suggest elegant script taglines that harmonize with visual elements",
             "branding_guidance": "If branding is enabled, integrate branding in a way that honors the cultural context"
         },
         "6. Recipes & Food Tips": {
             "description": "Prioritize clarity, visual instruction, and appetite appeal for educational content.",
-            "platform_optimization": f"For {platform_name}, use detailed compositions suitable for instructional content",
+            "platform_optimization": f"For {clean_platform_name}, use detailed compositions suitable for instructional content",
             "text_guidance": "If text is enabled, use concise, bold text for step titles and clear instructions",
             "branding_guidance": "If branding is enabled, integrate branding to tie to brand identity without distraction"
         },
         "7. Brand Story & Milestones": {
             "description": "Create evocative, narrative, or celebratory visuals to resonate emotionally.",
-            "platform_optimization": f"For {platform_name}, create cinematic visuals with narrative flow",
+            "platform_optimization": f"For {clean_platform_name}, create cinematic visuals with narrative flow",
             "text_guidance": "If text is enabled, place taglines in elegant serif font as focal point",
             "branding_guidance": "If branding is enabled, integrate branding to reinforce identity within storytelling"
         },
         "8. Behind the Scenes Imagery": {
             "description": "Convey authenticity, process, and human element with professional yet candid visuals.",
-            "platform_optimization": f"For {platform_name}, use authentic compositions suitable for the platform",
+            "platform_optimization": f"For {clean_platform_name}, use authentic compositions suitable for the platform",
             "text_guidance": "If text is enabled, place captions in playful or clean font authentically",
             "branding_guidance": "If branding is enabled, integrate branding naturally within the scene"
         }
@@ -209,7 +230,7 @@ Fill in all the fields of the requested Pydantic JSON output format (`ImageGener
     task_key = task_type.split('.', 1)[-1].strip() if '.' in task_type else task_type
     task_guidance = task_type_guidance_map.get(task_type, {
         "description": f"Adapt the visual concept appropriately for '{task_type}'",
-        "platform_optimization": f"Optimize for {platform_name}",
+        "platform_optimization": f"Optimize for {clean_platform_name}",
         "text_guidance": "Handle text rendering as appropriate",
         "branding_guidance": "Handle branding as appropriate"
     })
@@ -340,8 +361,11 @@ def _get_creative_expert_user_prompt(
 ) -> str:
     """Constructs the user prompt for the Creative Expert agent."""
     
+    # Clean platform name to remove aspect ratio information
+    clean_platform_name = _clean_platform_name(platform_name)
+    
     user_prompt_parts = [
-        f"Generate a structured visual concept for an image targeting the '{platform_name}' platform (intended visual aspect ratio for prompt: {aspect_ratio_for_prompt}).",
+        f"Generate a structured visual concept for an image targeting the '{clean_platform_name}' platform (intended visual aspect ratio for prompt: {aspect_ratio_for_prompt}).",
         f"The core marketing strategy for this image is:",
         f"- Target Audience: {strategy.get('target_audience', 'N/A')}",
         f"- Target Niche: {strategy.get('target_niche', 'N/A')}",
@@ -391,15 +415,15 @@ def _get_creative_expert_user_prompt(
     else:
         user_prompt_parts.append("- No image reference was provided. Generate the full concept including the `main_subject`.")
 
-    # Platform optimization guidance
+    # Platform optimization guidance - updated to use cleaned platform names and consistent aspect ratios
     platform_guidance_map = {
-        "Instagram Post (1:1 Square)": "Optimize for Instagram Feed: Aim for a polished, visually cohesive aesthetic. Consider compositions suitable for square or vertical feeds. Ensure text placement is easily readable.",
-        "Instagram Story/Reel (9:16 Vertical)": "Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for a vertical format. Consider bold text, trendy effects, or concepts suitable for short video loops or interactive elements.",
-        "Facebook Post (Mixed)": "Optimize for Facebook Feed: Design for broad appeal and shareability. Ensure clear branding and messaging for potential ad use.",
-        "Pinterest Pin (2:3 Vertical)": "Optimize for Pinterest: Create visually striking, informative vertical images. Focus on aesthetics, clear subject matter, and potential for text overlays that add value.",
-        "Xiaohongshu (Red Note) (3:4 Vertical)": "Optimize for Xiaohongshu: Focus on authentic, aesthetically pleasing, informative, and often lifestyle-oriented visuals. Use high-quality imagery, potentially with integrated text overlays in a blog-post style. Vertical format is preferred.",
+        "Instagram Post": f"Optimize for Instagram Feed: Aim for a polished, visually cohesive aesthetic suitable for {aspect_ratio_for_prompt} format. Consider compositions suitable for feed posts. Ensure text placement is easily readable.",
+        "Instagram Story/Reel": f"Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for {aspect_ratio_for_prompt} vertical format. Consider bold text, trendy effects, or concepts suitable for short video loops or interactive elements.",
+        "Facebook Post": f"Optimize for Facebook Feed: Design for broad appeal and shareability in {aspect_ratio_for_prompt} format. Ensure clear branding and messaging for potential ad use.",
+        "Pinterest Pin": f"Optimize for Pinterest: Create visually striking, informative vertical images in {aspect_ratio_for_prompt} format. Focus on aesthetics, clear subject matter, and potential for text overlays that add value.",
+        "Xiaohongshu (Red Note)": f"Optimize for Xiaohongshu: Focus on authentic, aesthetically pleasing, informative, and often lifestyle-oriented visuals in {aspect_ratio_for_prompt} vertical format. Use high-quality imagery, potentially with integrated text overlays in a blog-post style.",
     }
-    platform_guidance_text = platform_guidance_map.get(platform_name, f"Adapt the concept for the target platform '{platform_name}'.")
+    platform_guidance_text = platform_guidance_map.get(clean_platform_name, f"Adapt the concept for the target platform '{clean_platform_name}' using {aspect_ratio_for_prompt} aspect ratio.")
     user_prompt_parts.append(f"\n**Platform Optimization (General Reminder):** {platform_guidance_text} (Detailed task-specific platform optimization is in system prompt).")
 
     final_instruction = f"""

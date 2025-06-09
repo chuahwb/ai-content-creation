@@ -148,7 +148,7 @@ def run(ctx: PipelineContext) -> None:
             "prompt": final_prompt,
             "assembly_type": "default_edit" if (has_reference and not has_instruction) else "full_generation",
             "platform_aspect_ratio": platform_aspect_ratio,
-            "supported_aspect_ratio": map_to_supported_aspect_ratio_for_prompt(platform_aspect_ratio, ctx)
+            "supported_aspect_ratio": map_to_supported_aspect_ratio_for_prompt(platform_aspect_ratio)
         }
         
         assembled_prompts.append(assembled_prompt_data)
