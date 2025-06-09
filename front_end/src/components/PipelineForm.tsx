@@ -106,7 +106,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     defaultValues: {
       mode: 'easy_mode',
       platform_name: '',
-      creativity_level: 2,
+      creativity_level: 1,
       num_variants: 3,
       render_text: false,
       apply_branding: false,

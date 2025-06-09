@@ -61,8 +61,8 @@ export default function RunHistory({ onViewRun }: RunHistoryProps) {
         statusFilter || undefined
       );
       
-      setRuns(response.runs);
-      setTotal(response.total);
+      setRuns(Array.isArray(response?.runs) ? response.runs : []);
+      setTotal(response?.total || 0);
       
     } catch (err: any) {
       const errorMsg = err.message || 'Failed to fetch runs';
@@ -141,6 +141,8 @@ export default function RunHistory({ onViewRun }: RunHistoryProps) {
     >
       <Card elevation={1}>
         <CardContent sx={{ p: 4 }}>
+
+
           {/* Header */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
             <Typography variant="h4" sx={{ fontWeight: 600 }}>
