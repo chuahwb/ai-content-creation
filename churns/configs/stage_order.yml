@@ -8,4 +8,5 @@ stages:
   - style_guide   # Style guider agent
   - creative_expert # Detailed concept generator  
   - prompt_assembly # Build final prompt string
-  - image_generation # Call gpt-image-1 API 
+  - image_generation # Call gpt-image-1 API
+  - image_assessment # Quality assessment of generated images 

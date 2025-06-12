@@ -18,7 +18,7 @@ class PipelineContext:
     
     # Pipeline settings
     run_id: str = field(default_factory=lambda: datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
-    creativity_level: int = 2
+    creativity_level: int = 1
     num_variants: int = 3
     
     # Request details
@@ -42,6 +42,7 @@ class PipelineContext:
     generated_image_prompts: List[Dict[str, Any]] = field(default_factory=list)
     final_assembled_prompts: List[Dict[str, Any]] = field(default_factory=list)
     generated_image_results: List[Dict[str, Any]] = field(default_factory=list)
+    image_assessments: Optional[List[Dict[str, Any]]] = None
     
     # Usage tracking
     llm_usage: Dict[str, Any] = field(default_factory=dict)
@@ -80,6 +81,21 @@ class PipelineContext:
         self.logs.append(log_entry)
         print(log_entry)  # Also print to console for now
     
+    def add_image_assessment(self, assessment_data: Dict[str, Any]) -> None:
+        """Add assessment data for an image."""
+        if self.image_assessments is None:
+            self.image_assessments = []
+        self.image_assessments.append(assessment_data)
+    
+    def get_assessment_for_image(self, image_index: int) -> Optional[Dict[str, Any]]:
+        """Get assessment data for a specific image."""
+        if self.image_assessments is None:
+            return None
+        for assessment in self.image_assessments:
+            if assessment.get('image_index') == image_index:
+                return assessment
+        return None
+    
     @property
     def data(self) -> Dict[str, Any]:
         """
@@ -117,6 +133,7 @@ class PipelineContext:
                 "generated_image_prompts": self.generated_image_prompts,
                 "final_assembled_prompts": self.final_assembled_prompts,
                 "generated_image_results": self.generated_image_results,
+                **({} if self.image_assessments is None else {"image_assessment": self.image_assessments}),
                 "llm_call_usage": self.llm_usage,
                 "cost_summary": self.cost_summary
             }
@@ -150,6 +167,7 @@ class PipelineContext:
             generated_image_prompts=processing_context.get("generated_image_prompts", []),
             final_assembled_prompts=processing_context.get("final_assembled_prompts", []),
             generated_image_results=processing_context.get("generated_image_results", []),
+            image_assessments=processing_context.get("image_assessment"),
             llm_usage=processing_context.get("llm_call_usage", {}),
             cost_summary=processing_context.get("cost_summary")
         )

@@ -1,0 +1,15 @@
+version: "2"
+authtoken: 2rDEsDNYGVPazIHrCmSo0O77zhz_3gs8DNfWKPLSFEUjEacEj
+tunnels:
+  api:
+    proto: http
+    addr: 8000
+    inspect: false
+    schemes: [https]
+    host_header: rewrite
+  frontend:
+    proto: http
+    addr: 3000
+    inspect: false
+    schemes: [https]
+    host_header: rewrite 

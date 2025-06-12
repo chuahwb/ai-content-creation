@@ -1,5 +1,24 @@
 """
 Constants for the AI Marketing Pipeline.
+=======================================
+
+🎯 CENTRALIZED CONFIGURATION - Single Source of Truth
+-----------------------------------------------------
+This file serves as the ONLY place to define:
+- Model configurations (providers, IDs, pricing)
+- LLM settings (retries, parsing modes)
+- Platform definitions and task types
+- All other system constants
+
+⚠️  DO NOT duplicate these constants in other files!
+   Other modules should import from here to maintain consistency.
+
+Design Pattern:
+- Pipeline stages have placeholder variables (set to None)
+- PipelineExecutor injects actual values from this file
+- API clients get configuration through ClientConfig class
+- Background tasks import pricing/model info directly
+
 All constants copied verbatim from the original combined_pipeline.py
 """
 
@@ -25,10 +44,56 @@ STYLE_GUIDER_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "dee
 CREATIVE_EXPERT_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
 CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
 
+# Image Assessment Model (dedicated for image quality evaluation)
+IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenAI"  # Direct OpenAI for reliable multi-image processing
+IMAGE_ASSESSMENT_MODEL_ID = "gpt-4.1"  # OpenAI native client for vision tasks
+
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 
 # Models known to have issues with instructor's default TOOLS mode via OpenRouter
-INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = ["openai/o4-mini", "google/gemini-2.5-pro-preview"]
+INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = ["openai/o4-mini", "google/gemini-2.5-pro-preview", "openai/o4-mini-high"]
+
+# --- Image Token Calculation Parameters ---
+# Two different calculation methods based on model family
+IMAGE_TOKEN_CALCULATION_METHODS = {
+    # Method 1: 32px patch-based calculation (GPT-4.1-mini, GPT-4.1-nano, o4-mini)
+    "patch_based": {
+        "patch_size": 32,
+        "max_patches": 1536,
+        "model_multipliers": {
+            "gpt-4.1-mini": 1.62,
+            "gpt-4.1-nano": 2.46, 
+            "o4-mini": 1.72,
+            "o4-mini-high": 1.72
+        }
+    },
+    
+    # Method 2: Tile-based calculation (GPT-4o, GPT-4.1, GPT-4o-mini, CUA, o-series except o4-mini)
+    "tile_based": {
+        "max_square": 2048,
+        "shortest_side_target": 768,
+        "tile_size": 512,
+        "model_costs": {
+            "gpt-4o": {"base_tokens": 85, "tile_tokens": 170},
+            "gpt-4.1": {"base_tokens": 85, "tile_tokens": 170},
+            "gpt-4.5": {"base_tokens": 85, "tile_tokens": 170},
+            "gpt-4o-mini": {"base_tokens": 2833, "tile_tokens": 5667},
+            "o1": {"base_tokens": 75, "tile_tokens": 150},
+            "o1-pro": {"base_tokens": 75, "tile_tokens": 150},
+            "o3": {"base_tokens": 75, "tile_tokens": 150},
+            "computer-use-preview": {"base_tokens": 65, "tile_tokens": 129}
+        }
+    }
+}
+
+# Model family classification for image token calculation
+IMAGE_TOKEN_MODEL_FAMILIES = {
+    # Patch-based models (32px patches with multipliers)
+    "patch_based": ["gpt-4.1-mini", "gpt-4.1-nano", "o4-mini", "o4-mini-high"],
+    
+    # Tile-based models (512px tiles with base + tile costs)
+    "tile_based": ["gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4o-mini", "o1", "o1-pro", "o3", "computer-use-preview"]
+}
 
 # --- Model Pricing (USD) ---
 # Prices per 1 Million tokens for text, per image for image models
@@ -41,6 +106,13 @@ MODEL_PRICING = {
         "output_cost_per_mtok": 4.40,
         "currency": "USD",
         "notes": "Pricing for openai/o4-mini via OpenRouter."
+    },
+    "openai/o4-mini-high": {  # Used for Style Guider, Creative Expert
+        "provider": "OpenRouter",
+        "input_cost_per_mtok": 1.10,
+        "output_cost_per_mtok": 4.40,
+        "currency": "USD",
+        "notes": "Pricing for openai/o4-mini-high via OpenRouter."
     },
     "openai/gpt-4.1-mini": {  # Used for Image Eval, Niche ID, Strategy Gen
         "provider": "OpenRouter",  # Assuming this is an OpenRouter model ID
@@ -69,6 +141,20 @@ MODEL_PRICING = {
         "output_cost_per_mtok": 10.00,  # Example: Gemini 1.5 Pro on OpenRouter
         "currency": "USD",
         "notes": "Pricing for google/gemini-2.5-pro-preview via OpenRouter (using Gemini 1.5 Pro rates as proxy)."
+    },
+    "gpt-4.1": {  # Used for Image Assessment (vision tasks)
+        "provider": "OpenAI",
+        "input_cost_per_mtok": 2,  # $0.150 per 1M input tokens
+        "output_cost_per_mtok": 8,  # $0.600 per 1M output tokens
+        "currency": "USD",
+        "notes": "Pricing for gpt-4.1 via OpenAI native client (vision capabilities)."
+    },
+    "o4-mini": {  # Used for Image Assessment (vision tasks)
+        "provider": "OpenAI",
+        "input_cost_per_mtok": 1.1,  # $0.150 per 1M input tokens
+        "output_cost_per_mtok": 4.4,  # $0.600 per 1M output tokens
+        "currency": "USD",
+        "notes": "Pricing for gpt-4.1 via OpenAI native client (vision capabilities)."
     },
     "gpt-image-1": {
         "provider": "OpenAI",

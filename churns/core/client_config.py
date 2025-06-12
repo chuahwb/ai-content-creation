@@ -9,6 +9,24 @@ import os
 from typing import Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 
+# Import configuration constants from central location
+from .constants import (
+    MAX_LLM_RETRIES,
+    FORCE_MANUAL_JSON_PARSE,
+    INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS,
+    IMG_EVAL_MODEL_PROVIDER,
+    IMG_EVAL_MODEL_ID,
+    STRATEGY_MODEL_PROVIDER,
+    STRATEGY_MODEL_ID,
+    STYLE_GUIDER_MODEL_PROVIDER,
+    STYLE_GUIDER_MODEL_ID,
+    CREATIVE_EXPERT_MODEL_PROVIDER,
+    CREATIVE_EXPERT_MODEL_ID,
+    IMAGE_ASSESSMENT_MODEL_PROVIDER,
+    IMAGE_ASSESSMENT_MODEL_ID,
+    IMAGE_GENERATION_MODEL_ID
+)
+
 # Import OpenAI and related libraries
 try:
     from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
@@ -32,32 +50,30 @@ class ClientConfig:
         self.gemini_api_key = None
         self.openai_api_key = None
         
-        # Configuration flags (from original monolith)
-        self.max_llm_retries = 1
-        self.force_manual_json_parse = False  # Set to False to try Instructor first
+        # Use centralized configuration (from constants.py)
+        self.max_llm_retries = MAX_LLM_RETRIES
+        self.force_manual_json_parse = FORCE_MANUAL_JSON_PARSE
+        self.instructor_tool_mode_problem_models = INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS
         
-        # Model configurations (from original monolith)
+        # Model configurations (from constants.py)
         self.model_config = {
-            "IMG_EVAL_MODEL_PROVIDER": "OpenRouter",
-            "IMG_EVAL_MODEL_ID": "openai/gpt-4.1-mini",
+            "IMG_EVAL_MODEL_PROVIDER": IMG_EVAL_MODEL_PROVIDER,
+            "IMG_EVAL_MODEL_ID": IMG_EVAL_MODEL_ID,
             
-            "STRATEGY_MODEL_PROVIDER": "OpenRouter", 
-            "STRATEGY_MODEL_ID": "openai/gpt-4.1-mini",
+            "STRATEGY_MODEL_PROVIDER": STRATEGY_MODEL_PROVIDER, 
+            "STRATEGY_MODEL_ID": STRATEGY_MODEL_ID,
             
-            "STYLE_GUIDER_MODEL_PROVIDER": "OpenRouter",
-            "STYLE_GUIDER_MODEL_ID": "google/gemini-2.5-pro-preview",
+            "STYLE_GUIDER_MODEL_PROVIDER": STYLE_GUIDER_MODEL_PROVIDER,
+            "STYLE_GUIDER_MODEL_ID": STYLE_GUIDER_MODEL_ID,
             
-            "CREATIVE_EXPERT_MODEL_PROVIDER": "OpenRouter",
-            "CREATIVE_EXPERT_MODEL_ID": "google/gemini-2.5-pro-preview",
+            "CREATIVE_EXPERT_MODEL_PROVIDER": CREATIVE_EXPERT_MODEL_PROVIDER,
+            "CREATIVE_EXPERT_MODEL_ID": CREATIVE_EXPERT_MODEL_ID,
             
-            "IMAGE_GENERATION_MODEL_ID": "gpt-image-1"
+            "IMAGE_ASSESSMENT_MODEL_PROVIDER": IMAGE_ASSESSMENT_MODEL_PROVIDER,
+            "IMAGE_ASSESSMENT_MODEL_ID": IMAGE_ASSESSMENT_MODEL_ID,
+            
+            "IMAGE_GENERATION_MODEL_ID": IMAGE_GENERATION_MODEL_ID
         }
-        
-        # Models known to have issues with instructor's default TOOLS mode
-        self.instructor_tool_mode_problem_models = [
-            "openai/o4-mini",
-            "google/gemini-2.5-pro-preview"
-        ]
         
         # Initialize clients storage
         self.clients = {}
@@ -67,7 +83,7 @@ class ClientConfig:
         self._configure_clients()
     
     def _load_environment(self):
-        """Load API keys from environment file."""
+        """Load API keys from environment file and check for model configuration overrides."""
         print(f"🔧 Loading environment from: {self.env_path}")
         
         if os.path.exists(self.env_path):
@@ -77,6 +93,9 @@ class ClientConfig:
             self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
             self.gemini_api_key = os.getenv("GEMINI_API_KEY")
             self.openai_api_key = os.getenv("OPENAI_API_KEY")
+            
+            # Check for model configuration overrides via environment variables
+            self._check_model_config_overrides()
             
             # Log which keys are available (without showing the actual keys)
             keys_status = {
@@ -91,6 +110,39 @@ class ClientConfig:
         else:
             print(f"⚠️ Warning: .env file not found at {self.env_path}")
             print("  API keys should be set as environment variables or the pipeline will use simulation mode")
+    
+    def _check_model_config_overrides(self):
+        """Check for environment variable overrides of model configuration."""
+        overrides = {}
+        
+        # Define mapping of environment variables to model config keys
+        env_to_config_map = {
+            "IMG_EVAL_MODEL_PROVIDER": "IMG_EVAL_MODEL_PROVIDER",
+            "IMG_EVAL_MODEL_ID": "IMG_EVAL_MODEL_ID",
+            "STRATEGY_MODEL_PROVIDER": "STRATEGY_MODEL_PROVIDER",
+            "STRATEGY_MODEL_ID": "STRATEGY_MODEL_ID",
+            "STYLE_GUIDER_MODEL_PROVIDER": "STYLE_GUIDER_MODEL_PROVIDER",
+            "STYLE_GUIDER_MODEL_ID": "STYLE_GUIDER_MODEL_ID",
+            "CREATIVE_EXPERT_MODEL_PROVIDER": "CREATIVE_EXPERT_MODEL_PROVIDER",
+            "CREATIVE_EXPERT_MODEL_ID": "CREATIVE_EXPERT_MODEL_ID",
+            "IMAGE_ASSESSMENT_MODEL_PROVIDER": "IMAGE_ASSESSMENT_MODEL_PROVIDER",
+            "IMAGE_ASSESSMENT_MODEL_ID": "IMAGE_ASSESSMENT_MODEL_ID",
+            "IMAGE_GENERATION_MODEL_ID": "IMAGE_GENERATION_MODEL_ID"
+        }
+        
+        # Check each possible environment variable override
+        for env_var, config_key in env_to_config_map.items():
+            env_value = os.getenv(env_var)
+            if env_value:
+                original_value = self.model_config[config_key]
+                self.model_config[config_key] = env_value
+                overrides[config_key] = {"original": original_value, "override": env_value}
+                print(f"🔧 Model config override: {config_key} = {env_value} (was: {original_value})")
+        
+        if overrides:
+            print(f"✅ Applied {len(overrides)} model configuration overrides from environment variables")
+        else:
+            print("📋 Using default model configuration from constants.py (no environment overrides found)")
     
     def _configure_llm_client(self, provider_name: str, model_id: str, purpose: str) -> Tuple[Optional[Any], Optional[Any]]:
         """Configure a base OpenAI client and an instructor-patched client (from original monolith)."""
@@ -114,6 +166,13 @@ class ClientConfig:
             base_url_to_use = "https://generativelanguage.googleapis.com/v1beta/openai/"
             print(f"🔧 Configuring Gemini client for {purpose} with model {model_id}")
             print("NOTE: Direct Gemini integration might require 'google-generativeai' library")
+        elif provider_name == "OpenAI":
+            if not self.openai_api_key:
+                print(f"⚠️ OpenAI API Key not found for {purpose}. Client not configured.")
+                return None, None
+            api_key_to_use = self.openai_api_key
+            base_url_to_use = None  # Use default OpenAI base URL
+            print(f"🔧 Configuring OpenAI client for {purpose} with model {model_id}")
         else:
             print(f"❌ Unsupported provider: {provider_name} for {purpose}")
             return None, None
@@ -172,6 +231,12 @@ class ClientConfig:
             "Creative Expert"
         )
         
+        base_llm_client_image_assessment, instructor_client_image_assessment = self._configure_llm_client(
+            self.model_config["IMAGE_ASSESSMENT_MODEL_PROVIDER"], 
+            self.model_config["IMAGE_ASSESSMENT_MODEL_ID"], 
+            "Image Assessment"
+        )
+        
         # Configure Image Generation Client (typically OpenAI)
         image_gen_client = None
         if OpenAI and self.openai_api_key:
@@ -199,6 +264,8 @@ class ClientConfig:
             'instructor_client_style_guide': instructor_client_style_guide,
             'base_llm_client_creative_expert': base_llm_client_creative_expert,
             'instructor_client_creative_expert': instructor_client_creative_expert,
+            'base_llm_client_image_assessment': base_llm_client_image_assessment,
+            'instructor_client_image_assessment': instructor_client_image_assessment,
             'image_gen_client': image_gen_client
         }
         

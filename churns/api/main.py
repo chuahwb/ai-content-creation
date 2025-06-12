@@ -72,6 +72,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://frontend:3000",   # Docker service name
     ],
+    allow_origin_regex=r"https://.*\.ngrok-free\.app",  # Automatically allow any ngrok subdomain
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],

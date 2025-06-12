@@ -119,6 +119,9 @@ class PipelineResults(BaseModel):
     final_prompts: Optional[List[Dict[str, Any]]] = None
     generated_images: Optional[List[GeneratedImageResult]] = None
     
+    # NEW: Image assessments
+    image_assessments: Optional[List[Dict[str, Any]]] = None
+    
     # Cost and performance
     total_cost_usd: Optional[float] = None
     total_duration_seconds: Optional[float] = None

@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import mimetypes
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -41,7 +42,7 @@ async def startup_event():
 
 
 # Pipeline Run Endpoints
-@runs_router.post("/", response_model=PipelineRunResponse)
+@runs_router.post("", response_model=PipelineRunResponse)
 async def create_pipeline_run(
     # Required fields
     mode: str = Form(..., description="Pipeline mode"),
@@ -319,25 +320,87 @@ async def get_pipeline_run(
     )
 
 
+@runs_router.get("/{run_id}/status", response_model=dict)
+async def get_run_status(
+    run_id: str,
+    session: Session = Depends(get_session)
+):
+    """Get detailed status information about a pipeline run"""
+    run = session.get(PipelineRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    
+    # Get stages for this run
+    stages_query = select(PipelineStage).where(
+        PipelineStage.run_id == run_id
+    ).order_by(PipelineStage.stage_order)
+    
+    stages = session.exec(stages_query).all()
+    
+    # Check if run is actually running
+    is_active = run_id in task_processor.active_tasks
+    
+    # If status is RUNNING but task is not active, it's stalled
+    actual_status = run.status
+    if run.status == RunStatus.RUNNING and not is_active:
+        actual_status = RunStatus.FAILED
+        
+        # Update the database
+        run.status = RunStatus.FAILED
+        run.error_message = "Pipeline execution was interrupted unexpectedly"
+        run.completed_at = datetime.utcnow()
+        if run.started_at:
+            run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+        session.add(run)
+        session.commit()
+    
+    return {
+        "id": run.id,
+        "status": actual_status,
+        "is_active": is_active,
+        "created_at": run.created_at,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "error_message": run.error_message,
+        "total_duration_seconds": run.total_duration_seconds,
+        "current_stage": stages[-1].stage_name if stages else None,
+        "stage_count": len(stages),
+        "completed_stages": len([s for s in stages if s.status == StageStatus.COMPLETED]),
+        "failed_stages": len([s for s in stages if s.status == StageStatus.FAILED])
+    }
+
+
 @runs_router.post("/{run_id}/cancel")
 async def cancel_pipeline_run(
     run_id: str,
     session: Session = Depends(get_session)
 ):
     """Cancel a running pipeline"""
-    
     run = session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
-    if run.status not in [RunStatus.PENDING, RunStatus.RUNNING]:
-        raise HTTPException(status_code=400, detail="Cannot cancel completed pipeline")
+    if run.status in [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED]:
+        return {"message": f"Pipeline is already in final state: {run.status}"}
     
-    success = task_processor.cancel_run(run_id)
-    if not success:
-        raise HTTPException(status_code=400, detail="Pipeline not currently running")
+    # Attempt to cancel
+    cancelled = task_processor.cancel_run(run_id)
     
-    return {"message": "Pipeline cancelled successfully"}
+    if cancelled:
+        return {"message": "Pipeline cancelled successfully"}
+    else:
+        # If not cancelled but status is RUNNING, it means the run is stalled
+        if run.status == RunStatus.RUNNING:
+            run.status = RunStatus.CANCELLED
+            run.completed_at = datetime.utcnow()
+            run.error_message = "Pipeline execution was cancelled (stalled run)"
+            if run.started_at:
+                run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+            session.add(run)
+            session.commit()
+            return {"message": "Stalled pipeline marked as cancelled"}
+        else:
+            return {"message": "Pipeline is not currently running"}
 
 
 @runs_router.get("/{run_id}/results", response_model=PipelineResults)
@@ -404,6 +467,8 @@ async def get_pipeline_results(
             visual_concepts=processing_context.get("generated_image_prompts"),
             final_prompts=processing_context.get("final_assembled_prompts"),
             generated_images=generated_images,
+            # NEW: Include image assessments
+            image_assessments=processing_context.get("image_assessment"),
             total_cost_usd=cost_summary.get("total_pipeline_cost_usd"),
             total_duration_seconds=cost_summary.get("total_pipeline_duration_seconds"),
             stage_costs=cost_summary.get("stage_costs")

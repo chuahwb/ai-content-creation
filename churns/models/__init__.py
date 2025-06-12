@@ -100,3 +100,8 @@ class PipelineCostSummary(BaseModel):
     currency: str = "USD"
     pricing_info_url: str = "Note: Prices are estimates based on known rates at the time of implementation (June 2025) and may vary. Check provider (OpenRouter/OpenAI) for current rates."
     cost_calculation_error: Optional[str] = None
+
+class ImageAssessmentResult(BaseModel):
+    """Structured result of image quality assessment."""
+    assessment_scores: Dict[str, int] = Field(..., description="Scores for different assessment criteria (1-5 scale)")
+    assessment_justification: Dict[str, str] = Field(..., description="Detailed justification for each score")

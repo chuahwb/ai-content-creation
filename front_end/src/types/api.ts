@@ -49,7 +49,10 @@ export interface StageProgressUpdate {
   completed_at?: string;
   duration_seconds?: number;
   message: string;
-  output_data?: Record<string, any>;
+  output_data?: Record<string, any> & {
+    // NEW: Assessment stage specific output
+    image_assessments?: ImageAssessmentData[];
+  };
   error_message?: string;
 }
 
@@ -88,12 +91,41 @@ export interface PipelineRunDetail extends PipelineRunResponse {
   marketing_niche?: string;
 }
 
+// NEW: Assessment data structure
+export interface ImageAssessmentData {
+  image_index: number;
+  image_path: string;
+  assessment_scores: {
+    concept_adherence: number;
+    technical_quality: number;
+    subject_preservation?: number;
+    text_rendering_quality?: number;
+  };
+  assessment_justification: {
+    concept_adherence: string;
+    technical_quality: string;
+    subject_preservation?: string;
+    text_rendering_quality?: string;
+  };
+  general_score: number;
+  needs_subject_repair: boolean;
+  needs_regeneration: boolean;
+  needs_text_repair: boolean;
+  _meta?: {
+    tokens_used: number;
+    model: string;
+    fallback?: boolean;
+  };
+}
+
 export interface GeneratedImageResult {
   strategy_index: number;
   status: string;
   image_path?: string;
   error_message?: string;
   prompt_used?: string;
+  // NEW: Assessment data
+  assessment?: ImageAssessmentData;
 }
 
 export interface PipelineResults {
@@ -105,6 +137,8 @@ export interface PipelineResults {
   visual_concepts?: Record<string, any>[];
   final_prompts?: Record<string, any>[];
   generated_images?: GeneratedImageResult[];
+  // NEW: Image assessments
+  image_assessments?: ImageAssessmentData[];
   total_cost_usd?: number;
   total_duration_seconds?: number;
   stage_costs?: Record<string, any>[];

@@ -20,8 +20,44 @@ from churns.api.schemas import (
 from churns.api.websocket import connection_manager
 from churns.pipeline.context import PipelineContext
 from churns.pipeline.executor import PipelineExecutor
+from churns.core.constants import (
+    MODEL_PRICING, 
+    IMAGE_ASSESSMENT_MODEL_ID,
+    IMG_EVAL_MODEL_ID,
+    STRATEGY_MODEL_ID, 
+    STYLE_GUIDER_MODEL_ID,
+    CREATIVE_EXPERT_MODEL_ID,
+    IMAGE_GENERATION_MODEL_ID
+)
+from churns.core.token_cost_manager import get_token_cost_manager, calculate_stage_cost_from_usage
 
 logger = logging.getLogger(__name__)
+
+
+def get_model_pricing(model_id: str, fallback_input_rate: float = 0.001, fallback_output_rate: float = 0.001):
+    """
+    Get pricing for a model from centralized MODEL_PRICING with fallback protection.
+    
+    Args:
+        model_id: The model identifier 
+        fallback_input_rate: Fallback input rate per 1M tokens
+        fallback_output_rate: Fallback output rate per 1M tokens
+        
+    Returns:
+        Dict with 'input_rate' and 'output_rate' keys
+    """
+    pricing = MODEL_PRICING.get(model_id)
+    if not pricing:
+        logger.warning(f"No pricing found for model {model_id}, using fallback rates")
+        return {
+            "input_rate": fallback_input_rate,
+            "output_rate": fallback_output_rate
+        }
+    
+    return {
+        "input_rate": pricing["input_cost_per_mtok"],
+        "output_rate": pricing["output_cost_per_mtok"]
+    }
 
 
 class PipelineTaskProcessor:
@@ -29,19 +65,100 @@ class PipelineTaskProcessor:
     
     def __init__(self):
         self.active_tasks: Dict[str, asyncio.Task] = {}
+        self.run_timeouts: Dict[str, asyncio.Task] = {}
+        self.PIPELINE_TIMEOUT_SECONDS = 3600  # 1 hour timeout
         
+    async def _check_run_timeout(self, run_id: str):
+        """Check if a run has exceeded the timeout limit"""
+        try:
+            await asyncio.sleep(self.PIPELINE_TIMEOUT_SECONDS)
+            if run_id in self.active_tasks:
+                logger.warning(f"Pipeline run {run_id} exceeded timeout limit of {self.PIPELINE_TIMEOUT_SECONDS}s")
+                await self._handle_timeout(run_id)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.run_timeouts.pop(run_id, None)
+    
+    async def _handle_timeout(self, run_id: str):
+        """Handle a timed out pipeline run"""
+        if run_id in self.active_tasks:
+            task = self.active_tasks[run_id]
+            task.cancel()
+            self.active_tasks.pop(run_id, None)
+            
+            # Update database
+            with Session(engine) as session:
+                run = session.get(PipelineRun, run_id)
+                if run and run.status == RunStatus.RUNNING:
+                    run.status = RunStatus.FAILED
+                    run.completed_at = datetime.utcnow()
+                    run.error_message = f"Pipeline execution timed out after {self.PIPELINE_TIMEOUT_SECONDS} seconds"
+                    if run.started_at:
+                        run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                    session.add(run)
+                    session.commit()
+            
+            # Notify clients
+            await connection_manager.send_run_error(
+                run_id, 
+                f"Pipeline execution timed out after {self.PIPELINE_TIMEOUT_SECONDS} seconds",
+                {"type": "timeout"}
+            )
+
     async def start_pipeline_run(self, run_id: str, request: PipelineRunRequest, image_data: Optional[bytes] = None):
         """Start a pipeline run in the background"""
-        if run_id in self.active_tasks:
-            logger.warning(f"Pipeline run {run_id} is already running")
-            return
+        # First check if there's a stalled run
+        with Session(engine) as session:
+            run = session.get(PipelineRun, run_id)
+            if not run:
+                logger.error(f"Run {run_id} not found in database")
+                return
+            
+            # If run exists but shows as running and not in active tasks, it's stalled
+            if run.status == RunStatus.RUNNING and run_id not in self.active_tasks:
+                run.status = RunStatus.FAILED
+                run.completed_at = datetime.utcnow()
+                run.error_message = "Pipeline execution was interrupted unexpectedly"
+                if run.started_at:
+                    run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                session.add(run)
+                session.commit()
+                
+                await connection_manager.send_run_error(
+                    run_id,
+                    "Pipeline execution was interrupted unexpectedly",
+                    {"type": "stalled"}
+                )
+                return
+            
+            # If run is already active, don't start again
+            if run_id in self.active_tasks:
+                logger.warning(f"Pipeline run {run_id} is already running")
+                return
+            
+            # Start the run
+            run.status = RunStatus.RUNNING
+            run.started_at = datetime.utcnow()
+            run.error_message = None  # Clear any previous error
+            session.add(run)
+            session.commit()
         
         # Create and start the background task
         task = asyncio.create_task(self._execute_pipeline(run_id, request, image_data))
         self.active_tasks[run_id] = task
         
+        # Start timeout monitor
+        timeout_task = asyncio.create_task(self._check_run_timeout(run_id))
+        self.run_timeouts[run_id] = timeout_task
+        
         # Clean up completed tasks
-        task.add_done_callback(lambda t: self.active_tasks.pop(run_id, None))
+        def cleanup_tasks(t):
+            self.active_tasks.pop(run_id, None)
+            if run_id in self.run_timeouts:
+                self.run_timeouts[run_id].cancel()
+        
+        task.add_done_callback(cleanup_tasks)
         
         logger.info(f"Started background pipeline task for run {run_id}")
     
@@ -92,7 +209,7 @@ class PipelineTaskProcessor:
                                       error_message: Optional[str] = None,
                                       duration_seconds: Optional[float] = None):
                 
-                # Calculate cost based on actual API usage data, not estimates
+                # Calculate cost using centralized token cost manager
                 nonlocal total_cost, stage_costs
                 if status == StageStatus.COMPLETED and duration_seconds:
                     stage_cost = 0.0
@@ -102,67 +219,107 @@ class PipelineTaskProcessor:
                         processing_context = (context.data or {}).get("processing_context", {})
                         llm_usage = processing_context.get("llm_call_usage", {})
                         
-                        # Calculate cost based on actual token usage for this stage
+                        # Use centralized cost calculation system
                         if stage_name == "image_generation":
-                            # Use actual image generation results
+                            # Handle image generation separately as it has different structure
                             image_results = processing_context.get("generated_image_results", [])
                             actual_images = len([r for r in image_results if r.get("status") == "success"])
                             total_prompt_tokens = sum(r.get("prompt_tokens", 0) for r in image_results if r.get("prompt_tokens"))
                             
                             if actual_images > 0 and total_prompt_tokens > 0:
-                                # Use actual usage data
-                                text_cost = (total_prompt_tokens / 1_000_000) * 5.00  # $5/1M tokens
-                                image_cost = (1056 * actual_images / 1_000_000) * 40.00  # $40/1M tokens per image
-                                stage_cost = text_cost + image_cost
-                                logger.info(f"Image generation actual cost: ${text_cost:.6f} (text) + ${image_cost:.6f} ({actual_images} images) = ${stage_cost:.6f}")
+                                # Use the token cost manager for image generation
+                                token_manager = get_token_cost_manager()
+                                from churns.core.token_cost_manager import TokenUsage
+                                
+                                usage = TokenUsage(
+                                    prompt_tokens=total_prompt_tokens,
+                                    completion_tokens=0,  # Image generation doesn't have completion tokens
+                                    total_tokens=total_prompt_tokens,
+                                    model=IMAGE_GENERATION_MODEL_ID,
+                                    provider="openai"
+                                )
+                                
+                                image_details = {
+                                    "count": actual_images,
+                                    "resolution": "1024x1024",  # Assume standard resolution
+                                    "quality": "medium"  # Assume medium quality
+                                }
+                                
+                                cost_breakdown = token_manager.calculate_cost(usage, image_details)
+                                stage_cost = cost_breakdown.total_cost
+                                logger.info(f"Image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID} - {cost_breakdown.notes}")
                             else:
                                 stage_cost = 0.0  # No successful generation
                                 
                         elif stage_name == "image_eval":
-                            # Use actual VLM usage
-                            if "image_eval" in llm_usage:
-                                usage = llm_usage["image_eval"]
-                                input_tokens = usage.get("prompt_tokens", 0)
-                                output_tokens = usage.get("completion_tokens", 0)
-                                stage_cost = (input_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
+                            # Use centralized cost calculation
+                            cost_result = calculate_stage_cost_from_usage(
+                                stage_name, llm_usage, ["image_eval"], IMG_EVAL_MODEL_ID
+                            )
+                            stage_cost = cost_result.get("total_cost", 0.0)
+                            if stage_cost > 0:
+                                logger.info(f"Image eval cost: ${stage_cost:.6f} using {IMG_EVAL_MODEL_ID}")
                                 
                         elif stage_name == "strategy":
-                            # Use actual strategy generation usage
-                            total_strategy_cost = 0.0
-                            for key in ["strategy_niche_id", "strategy_goal_gen"]:
-                                if key in llm_usage:
-                                    usage = llm_usage[key]
-                                    input_tokens = usage.get("prompt_tokens", 0)
-                                    output_tokens = usage.get("completion_tokens", 0)
-                                    total_strategy_cost += (input_tokens / 1_000_000) * 0.40 + (output_tokens / 1_000_000) * 1.20
-                            stage_cost = total_strategy_cost
+                            # Use centralized cost calculation for multiple keys
+                            cost_result = calculate_stage_cost_from_usage(
+                                stage_name, llm_usage, ["strategy_niche_id", "strategy_goal_gen"], STRATEGY_MODEL_ID
+                            )
+                            stage_cost = cost_result.get("total_cost", 0.0)
+                            if stage_cost > 0:
+                                logger.info(f"Strategy cost: ${stage_cost:.6f} using {STRATEGY_MODEL_ID}")
                             
                         elif stage_name == "style_guide":
-                            # Use actual style guidance usage
-                            if "style_guider" in llm_usage:
-                                usage = llm_usage["style_guider"]
-                                input_tokens = usage.get("prompt_tokens", 0)
-                                output_tokens = usage.get("completion_tokens", 0)
-                                stage_cost = (input_tokens / 1_000_000) * 1.25 + (output_tokens / 1_000_000) * 10.00  # Gemini pricing
+                            # Use centralized cost calculation
+                            cost_result = calculate_stage_cost_from_usage(
+                                stage_name, llm_usage, ["style_guider"], STYLE_GUIDER_MODEL_ID
+                            )
+                            stage_cost = cost_result.get("total_cost", 0.0)
+                            if stage_cost > 0:
+                                logger.info(f"Style guide cost: ${stage_cost:.6f} using {STYLE_GUIDER_MODEL_ID}")
                                 
                         elif stage_name == "creative_expert":
-                            # Use actual creative expert usage (multiple strategy calls)
-                            total_creative_cost = 0.0
-                            for key in llm_usage:
-                                if key.startswith("creative_expert_strategy_"):
-                                    usage = llm_usage[key]
-                                    input_tokens = usage.get("prompt_tokens", 0)
-                                    output_tokens = usage.get("completion_tokens", 0)
-                                    total_creative_cost += (input_tokens / 1_000_000) * 1.25 + (output_tokens / 1_000_000) * 10.00  # Gemini pricing
-                            stage_cost = total_creative_cost
+                            # Use centralized cost calculation for multiple strategy keys
+                            creative_keys = [key for key in llm_usage.keys() if key.startswith("creative_expert_strategy_")]
+                            cost_result = calculate_stage_cost_from_usage(
+                                stage_name, llm_usage, creative_keys, CREATIVE_EXPERT_MODEL_ID
+                            )
+                            stage_cost = cost_result.get("total_cost", 0.0)
+                            if stage_cost > 0:
+                                logger.info(f"Creative expert cost: ${stage_cost:.6f} using {CREATIVE_EXPERT_MODEL_ID}")
+                            
+                        elif stage_name == "image_assessment":
+                            # Use centralized cost calculation with detailed logging
+                            cost_result = calculate_stage_cost_from_usage(
+                                stage_name, llm_usage, ["image_assessment"], IMAGE_ASSESSMENT_MODEL_ID
+                            )
+                            stage_cost = cost_result.get("total_cost", 0.0)
+                            
+                            if stage_cost > 0 and "image_assessment" in llm_usage:
+                                assessment_usage = llm_usage["image_assessment"]
+                                total_prompt_tokens = assessment_usage.get("prompt_tokens", 0)
+                                completion_tokens = assessment_usage.get("completion_tokens", 0)
+                                image_tokens = assessment_usage.get("image_tokens", 0)
+                                text_tokens = assessment_usage.get("text_tokens", 0)
+                                assessment_count = assessment_usage.get("assessment_count", 0)
+                                
+                                logger.info(f"Image assessment cost: ${stage_cost:.6f} using {IMAGE_ASSESSMENT_MODEL_ID}")
+                                logger.info(f"  Detailed breakdown:")
+                                logger.info(f"    Total prompt tokens: {total_prompt_tokens:,}")
+                                logger.info(f"      └─ Image tokens: {image_tokens:,}")
+                                logger.info(f"      └─ Text tokens: {text_tokens:,}")
+                                logger.info(f"    Completion tokens: {completion_tokens:,}")
+                                logger.info(f"    Assessments completed: {assessment_count}")
+                            elif stage_cost == 0:
+                                stage_cost = 0.0001  # Minimal cost if no usage data
                             
                         else:
                             # Other stages - minimal cost
                             stage_cost = 0.0001
                             
                     except Exception as e:
-                        logger.warning(f"Failed to calculate actual cost for stage {stage_name}: {e}")
-                        # Fallback to minimal cost, not hardcoded estimates
+                        logger.warning(f"Failed to calculate cost for stage {stage_name}: {e}")
+                        # Fallback to minimal cost
                         stage_cost = 0.0001
                     
                     if stage_cost > 0:
@@ -174,16 +331,17 @@ class PipelineTaskProcessor:
                         })
                         logger.info(f"Stage {stage_name} actual cost: ${stage_cost:.6f}")
                         
-                        # Update context with cost information
-                        if not context.data:
-                            context.data = {}
-                        if not context.data.get("processing_context"):
-                            context.data["processing_context"] = {}
-                        context.data["processing_context"]["cost_summary"] = {
+                        # Update context with cost information directly on the context object
+                        cost_summary_data = {
                             "total_pipeline_cost_usd": total_cost,
                             "stage_costs": stage_costs,
                             "total_pipeline_duration_seconds": sum(c["duration_seconds"] for c in stage_costs)
                         }
+                        
+                        # Set cost_summary on the context object directly (not via data property)
+                        context.cost_summary = cost_summary_data
+                        
+                        logger.debug(f"Updated context cost_summary in data structure: ${total_cost:.6f} total, {len(stage_costs)} stages")
                 
                 # Enhance message for image processing issues
                 enhanced_message = message
@@ -202,6 +360,9 @@ class PipelineTaskProcessor:
             executor = PipelineExecutor()
             await executor.run_async(context, progress_callback)
             
+            # Calculate final cost summary using actual LLM usage data
+            await self._calculate_final_cost_summary(context)
+            
             # Process results
             await self._process_pipeline_results(run_id, context, str(output_dir))
             
@@ -217,14 +378,27 @@ class PipelineTaskProcessor:
                     # Extract cost information from context
                     extracted_cost = None
                     try:
-                        processing_context = (context.data or {}).get("processing_context", {})
-                        if processing_context and isinstance(processing_context, dict):
-                            cost_summary = processing_context.get("cost_summary", {})
-                            if cost_summary and isinstance(cost_summary, dict):
-                                extracted_cost = cost_summary.get("total_pipeline_cost_usd")
-                                logger.info(f"Extracted cost from context: ${extracted_cost}")
+                        # Access cost_summary directly from context object (not via data property)
+                        cost_summary = context.cost_summary
+                        if cost_summary and isinstance(cost_summary, dict):
+                            extracted_cost = cost_summary.get("total_pipeline_cost_usd")
+                            logger.info(f"Extracted cost from context: ${extracted_cost}")
+                            logger.debug(f"Cost summary structure: {cost_summary}")
+                        else:
+                            logger.warning(f"Cost summary not found or not dict: {type(cost_summary)}")
+                            # Fallback: try accessing via data property
+                            try:
+                                processing_context = (context.data or {}).get("processing_context", {})
+                                if processing_context and isinstance(processing_context, dict):
+                                    fallback_cost_summary = processing_context.get("cost_summary", {})
+                                    if fallback_cost_summary and isinstance(fallback_cost_summary, dict):
+                                        extracted_cost = fallback_cost_summary.get("total_pipeline_cost_usd")
+                                        logger.info(f"Extracted cost from context via fallback: ${extracted_cost}")
+                            except Exception as fallback_e:
+                                logger.warning(f"Fallback cost extraction also failed: {fallback_e}")
                     except Exception as e:
                         logger.warning(f"Failed to extract cost from context: {e}")
+                        logger.warning(f"Context cost_summary type: {type(getattr(context, 'cost_summary', None))}")
                     
                     # Fallback: try to calculate from stage costs if context cost failed
                     if extracted_cost is None or extracted_cost == 0.0:
@@ -547,10 +721,33 @@ class PipelineTaskProcessor:
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a running pipeline"""
         if run_id not in self.active_tasks:
+            # Check if run exists but is stalled
+            with Session(engine) as session:
+                run = session.get(PipelineRun, run_id)
+                if run and run.status == RunStatus.RUNNING:
+                    run.status = RunStatus.CANCELLED
+                    run.completed_at = datetime.utcnow()
+                    run.error_message = "Pipeline execution was cancelled"
+                    if run.started_at:
+                        run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                    session.add(run)
+                    session.commit()
+                    
+                    asyncio.create_task(connection_manager.send_run_error(
+                        run_id,
+                        "Pipeline execution was cancelled",
+                        {"type": "cancelled"}
+                    ))
+                    return True
             return False
         
+        # Cancel active task
         task = self.active_tasks[run_id]
         task.cancel()
+        
+        # Cancel timeout task if exists
+        if run_id in self.run_timeouts:
+            self.run_timeouts[run_id].cancel()
         
         # Update database
         with Session(engine) as session:
@@ -558,6 +755,9 @@ class PipelineTaskProcessor:
             if run:
                 run.status = RunStatus.CANCELLED
                 run.completed_at = datetime.utcnow()
+                run.error_message = "Pipeline execution was cancelled"
+                if run.started_at:
+                    run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
                 session.add(run)
                 session.commit()
         
@@ -626,6 +826,188 @@ class PipelineTaskProcessor:
         #     base_cost *= duration_multiplier
         #     
         # return base_cost
+
+    async def _calculate_final_cost_summary(self, context: PipelineContext):
+        """Calculate final cost summary using actual LLM usage data and preserve real stage durations"""
+        try:
+            logger.info("🔧 _calculate_final_cost_summary: Starting final cost calculation")
+            
+            # Check if we already have a valid cost summary with durations from progress_callback
+            if hasattr(context, 'cost_summary') and context.cost_summary:
+                existing_summary = context.cost_summary
+                if isinstance(existing_summary, dict) and existing_summary.get("stage_costs"):
+                    # We already have cost data from progress tracking, just verify and return
+                    total_cost = existing_summary.get("total_pipeline_cost_usd", 0.0)
+                    stage_count = len(existing_summary.get("stage_costs", []))
+                    logger.info(f"✅ Using existing cost summary from progress tracking: ${total_cost:.6f} across {stage_count} stages")
+                    return
+            
+            # Ensure context has valid data
+            if not context or not context.data:
+                logger.warning("Pipeline context data is empty in _calculate_final_cost_summary")
+                logger.warning(f"Context: {context}, Context.data: {getattr(context, 'data', None)}")
+                return
+            
+            data = context.data or {}
+            processing_context = data.get("processing_context") if isinstance(data, dict) else {}
+            
+            if not isinstance(processing_context, dict):
+                logger.warning(f"processing_context is not a dict: {type(processing_context)}")
+                return
+            
+            llm_usage = processing_context.get("llm_call_usage", {})
+            if not isinstance(llm_usage, dict):
+                logger.warning(f"llm_call_usage is not a dict: {type(llm_usage)}")
+                return
+            
+            if not llm_usage:
+                logger.info("No LLM usage data found, skipping cost calculation")
+                return
+            
+            logger.info(f"🔧 Found LLM usage data with {len(llm_usage)} keys: {list(llm_usage.keys())}")
+            
+            # Get actual stage durations from database 
+            actual_durations = await self._get_actual_stage_durations(context.run_id)
+            
+            # Calculate costs for each stage using the same logic as background_tasks.py
+            total_cost = 0.0
+            stage_costs = []
+            
+            # Define stage mappings (same as progress callback logic)
+            stage_mappings = [
+                ("image_eval", ["image_eval"], IMG_EVAL_MODEL_ID),
+                ("strategy", ["strategy_niche_id", "strategy_goal_gen"], STRATEGY_MODEL_ID),
+                ("style_guide", ["style_guider"], STYLE_GUIDER_MODEL_ID),
+                ("creative_expert", [key for key in llm_usage.keys() if key.startswith("creative_expert_strategy_")], CREATIVE_EXPERT_MODEL_ID),
+                ("image_assessment", ["image_assessment"], IMAGE_ASSESSMENT_MODEL_ID),
+            ]
+            
+            logger.info(f"🔧 Processing {len(stage_mappings)} stage mappings")
+            
+            # Handle image generation separately (different structure)
+            image_results = processing_context.get("generated_image_results", [])
+            if image_results:
+                actual_images = len([r for r in image_results if r.get("status") == "success"])
+                total_prompt_tokens = sum(r.get("prompt_tokens", 0) for r in image_results if r.get("prompt_tokens"))
+                
+                logger.info(f"🔧 Image generation: {actual_images} images, {total_prompt_tokens} tokens")
+                
+                if actual_images > 0 and total_prompt_tokens > 0:
+                    try:
+                        token_manager = get_token_cost_manager()
+                        from churns.core.token_cost_manager import TokenUsage
+                        
+                        usage = TokenUsage(
+                            prompt_tokens=total_prompt_tokens,
+                            completion_tokens=0,
+                            total_tokens=total_prompt_tokens,
+                            model=IMAGE_GENERATION_MODEL_ID,
+                            provider="openai"
+                        )
+                        
+                        image_details = {
+                            "count": actual_images,
+                            "resolution": "1024x1024",
+                            "quality": "medium"
+                        }
+                        
+                        cost_breakdown = token_manager.calculate_cost(usage, image_details)
+                        stage_cost = cost_breakdown.total_cost
+                        
+                        # Use actual duration if available, otherwise estimate
+                        actual_duration = actual_durations.get("image_generation", 25.0)  # Default to 25s for image gen
+                        
+                        stage_costs.append({
+                            "stage_name": "image_generation",
+                            "cost_usd": stage_cost,
+                            "duration_seconds": actual_duration
+                        })
+                        total_cost += stage_cost
+                        
+                        logger.info(f"🔧 Final calculation - Image generation: ${stage_cost:.6f} (duration: {actual_duration:.1f}s)")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to calculate image generation cost: {e}")
+            
+            # Calculate costs for other stages
+            for stage_name, usage_keys, model_id in stage_mappings:
+                try:
+                    logger.debug(f"🔧 Calculating {stage_name} with keys {usage_keys}")
+                    
+                    cost_result = calculate_stage_cost_from_usage(
+                        stage_name, llm_usage, usage_keys, model_id
+                    )
+                    stage_cost = cost_result.get("total_cost", 0.0)
+                    
+                    if stage_cost > 0:
+                        # Use actual duration if available, otherwise estimate based on stage type
+                        actual_duration = actual_durations.get(stage_name)
+                        if actual_duration is None:
+                            # Provide realistic estimates based on stage complexity
+                            duration_estimates = {
+                                "image_eval": 3.0,
+                                "strategy": 12.0, 
+                                "style_guide": 20.0,
+                                "creative_expert": 30.0,
+                                "image_assessment": 45.0,
+                                "prompt_assembly": 1.0
+                            }
+                            actual_duration = duration_estimates.get(stage_name, 5.0)
+                        
+                        stage_costs.append({
+                            "stage_name": stage_name,
+                            "cost_usd": stage_cost,
+                            "duration_seconds": actual_duration
+                        })
+                        total_cost += stage_cost
+                        
+                        logger.info(f"🔧 Final calculation - {stage_name}: ${stage_cost:.6f} (duration: {actual_duration:.1f}s)")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to calculate cost for stage {stage_name}: {e}")
+            
+            logger.info(f"🔧 Calculated total cost: ${total_cost:.6f} across {len(stage_costs)} stages")
+            
+            # Store the cost summary directly on the context object
+            cost_summary_data = {
+                "total_pipeline_cost_usd": total_cost,
+                "stage_costs": stage_costs,
+                "total_pipeline_duration_seconds": sum(c["duration_seconds"] for c in stage_costs)
+            }
+            
+            # Set cost_summary on the context object directly (not via data property)
+            context.cost_summary = cost_summary_data
+            
+            logger.info(f"🔧 Updated context.data cost_summary: {cost_summary_data}")
+            logger.info(f"✅ Final cost calculation complete: ${total_cost:.6f} total across {len(stage_costs)} stages")
+            
+            # Verify the update was applied - use the cost_summary_data directly since we just set it
+            logger.info(f"🔧 Verification - cost_summary successfully updated: total=${cost_summary_data.get('total_pipeline_cost_usd', 0):.6f}, stages={len(cost_summary_data.get('stage_costs', []))}")
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate final cost summary: {e}")
+            logger.error(f"Error details: {traceback.format_exc()}")
+
+    async def _get_actual_stage_durations(self, run_id: str) -> Dict[str, float]:
+        """Retrieve actual stage durations from database."""
+        durations = {}
+        try:
+            with Session(engine) as session:
+                stages = session.exec(
+                    select(PipelineStage).where(PipelineStage.run_id == run_id)
+                ).all()
+                
+                for stage in stages:
+                    if stage.duration_seconds is not None:
+                        durations[stage.stage_name] = stage.duration_seconds
+                        logger.debug(f"Retrieved duration for {stage.stage_name}: {stage.duration_seconds:.1f}s")
+                
+                logger.info(f"Retrieved {len(durations)} actual stage durations from database")
+                
+        except Exception as e:
+            logger.warning(f"Failed to retrieve stage durations from database: {e}")
+        
+        return durations
 
 
 # Global task processor instance

@@ -44,6 +44,7 @@ import {
   DeveloperMode as DeveloperModeIcon,
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -82,6 +83,7 @@ const PIPELINE_STAGES = [
   { name: 'creative_expert', label: 'Creative Concepts', description: 'Developing visual concepts' },
   { name: 'prompt_assembly', label: 'Prompt Assembly', description: 'Building generation prompts' },
   { name: 'image_generation', label: 'Image Generation', description: 'Creating final images' },
+  { name: 'image_assessment', label: 'Image Assessment', description: 'Evaluating generated images' },
 ];
 
 // Component for visual pipeline stages display
@@ -312,6 +314,225 @@ const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({
   );
 };
 
+// Assessment Indicators Component
+interface ImageAssessmentIndicatorsProps {
+  assessmentData: any;
+  imageIndex: number;
+  isExpanded: boolean;
+  onToggleExpanded: () => void;
+}
+
+const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
+  assessmentData,
+  imageIndex,
+  isExpanded,
+  onToggleExpanded
+}) => {
+  const renderScoreDots = (score: number) => {
+    return Array.from({ length: 5 }, (_, i) => (
+      <Box
+        key={i}
+        sx={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          backgroundColor: i < score ? '#4caf50' : '#e0e0e0',
+          display: 'inline-block',
+          mr: 0.5
+        }}
+      />
+    ));
+  };
+
+  const renderStatusIndicator = (needsAttention: boolean, label: string, description: string, score?: number) => {
+    // Use backend flag as primary determination, score for visual enhancement only
+    let status: 'good' | 'evaluate' | 'fix' = 'good';
+    let statusText = 'Good';
+    let backgroundColor = '#e8f5e8';
+    let borderColor = '#c8e6c8';
+    let textColor = '#2e7d32';
+    let iconColor = '#4caf50';
+    let icon = <CheckCircleIcon sx={{ color: iconColor, fontSize: 18 }} />;
+
+    // Primary logic: Use backend flag
+    if (needsAttention) {
+      status = 'fix';
+      statusText = 'Needs Fix';
+      backgroundColor = '#ffebee';
+      borderColor = '#ffcdd2';
+      textColor = '#c62828';
+      iconColor = '#f44336';
+      icon = <WarningIcon sx={{ color: iconColor, fontSize: 18 }} />;
+    } else {
+      // Not flagged for attention - check if score=4 for "evaluate" status
+      if (score !== undefined && score === 4) {
+        status = 'evaluate';
+        statusText = 'Evaluate';
+        backgroundColor = '#fff8e1';
+        borderColor = '#ffecb3';
+        textColor = '#f57c00';
+        iconColor = '#ff9800';
+        icon = <WarningIcon sx={{ color: iconColor, fontSize: 18 }} />;
+      } else {
+        // Default good status (score 5 or no attention needed)
+        status = 'good';
+        statusText = score === 5 ? 'Excellent' : 'Good';
+      }
+    }
+
+    return (
+      <Box sx={{ 
+        display: 'flex', 
+        flexDirection: 'column', 
+        alignItems: 'center', 
+        minWidth: 80,
+        p: 1,
+        borderRadius: 1,
+        backgroundColor,
+        border: 1,
+        borderColor
+      }}>
+        {/* Status Icon */}
+        <Box sx={{ mb: 0.5 }}>
+          {icon}
+        </Box>
+        
+        {/* Label */}
+        <Typography 
+          variant="caption" 
+          sx={{ 
+            fontWeight: 600,
+            color: textColor,
+            textAlign: 'center',
+            lineHeight: 1.2,
+            fontSize: '0.7rem'
+          }}
+        >
+          {label}
+        </Typography>
+        
+        {/* Status Text */}
+        <Typography 
+          variant="caption" 
+          sx={{ 
+            color: textColor,
+            textAlign: 'center',
+            lineHeight: 1.1,
+            fontSize: '0.65rem',
+            mt: 0.25
+          }}
+        >
+          {statusText}
+        </Typography>
+        
+        {/* Score if available */}
+        {score !== undefined && (
+          <Typography 
+            variant="caption" 
+            sx={{ 
+              color: textColor,
+              textAlign: 'center',
+              lineHeight: 1.1,
+              fontSize: '0.6rem',
+              mt: 0.1,
+              fontWeight: 500
+            }}
+          >
+            ({score}/5)
+          </Typography>
+        )}
+      </Box>
+    );
+  };
+
+  return (
+    <Box sx={{ mt: 2, p: 2, backgroundColor: 'grey.50', borderRadius: 2, border: 1, borderColor: 'divider' }}>
+      {/* Header with Overall Score */}
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            Quality Assessment
+          </Typography>
+          <Chip 
+            label={`${assessmentData.general_score?.toFixed(1) || '0.0'}/5.0`}
+            size="small"
+            color={assessmentData.general_score >= 4 ? 'success' : assessmentData.general_score >= 3 ? 'warning' : 'error'}
+            variant="outlined"
+          />
+        </Box>
+        
+        {/* Dropdown Toggle */}
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onToggleExpanded}
+          sx={{ minWidth: 'auto', px: 1, fontSize: '0.75rem' }}
+        >
+          {isExpanded ? '▲ Hide' : '▼ Details'}
+        </Button>
+      </Box>
+      
+      {/* Status Indicators Row */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, justifyContent: 'center', mb: isExpanded ? 2 : 0 }}>
+        {/* Subject Preservation - only show if reference image was used */}
+        {assessmentData.assessment_scores && 'subject_preservation' in assessmentData.assessment_scores && (
+          renderStatusIndicator(
+            assessmentData.needs_subject_repair,
+            'Subject',
+            'Subject preservation quality',
+            assessmentData.assessment_scores.subject_preservation
+          )
+        )}
+        
+        {/* Overall Quality */}
+        {renderStatusIndicator(
+          assessmentData.needs_regeneration,
+          'Overall',
+          'Overall image quality',
+          Math.round(assessmentData.general_score || 0)
+        )}
+        
+        {/* Text Quality - only show if text rendering was enabled */}
+        {assessmentData.assessment_scores && 'text_rendering_quality' in assessmentData.assessment_scores && (
+          renderStatusIndicator(
+            assessmentData.needs_text_repair,
+            'Text',
+            'Text rendering quality',
+            assessmentData.assessment_scores.text_rendering_quality
+          )
+        )}
+      </Box>
+      
+      {/* Expanded Details */}
+      {isExpanded && (
+        <Box sx={{ mt: 2 }}>          
+          {/* Detailed Scores */}
+          <Grid container spacing={2}>
+            {assessmentData.assessment_scores && Object.entries(assessmentData.assessment_scores).map(([key, score]: [string, any]) => (
+              <Grid item xs={6} key={key}>
+                <Typography variant="caption" color="textSecondary" sx={{ textTransform: 'capitalize' }}>
+                  {key.replace(/_/g, ' ')}
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                  {renderScoreDots(score)}
+                  <Typography variant="caption" color="textSecondary">
+                    {score}/5
+                  </Typography>
+                </Box>
+                {assessmentData.assessment_justification?.[key] && (
+                  <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block', fontStyle: 'italic' }}>
+                    "{assessmentData.assessment_justification[key]}"
+                  </Typography>
+                )}
+              </Grid>
+            ))}
+          </Grid>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [runDetails, setRunDetails] = useState<PipelineRunDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -323,6 +544,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
   const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
   const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string} | null>(null);
+  // NEW: Assessment data state
+  const [imageAssessments, setImageAssessments] = useState<any[]>([]);
+  const [assessmentDropdownStates, setAssessmentDropdownStates] = useState<{[key: number]: boolean}>({});
   
   // Developer mode state
   const [isDeveloperMode, setIsDeveloperMode] = useState(false);
@@ -381,8 +605,19 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       if (details.status === 'COMPLETED') {
         try {
           const results = await PipelineAPI.getResults(runId);
+          if (results.image_assessments) {
+            setImageAssessments(results.image_assessments);
+            addLog('info', `Loaded ${results.image_assessments.length} image assessments`);
+          }
           if (results.generated_images) {
-            setGeneratedImages(results.generated_images);
+            // Merge assessment data with generated images
+            const mergedImages = results.generated_images.map((img: any) => {
+              const assessment = results.image_assessments?.find(
+                (a: any) => a.image_index === img.strategy_index
+              );
+              return { ...img, assessment };
+            });
+            setGeneratedImages(mergedImages);
             addLog('info', `Loaded ${results.generated_images.length} generated images`);
           }
         } catch (resultsErr: any) {
@@ -426,6 +661,15 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           `${stageUpdate.stage_name}: ${stageUpdate.message}`,
           stageUpdate.stage_name
         );
+        
+        // Special handling for image_assessment stage
+        if (stageUpdate.stage_name === 'image_assessment') {
+          // Extract assessment results from stage output
+          if (stageUpdate.output_data && stageUpdate.output_data.image_assessments) {
+            setImageAssessments(stageUpdate.output_data.image_assessments);
+            addLog('info', `Loaded ${stageUpdate.output_data.image_assessments.length} image assessments`);
+          }
+        }
         
         // Update run details with new stage info
         setRunDetails(prev => {
@@ -588,6 +832,14 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     setOptionDetails(null);
   };
 
+  // Assessment dropdown toggle handler
+  const toggleAssessmentDropdown = (imageIndex: number) => {
+    setAssessmentDropdownStates(prev => ({
+      ...prev,
+      [imageIndex]: !prev[imageIndex]
+    }));
+  };
+
   const getStatusIcon = (status: RunStatus | StageStatus) => {
     switch (status) {
       case 'COMPLETED':
@@ -605,7 +857,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   const getProgressValue = () => {
     if (!runDetails?.stages.length) return 0;
-    const TOTAL_STAGES = 6; // Fixed total: image_eval, strategy, style_guide, creative_expert, prompt_assembly, image_generation
+    const TOTAL_STAGES = 7; // Fixed total: image_eval, strategy, style_guide, creative_expert, prompt_assembly, image_generation, image_assessment
     const completedStages = runDetails.stages.filter(s => s.status === 'COMPLETED').length;
     return (completedStages / TOTAL_STAGES) * 100;
   };
@@ -838,6 +1090,27 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                   </Button>
                                 </Tooltip>
                               </Box>
+                              
+                              {/* NEW: Assessment Indicators */}
+                              {result.assessment ? (
+                                <ImageAssessmentIndicators 
+                                  assessmentData={result.assessment}
+                                  imageIndex={result.strategy_index}
+                                  isExpanded={assessmentDropdownStates[result.strategy_index] || false}
+                                  onToggleExpanded={() => toggleAssessmentDropdown(result.strategy_index)}
+                                />
+                              ) : (
+                                // Show "Assessment Unavailable" state when no assessment data
+                                <Box sx={{ mt: 2, p: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Chip 
+                                    label="Assessment Unavailable" 
+                                    size="small" 
+                                    variant="outlined" 
+                                    color="default"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                </Box>
+                              )}
                             </Box>
                           ) : (
                             <Box sx={{ textAlign: 'center', py: 6 }}>
@@ -1235,13 +1508,27 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       <Dialog
         open={!!selectedImage}
         onClose={() => setSelectedImage(null)}
-        maxWidth="lg"
-        fullWidth
-        PaperProps={{
-          sx: { borderRadius: 2 }
+        maxWidth={false}
+        fullWidth={false}
+        sx={{
+          '& .MuiDialog-paper': {
+            maxHeight: '100vh',
+            maxWidth: '100vw',
+            margin: 0,
+            borderRadius: 2,
+            overflow: 'hidden'
+          }
         }}
       >
-        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
+        <DialogTitle sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          pb: 1,
+          backgroundColor: 'white',
+          borderBottom: 1,
+          borderColor: 'divider'
+        }}>
           <Typography variant="h6" component="div">
             Generated Image - Full Size
           </Typography>
@@ -1249,22 +1536,51 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             <CloseIcon />
           </IconButton>
         </DialogTitle>
-        <DialogContent sx={{ p: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
+        <DialogContent sx={{ 
+          p: 1,
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center',
+          backgroundColor: '#f5f5f5',
+          overflow: 'auto',
+          minHeight: 'calc(100vh - 140px)', // Account for title and actions
+          maxHeight: 'calc(100vh - 140px)'
+        }}>
           {selectedImage && (
             <Box
               component="img"
               src={selectedImage}
               sx={{
-                width: '100%',
+                maxWidth: 'calc(100vw - 32px)', // Account for padding
+                maxHeight: 'calc(100vh - 160px)', // Account for title, actions, and padding
+                width: 'auto',
                 height: 'auto',
-                maxHeight: '80vh',
                 objectFit: 'contain',
                 borderRadius: 1,
+                backgroundColor: 'white',
+                boxShadow: 3,
+                display: 'block'
+              }}
+              onLoad={(e) => {
+                // Log dimensions for debugging
+                const img = e.target as HTMLImageElement;
+                console.log('Image loaded:', {
+                  naturalWidth: img.naturalWidth,
+                  naturalHeight: img.naturalHeight,
+                  displayWidth: img.width,
+                  displayHeight: img.height
+                });
               }}
             />
           )}
         </DialogContent>
-        <DialogActions sx={{ px: 3, py: 2 }}>
+        <DialogActions sx={{ 
+          px: 3, 
+          py: 2,
+          backgroundColor: 'white',
+          borderTop: 1,
+          borderColor: 'divider'
+        }}>
           <Button onClick={() => setSelectedImage(null)} variant="outlined">
             Close
           </Button>

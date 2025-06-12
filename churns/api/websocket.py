@@ -1,42 +1,63 @@
-from typing import Dict, List, Optional
+from enum import Enum
+from typing import Dict, List, Set, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 import json
 import asyncio
 from datetime import datetime
 import logging
+from pydantic import BaseModel
 
 from churns.api.schemas import WebSocketMessage, WSMessageType, StageProgressUpdate
+from churns.api.database import RunStatus, StageStatus
 
 logger = logging.getLogger(__name__)
 
 
+class WSMessageType(str, Enum):
+    """WebSocket message types"""
+    STAGE_UPDATE = "stage_update"
+    RUN_COMPLETE = "run_complete"
+    RUN_ERROR = "run_error"
+    STATUS_UPDATE = "status_update"
+    PING = "ping"
+
+
+class WebSocketMessage(BaseModel):
+    """WebSocket message format"""
+    type: WSMessageType
+    run_id: str
+    data: dict
+
+
 class ConnectionManager:
-    """Manages WebSocket connections for pipeline runs"""
+    """Manages WebSocket connections and message broadcasting"""
     
     def __init__(self):
-        # Dictionary mapping run_id to list of websocket connections
-        self.active_connections: Dict[str, List[WebSocket]] = {}
+        self.active_connections: Dict[str, Set[WebSocket]] = {}
+        self.connection_run_ids: Dict[WebSocket, str] = {}
     
     async def connect(self, websocket: WebSocket, run_id: str):
-        """Accept a new WebSocket connection for a specific run"""
+        """Connect a new WebSocket client"""
         await websocket.accept()
         
         if run_id not in self.active_connections:
-            self.active_connections[run_id] = []
+            self.active_connections[run_id] = set()
+        self.active_connections[run_id].add(websocket)
+        self.connection_run_ids[websocket] = run_id
         
-        self.active_connections[run_id].append(websocket)
-        logger.info(f"WebSocket connected for run {run_id}. Total connections: {len(self.active_connections[run_id])}")
+        logger.info(f"New WebSocket connection for run {run_id}")
     
     def disconnect(self, websocket: WebSocket, run_id: str):
-        """Remove a WebSocket connection"""
+        """Disconnect a WebSocket client"""
         if run_id in self.active_connections:
-            if websocket in self.active_connections[run_id]:
-                self.active_connections[run_id].remove(websocket)
-                logger.info(f"WebSocket disconnected for run {run_id}. Remaining connections: {len(self.active_connections[run_id])}")
-            
-            # Clean up empty connection lists
+            self.active_connections[run_id].discard(websocket)
             if not self.active_connections[run_id]:
                 del self.active_connections[run_id]
+        
+        if websocket in self.connection_run_ids:
+            del self.connection_run_ids[websocket]
+        
+        logger.info(f"WebSocket disconnected for run {run_id}")
     
     async def send_message_to_run(self, run_id: str, message: WebSocketMessage):
         """Send a message to all connections for a specific run"""
@@ -85,7 +106,22 @@ class ConnectionManager:
             run_id=run_id,
             data={
                 "error_message": error_message,
-                "error_details": error_details or {}
+                "error_details": error_details or {},
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
+        await self.send_message_to_run(run_id, message)
+    
+    async def send_status_update(self, run_id: str, status: RunStatus, is_active: bool, error_message: Optional[str] = None):
+        """Send run status update"""
+        message = WebSocketMessage(
+            type=WSMessageType.STATUS_UPDATE,
+            run_id=run_id,
+            data={
+                "status": status,
+                "is_active": is_active,
+                "error_message": error_message,
+                "timestamp": datetime.utcnow().isoformat()
             }
         )
         await self.send_message_to_run(run_id, message)

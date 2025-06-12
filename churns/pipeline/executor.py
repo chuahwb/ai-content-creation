@@ -88,6 +88,12 @@ class PipelineExecutor:
         if hasattr(stage_module, 'image_gen_client'):
             stage_module.image_gen_client = self.clients.get('image_gen_client')
         
+        # Inject image assessment clients (dedicated clients)
+        if hasattr(stage_module, 'instructor_client_image_assessment'):
+            stage_module.instructor_client_image_assessment = self.clients.get('instructor_client_image_assessment')
+        if hasattr(stage_module, 'base_llm_client_image_assessment'):
+            stage_module.base_llm_client_image_assessment = self.clients.get('base_llm_client_image_assessment')
+        
         # Inject model configuration and parsing flags
         model_config = self.clients.get('model_config', {})
         if hasattr(stage_module, 'IMG_EVAL_MODEL_ID'):
@@ -102,6 +108,9 @@ class PipelineExecutor:
         if hasattr(stage_module, 'CREATIVE_EXPERT_MODEL_ID'):
             stage_module.CREATIVE_EXPERT_MODEL_ID = model_config.get('CREATIVE_EXPERT_MODEL_ID')
             stage_module.CREATIVE_EXPERT_MODEL_PROVIDER = model_config.get('CREATIVE_EXPERT_MODEL_PROVIDER')
+        if hasattr(stage_module, 'IMAGE_ASSESSMENT_MODEL_ID'):
+            stage_module.IMAGE_ASSESSMENT_MODEL_ID = model_config.get('IMAGE_ASSESSMENT_MODEL_ID')
+            stage_module.IMAGE_ASSESSMENT_MODEL_PROVIDER = model_config.get('IMAGE_ASSESSMENT_MODEL_PROVIDER')
         if hasattr(stage_module, 'IMAGE_GENERATION_MODEL_ID'):
             stage_module.IMAGE_GENERATION_MODEL_ID = model_config.get('IMAGE_GENERATION_MODEL_ID')
         
@@ -223,21 +232,21 @@ class PipelineExecutor:
     
     def _extract_stage_output(self, ctx: PipelineContext, stage_name: str) -> Optional[Dict[str, Any]]:
         """Extract relevant output data for a completed stage."""
-        processing_context = ctx.data.get("processing_context", {})
-        
-        # Extract stage-specific outputs
+        # Extract stage-specific outputs using context properties
         if stage_name == "image_eval":
-            return {"image_analysis": processing_context.get("image_analysis_result")}
+            return {"image_analysis": ctx.image_analysis_result}
         elif stage_name == "strategy":
-            return {"marketing_strategies": processing_context.get("suggested_marketing_strategies")}
+            return {"marketing_strategies": ctx.suggested_marketing_strategies}
         elif stage_name == "style_guide":
-            return {"style_guidance": processing_context.get("style_guidance_sets")}
+            return {"style_guidance": ctx.style_guidance_sets}
         elif stage_name == "creative_expert":
-            return {"visual_concepts": processing_context.get("generated_image_prompts")}
+            return {"visual_concepts": ctx.generated_image_prompts}
         elif stage_name == "prompt_assembly":
-            return {"final_prompts": processing_context.get("final_assembled_prompts")}
+            return {"final_prompts": ctx.final_assembled_prompts}
         elif stage_name == "image_generation":
-            return {"generated_images": processing_context.get("generated_image_results")}
+            return {"generated_images": ctx.generated_image_results}
+        elif stage_name == "image_assessment":
+            return {"image_assessments": ctx.image_assessments}
         else:
             return None
     
