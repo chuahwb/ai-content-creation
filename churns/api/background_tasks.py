@@ -572,7 +572,7 @@ class PipelineTaskProcessor:
             context.parent_image_type = job.parent_image_type
             context.generation_index = job.generation_index
             context.refinement_type = job.refinement_type
-            context.creativity_level = refinement_data.get("creativity_level", 2)
+    
             context.base_run_dir = str(parent_run_dir)
             
             # Set refinement-specific inputs

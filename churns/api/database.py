@@ -108,7 +108,6 @@ class RefinementJob(SQLModel, table=True):
     prompt: Optional[str] = Field(None, description="User refinement prompt")
     instructions: Optional[str] = Field(None, description="Specific instructions")
     mask_data: Optional[str] = Field(None, sa_column=Column(Text), description="JSON string of mask coordinates")
-    creativity_level: int = Field(default=2, description="Creativity level 1-3")
     reference_image_path: Optional[str] = Field(None, description="Path to reference image for subject repair")
 
 

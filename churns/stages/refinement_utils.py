@@ -227,16 +227,16 @@ def save_temporary_mask(ctx: PipelineContext, mask: Image.Image) -> str:
     return str(mask_path)
 
 
-def cleanup_temporary_files(temp_file_paths: list, ctx: PipelineContext) -> None:
+def cleanup_temporary_files(temp_file_paths: list) -> None:
     """Clean up temporary files with error handling."""
     
     for temp_path in temp_file_paths:
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
-                ctx.log(f"Cleaned up temporary file: {temp_path}")
+                print(f"Cleaned up temporary file: {temp_path}")
             except Exception as e:
-                ctx.log(f"Warning: Could not clean up temporary file {temp_path}: {e}")
+                print(f"Warning: Could not clean up temporary file {temp_path}: {e}")
 
 
 def calculate_refinement_cost(
@@ -283,9 +283,7 @@ def calculate_refinement_cost(
     if has_mask:
         base_cost *= 1.05  # 5% overhead for mask processing
     
-    # Adjust based on creativity level
-    creativity_multiplier = {1: 0.9, 2: 1.0, 3: 1.2}
-    total_cost = base_cost * creativity_multiplier.get(ctx.creativity_level, 1.0)
+    total_cost = base_cost
     
     operation_type = "regional" if has_mask else "global"
     ctx.log(f"Estimated {refinement_type} cost: ${total_cost:.3f} ({operation_type} edit)")
@@ -333,62 +331,24 @@ def track_refinement_cost(
         ctx.log(f"Warning: Could not track cost for {stage_name} stage: {e}")
 
 
-def enhance_prompt_with_creativity_guidance(
-    base_prompt: str,
-    creativity_level: int,
-    refinement_type: str
-) -> str:
-    """
-    Enhance prompts with creativity level guidance specific to refinement type.
-    Centralizes prompt enhancement logic to maintain consistency.
-    """
-    
-    # Type-specific guidance
-    type_guidance = {
-        "subject": {
-            1: "Make subtle, conservative changes that blend naturally with the existing image style.",
-            2: "Apply moderate modifications while maintaining visual coherence with the original image.",
-            3: "Make creative, bold modifications while ensuring the result looks professional and polished."
-        },
-        "text": {
-            1: "Make minimal changes to fix obvious errors while maintaining the original text style and layout.",
-            2: "Apply moderate improvements to text clarity, spelling, and readability while keeping the design aesthetic.",
-            3: "Make comprehensive text improvements including style enhancements, better typography, and optimized layout for maximum impact."
-        },
-        "prompt": {
-            1: "Apply subtle, conservative changes that blend naturally with the existing image style.",
-            2: "Apply moderate adjustments while maintaining visual coherence.",
-            3: "Apply creative, bold modifications while ensuring professional results."
-        }
-    }
-    
-    guidance = type_guidance.get(refinement_type, type_guidance["prompt"])
-    creativity_text = guidance.get(creativity_level, guidance[2])
-    
-    enhanced_prompt = f"{base_prompt}. {creativity_text}"
-    enhanced_prompt += " Ensure high quality, professional results with proper lighting and seamless integration."
-    
-    return enhanced_prompt
+
 
 
 def create_mask_from_coordinates(
-    ctx: PipelineContext, 
-    image_size: Tuple[int, int]
-) -> Optional[Image.Image]:
+    mask_data: Dict[str, Any], 
+    image_size: Tuple[int, int],
+    base_run_dir: str
+) -> Optional[str]:
     """
     Create a mask image from coordinate data for regional editing.
-    Returns None for global editing, mask Image for regional editing.
+    Returns None for global editing, mask file path for regional editing.
     Supports the same coordinate formats as established in the plan.
     """
     
-    if not ctx.mask_coordinates:
-        ctx.log("No mask coordinates provided, performing global refinement")
+    if not mask_data:
         return None
     
     try:
-        # Parse mask coordinates
-        mask_data = json.loads(ctx.mask_coordinates) if isinstance(ctx.mask_coordinates, str) else ctx.mask_coordinates
-        ctx.log(f"Creating mask from coordinates: {mask_data.get('type', 'unknown')}")
         
         # Create blank mask (black = preserve, white = edit)
         mask = Image.new('L', image_size, 0)
@@ -396,15 +356,22 @@ def create_mask_from_coordinates(
         
         width, height = image_size
         
-        if mask_data.get('type') == 'rectangle':
-            # Convert normalized coordinates to pixels
-            x1 = int(mask_data['x1'] * width)
-            y1 = int(mask_data['y1'] * height)
-            x2 = int(mask_data['x2'] * width)
-            y2 = int(mask_data['y2'] * height)
+        if mask_data.get('type') == 'rectangle' or ('x' in mask_data and 'y' in mask_data):
+            # Handle both explicit rectangle type and coordinate object from frontend
+            if 'x' in mask_data and 'y' in mask_data:
+                # Frontend coordinate format: {x, y, width, height} (normalized 0-1)
+                x1 = int(mask_data['x'] * width)
+                y1 = int(mask_data['y'] * height)
+                x2 = int((mask_data['x'] + mask_data['width']) * width)
+                y2 = int((mask_data['y'] + mask_data['height']) * height)
+            else:
+                # Legacy format: {x1, y1, x2, y2}
+                x1 = int(mask_data['x1'] * width)
+                y1 = int(mask_data['y1'] * height)
+                x2 = int(mask_data['x2'] * width)
+                y2 = int(mask_data['y2'] * height)
             
             draw.rectangle([x1, y1, x2, y2], fill=255)
-            ctx.log(f"Created rectangular mask: ({x1}, {y1}) to ({x2}, {y2})")
             
         elif mask_data.get('type') == 'circle':
             # Convert normalized coordinates to pixels
@@ -413,7 +380,6 @@ def create_mask_from_coordinates(
             radius = int(mask_data['radius'] * min(width, height))
             
             draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=255)
-            ctx.log(f"Created circular mask: center ({cx}, {cy}), radius {radius}")
             
         elif mask_data.get('type') == 'polygon':
             # Convert normalized coordinates to pixels
@@ -424,14 +390,22 @@ def create_mask_from_coordinates(
                 points.append((x, y))
             
             draw.polygon(points, fill=255)
-            ctx.log(f"Created polygon mask with {len(points)} points")
             
         else:
-            ctx.log(f"Warning: Unsupported mask type: {mask_data.get('type')}")
+            print(f"Warning: Unsupported mask type: {mask_data.get('type')}")
             return None
         
-        return mask
+        # Save mask to temporary file
+        temp_dir = Path(base_run_dir) / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
+        mask_filename = f"temp_mask_{timestamp}.png"
+        mask_path = temp_dir / mask_filename
+        
+        mask.save(mask_path, format='PNG')
+        return str(mask_path)
         
     except Exception as e:
-        ctx.log(f"Warning: Failed to create mask from coordinates: {e}")
+        print(f"Warning: Failed to create mask from coordinates: {e}")
         return None 

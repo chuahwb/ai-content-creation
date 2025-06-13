@@ -56,7 +56,6 @@ class RefinementRequest(BaseModel):
     prompt: Optional[str] = Field(None, description="Refinement prompt")
     instructions: Optional[str] = Field(None, description="Specific instructions")
     mask_data: Optional[str] = Field(None, description="JSON string of mask coordinates")
-    creativity_level: int = Field(default=2, ge=1, le=3, description="Creativity level 1-3")
     
     # Reference image for subject repair
     reference_image: Optional[ImageReferenceInput] = Field(None, description="Reference image for subject repair")

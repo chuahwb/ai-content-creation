@@ -1,9 +1,15 @@
 """
-Prompt Refine Stage - Refinement Pipeline
+Prompt Refinement Stage - Refinement Pipeline
 
-This stage performs prompt-based image refinement with optional masking.
-Uses OpenAI's gpt-image-1 model via the images.edit API for both global and regional editing.
-Leverages shared refinement utilities for consistency and code reuse.
+This stage performs global or regional prompt-based refinements on images.
+Supports both global enhancements and regional masking for targeted improvements.
+Uses OpenAI's gpt-image-1 model for sophisticated image modifications.
+
+IMPLEMENTATION GUIDANCE:
+- Apply global or regional prompt-based enhancements
+- Support mask-based regional editing
+- Maintain image quality while applying changes
+- Use balanced approach for consistent results
 """
 
 import os
@@ -14,35 +20,39 @@ from typing import Dict, Any, Optional, List, Tuple
 from ..pipeline.context import PipelineContext
 from .refinement_utils import (
     validate_refinement_inputs,
-    load_and_prepare_image,
+    load_and_prepare_image, 
     determine_api_image_size,
     call_openai_images_edit,
     calculate_refinement_cost,
     track_refinement_cost,
-    enhance_prompt_with_creativity_guidance,
     create_mask_from_coordinates,
-    save_temporary_mask,
     cleanup_temporary_files
 )
-
-# Global variables for API clients are handled by refinement_utils and image_generation.py
 
 
 def run(ctx: PipelineContext) -> None:
     """
-    Perform prompt-based image refinement with optional masking.
+    Perform prompt-based refinement on images with optional regional masking.
     
     REQUIRED CONTEXT INPUTS:
     - ctx.base_image_path: Path to the base image to modify
-    - ctx.prompt: User refinement prompt
+    - ctx.prompt: User prompt for refinement
     - ctx.refinement_type: Should be "prompt"
-    - ctx.creativity_level: 1-3 for modification intensity
-    - ctx.mask_coordinates: Optional mask coordinates for regional editing
-    - ctx.original_pipeline_data: Original generation metadata for context
+
+    
+    OPTIONAL CONTEXT INPUTS:
+    - ctx.mask_coordinates: JSON string of mask coordinates for regional editing
     
     SETS CONTEXT OUTPUTS:
-    - ctx.refinement_result: Dict with result information
+    - ctx.refinement_result: Dict with result information  
     - ctx.refinement_cost: Cost of the operation
+    
+    IMPLEMENTATION REQUIREMENTS:
+    1. Load base image for modification
+    2. Parse mask coordinates if provided (regional editing)
+    3. Apply prompt-based enhancements
+    4. Support both global and regional modifications
+    5. Save result and update context
     """
     
     ctx.log("Starting prompt refinement stage...")
@@ -53,14 +63,21 @@ def run(ctx: PipelineContext) -> None:
     # Additional validation specific to prompt refinement
     _validate_prompt_refinement_inputs(ctx)
     
-    # Load and prepare base image using shared utility
+    # Load and prepare image using shared utility
     base_image = load_and_prepare_image(ctx)
     
-    # Parse and create mask if provided using shared utility
-    mask = create_mask_from_coordinates(ctx, base_image.size)
+    # Parse mask coordinates if provided
+    mask_path = None
+    editing_type = "global"
+    if ctx.mask_coordinates:
+        mask_path, editing_type = _prepare_regional_mask(ctx, base_image)
     
     # Perform actual prompt refinement using OpenAI API
-    result_image_path = asyncio.run(_perform_prompt_refinement_api(ctx, base_image, mask))
+    result_image_path = asyncio.run(_perform_prompt_refinement_api(ctx, base_image, mask_path))
+    
+    # Cleanup temporary files
+    if mask_path:
+        cleanup_temporary_files([mask_path])
     
     # Update context with results
     ctx.refinement_result = {
@@ -68,21 +85,21 @@ def run(ctx: PipelineContext) -> None:
         "status": "completed",
         "output_path": result_image_path,
         "modifications": {
-            "prompt_used": ctx.prompt,
-            "mask_applied": mask is not None,
-            "regional_edit": mask is not None,
-            "creativity_level": ctx.creativity_level
+            "editing_type": editing_type,
+            "has_mask": mask_path is not None,
+            "prompt_applied": ctx.prompt,
+            "enhancement_approach": "balanced"
         }
     }
     
     # Calculate and track costs using shared utilities
     ctx.refinement_cost = calculate_refinement_cost(
-        ctx, 
-        ctx.prompt or "", 
-        has_mask=mask is not None,
+        ctx,
+        ctx.prompt or "",
+        has_mask=mask_path is not None,
         refinement_type="prompt refinement"
     )
-    track_refinement_cost(ctx, "prompt_refine", ctx.prompt or "", duration_seconds=8.0)
+    track_refinement_cost(ctx, "prompt_refinement", ctx.prompt or "", duration_seconds=6.0)
     
     ctx.log(f"Prompt refinement completed: {result_image_path}")
 
@@ -91,92 +108,122 @@ def _validate_prompt_refinement_inputs(ctx: PipelineContext) -> None:
     """Validate inputs specific to prompt refinement (beyond common validation)."""
     
     if not ctx.prompt:
-        raise ValueError("Refinement prompt is required for prompt refinement")
+        ctx.prompt = "Enhance the overall image quality and appeal"
+        ctx.log("No prompt provided, using default enhancement prompt")
 
 
-async def _perform_prompt_refinement_api(ctx: PipelineContext, base_image, mask: Optional) -> str:
+def _prepare_regional_mask(ctx: PipelineContext, base_image) -> Tuple[Optional[str], str]:
+    """
+    Prepare regional mask for targeted editing if coordinates are provided.
+    Returns mask path and editing type.
+    """
+    
+    try:
+        import json
+        mask_data = json.loads(ctx.mask_coordinates)
+        
+        ctx.log(f"Creating regional mask from coordinates: {mask_data}")
+        
+        # Create mask using shared utility
+        mask_path = create_mask_from_coordinates(
+            mask_data, 
+            base_image.size,
+            ctx.base_run_dir
+        )
+        
+        if mask_path and os.path.exists(mask_path):
+            ctx.log(f"Regional mask created: {mask_path}")
+            return mask_path, "regional"
+        else:
+            ctx.log("Failed to create mask, falling back to global editing")
+            return None, "global"
+            
+    except Exception as e:
+        ctx.log(f"Error creating regional mask: {e}. Using global editing.")
+        return None, "global"
+
+
+async def _perform_prompt_refinement_api(ctx: PipelineContext, base_image, mask_path: Optional[str]) -> str:
     """
     Perform prompt refinement using OpenAI's images.edit API.
-    Uses shared utilities for consistency with other refinement stages.
-    Supports both global and regional editing with mask.
+    Supports both global and regional editing based on mask presence.
     """
     
-    operation_type = "regional editing" if mask else "global refinement"
     from ..core.constants import IMAGE_GENERATION_MODEL_ID
-    ctx.log(f"Performing {operation_type} using {IMAGE_GENERATION_MODEL_ID or 'gpt-image-1'}...")
+    ctx.log(f"Performing prompt refinement using {IMAGE_GENERATION_MODEL_ID or 'gpt-image-1'}...")
     ctx.log(f"Prompt: {ctx.prompt}")
-    ctx.log(f"Creativity level: {ctx.creativity_level}")
+    ctx.log(f"Editing type: {'Regional' if mask_path else 'Global'}")
+    ctx.log("Using balanced enhancement approach")
     
     # Prepare enhanced prompt using shared utility
-    enhanced_prompt = _prepare_refinement_prompt(ctx)
+    enhanced_prompt = _prepare_prompt_refinement_prompt(ctx)
     
     # Determine image size using shared utility
     image_size = determine_api_image_size(base_image.size)
     
-    # Save mask temporarily if needed
-    mask_path = None
-    temp_files = []
+    # Call OpenAI API using shared utility
+    result_image_path = await call_openai_images_edit(
+        ctx=ctx,
+        enhanced_prompt=enhanced_prompt,
+        image_size=image_size,
+        mask_path=mask_path  # None for global, path for regional editing
+    )
     
-    try:
-        if mask:
-            mask_path = save_temporary_mask(ctx, mask)
-            temp_files.append(mask_path)
-        
-        # Call OpenAI API using shared utility
-        result_image_path = await call_openai_images_edit(
-            ctx=ctx,
-            enhanced_prompt=enhanced_prompt,
-            image_size=image_size,
-            mask_path=mask_path
-        )
-        
-        return result_image_path
-        
-    finally:
-        # Clean up temporary files using shared utility
-        if temp_files:
-            cleanup_temporary_files(temp_files, ctx)
+    return result_image_path
 
 
-def _prepare_refinement_prompt(ctx: PipelineContext) -> str:
+def _prepare_prompt_refinement_prompt(ctx: PipelineContext) -> str:
     """
-    Prepare the refinement prompt with additional context from original generation.
-    Uses shared utilities and adds context-specific enhancements.
+    Prepare an enhanced prompt for refinement that incorporates
+    the user prompt and context-appropriate guidance.
     """
     
     base_prompt = ctx.prompt
     
-    # Add context from original generation if available
-    if ctx.original_pipeline_data:
-        processing_context = ctx.original_pipeline_data.get("processing_context", {})
-        
-        # Extract style guidance
-        style_guidance = processing_context.get("style_guidance_sets", [])
-        if style_guidance:
-            style_keywords = []
-            for guidance in style_guidance:
-                if isinstance(guidance, dict) and "style_keywords" in guidance:
-                    style_keywords.extend(guidance["style_keywords"])
-            
-            if style_keywords:
-                style_context = f", maintaining {', '.join(style_keywords[:3])} style"
-                base_prompt += style_context
-        
-        # Extract marketing context
-        strategies = processing_context.get("suggested_marketing_strategies", [])
-        if strategies and len(strategies) > 0:
-            strategy = strategies[0]  # Use first strategy
-            if isinstance(strategy, dict):
-                audience = strategy.get("target_audience", "")
-                if audience:
-                    base_prompt += f", appealing to {audience}"
+    # Load marketing context if available
+    marketing_context = _load_marketing_context(ctx)
     
-    # Use shared utility for creativity guidance
-    enhanced_prompt = enhance_prompt_with_creativity_guidance(
-        base_prompt, 
-        ctx.creativity_level, 
-        "prompt"
-    )
+    # Enhance prompt with context
+    enhanced_prompt = f"{base_prompt}. Apply enhancements while maintaining the original image's quality and aesthetic appeal"
+    
+    # Add marketing context if available
+    if marketing_context:
+        platform = marketing_context.get('platform', 'social media')
+        enhanced_prompt += f". Ensure the result is optimized for {platform}"
+        
+        if marketing_context.get('audience'):
+            enhanced_prompt += f" and appealing to {marketing_context['audience']}"
+    
+    # Apply balanced enhancement approach (no creativity level needed)
+    enhanced_prompt += ". Use a balanced approach that enhances the image quality while preserving its original character and style."
     
     ctx.log(f"Enhanced refinement prompt: {enhanced_prompt}")
-    return enhanced_prompt 
+    return enhanced_prompt
+
+
+def _load_marketing_context(ctx: PipelineContext) -> Optional[Dict[str, Any]]:
+    """Load marketing context from parent run for refinement guidance."""
+    
+    try:
+        metadata_path = Path(ctx.base_run_dir) / "pipeline_metadata.json"
+        if metadata_path.exists():
+            import json
+            with open(metadata_path, 'r') as f:
+                pipeline_data = json.load(f)
+            
+            # Extract relevant marketing context
+            marketing_context = {}
+            if "run_inputs" in pipeline_data:
+                inputs = pipeline_data["run_inputs"]
+                marketing_context.update({
+                    "platform": inputs.get("platform_name"),
+                    "audience": inputs.get("marketing_audience"),
+                    "objective": inputs.get("marketing_objective"),
+                    "voice": inputs.get("marketing_voice")
+                })
+            
+            return marketing_context if any(marketing_context.values()) else None
+            
+    except Exception as e:
+        ctx.log(f"Could not load marketing context: {e}")
+        return None 

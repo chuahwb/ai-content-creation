@@ -203,7 +203,6 @@ async def create_refinement(
     prompt: Optional[str] = Form(None, description="Refinement prompt"),
     instructions: Optional[str] = Form(None, description="Specific instructions"),
     mask_data: Optional[str] = Form(None, description="JSON string of mask coordinates"),
-    creativity_level: int = Form(2, description="Creativity level 1-3"),
     
     # File upload for subject repair
     reference_image: Optional[UploadFile] = File(None, description="Reference image for subject repair"),
@@ -225,10 +224,6 @@ async def create_refinement(
         refinement_type = RefinementType(refine_type)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid refinement type: {refine_type}. Must be 'subject', 'text', or 'prompt'")
-    
-    # Validate creativity level
-    if creativity_level not in [1, 2, 3]:
-        raise HTTPException(status_code=400, detail="Creativity level must be 1, 2, or 3")
     
     # Process reference image if provided
     reference_image_data = None
@@ -257,8 +252,7 @@ async def create_refinement(
         refinement_summary=refinement_summary,
         prompt=prompt,
         instructions=instructions,
-        mask_data=mask_data,
-        creativity_level=creativity_level
+        mask_data=mask_data
     )
     
     session.add(refinement_job)
@@ -268,7 +262,6 @@ async def create_refinement(
     # Prepare refinement data for background processing
     refinement_data = {
         "refinement_type": refinement_type,
-        "creativity_level": creativity_level,
         "prompt": prompt,
         "instructions": instructions,
         "mask_coordinates": mask_data,

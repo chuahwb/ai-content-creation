@@ -41,7 +41,7 @@ def run(ctx: PipelineContext) -> None:
     - ctx.reference_image_path: Path to reference image for subject
     - ctx.instructions: User instructions for the repair
     - ctx.refinement_type: Should be "subject"
-    - ctx.creativity_level: 1-3 for modification intensity
+
     
     SETS CONTEXT OUTPUTS:
     - ctx.refinement_result: Dict with result information
@@ -135,7 +135,7 @@ async def _perform_subject_repair_api(ctx: PipelineContext, base_image) -> str:
     from ..core.constants import IMAGE_GENERATION_MODEL_ID
     ctx.log(f"Performing subject repair using {IMAGE_GENERATION_MODEL_ID or 'gpt-image-1'}...")
     ctx.log(f"Instructions: {ctx.instructions}")
-    ctx.log(f"Creativity level: {ctx.creativity_level}")
+    ctx.log("Starting subject repair with moderate enhancement approach")
     
     # Prepare enhanced prompt using shared utility
     enhanced_prompt = _prepare_subject_repair_prompt(ctx)
@@ -165,12 +165,8 @@ def _prepare_subject_repair_prompt(ctx: PipelineContext) -> str:
     # Add context about subject replacement
     enhanced_prompt = f"{base_instructions}. Replace or modify the main subject in the image while preserving the background and overall composition"
     
-    # Use shared utility for creativity guidance
-    enhanced_prompt = enhance_prompt_with_creativity_guidance(
-        enhanced_prompt, 
-        ctx.creativity_level, 
-        "subject"
-    )
+    # Apply moderate enhancement approach (no creativity level needed)
+    enhanced_prompt += ". Use a balanced approach that maintains the original image's style and quality while making the requested changes."
     
     ctx.log(f"Enhanced subject repair prompt: {enhanced_prompt}")
     return enhanced_prompt 
