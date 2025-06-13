@@ -188,6 +188,189 @@ async def create_pipeline_run(
     )
 
 
+# === REFINEMENT ENDPOINTS ===
+@runs_router.post("/{run_id}/refine", response_model=RefinementResponse)
+async def create_refinement(
+    run_id: str,
+    # Required fields
+    refine_type: str = Form(..., description="Type of refinement: subject, text, or prompt"),
+    parent_image_id: str = Form(..., description="ID of the image to refine"),
+    parent_image_type: str = Form("original", description="'original' or 'refinement'"),
+    generation_index: Optional[int] = Form(None, description="Which of N original images (0-based)"),
+    
+    # Optional refinement inputs
+    prompt: Optional[str] = Form(None, description="Refinement prompt"),
+    instructions: Optional[str] = Form(None, description="Specific instructions"),
+    mask_data: Optional[str] = Form(None, description="JSON string of mask coordinates"),
+    creativity_level: int = Form(2, description="Creativity level 1-3"),
+    
+    # File upload for subject repair
+    reference_image: Optional[UploadFile] = File(None, description="Reference image for subject repair"),
+    
+    session: Session = Depends(get_session)
+):
+    """Create a new image refinement job"""
+    
+    # Validate parent run exists
+    run = session.get(PipelineRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Parent pipeline run not found")
+    
+    if run.status != RunStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Parent pipeline must be completed. Current status: {run.status}")
+    
+    # Validate refinement type
+    try:
+        refinement_type = RefinementType(refine_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid refinement type: {refine_type}. Must be 'subject', 'text', or 'prompt'")
+    
+    # Validate creativity level
+    if creativity_level not in [1, 2, 3]:
+        raise HTTPException(status_code=400, detail="Creativity level must be 1, 2, or 3")
+    
+    # Process reference image if provided
+    reference_image_data = None
+    reference_image_path = None
+    if reference_image:
+        # Validate image file
+        if not reference_image.content_type or not reference_image.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="Reference file must be an image")
+        
+        # Read image data
+        reference_image_data = await reference_image.read()
+        if len(reference_image_data) > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(status_code=400, detail="Reference image file too large (max 10MB)")
+    
+    # Generate refinement summary
+    refinement_summary = _generate_refinement_summary(refinement_type, prompt, instructions)
+    
+    # Create refinement job record
+    refinement_job = RefinementJob(
+        parent_run_id=run_id,
+        parent_image_id=parent_image_id,
+        parent_image_type=parent_image_type,
+        generation_index=generation_index,
+        refinement_type=refinement_type,
+        status=RunStatus.PENDING,
+        refinement_summary=refinement_summary,
+        prompt=prompt,
+        instructions=instructions,
+        mask_data=mask_data,
+        creativity_level=creativity_level
+    )
+    
+    session.add(refinement_job)
+    session.commit()
+    session.refresh(refinement_job)
+    
+    # Start background refinement execution
+    await task_processor.start_refinement_job(refinement_job.id, reference_image_data)
+    
+    return RefinementResponse(
+        job_id=refinement_job.id,
+        parent_run_id=run_id,
+        refinement_type=refinement_type,
+        status=RunStatus.PENDING,
+        created_at=refinement_job.created_at,
+        refinement_summary=refinement_summary
+    )
+
+
+@runs_router.get("/{run_id}/refinements", response_model=RefinementListResponse)
+async def list_refinements(
+    run_id: str,
+    session: Session = Depends(get_session)
+):
+    """List all refinements for a pipeline run"""
+    
+    # Validate parent run exists
+    run = session.get(PipelineRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    
+    # Get refinements for this run
+    refinements_query = select(RefinementJob).where(
+        RefinementJob.parent_run_id == run_id
+    ).order_by(RefinementJob.created_at)
+    
+    refinements = session.exec(refinements_query).all()
+    
+    # Convert to response format
+    refinement_results = []
+    total_cost = 0.0
+    
+    for refinement in refinements:
+        refinement_results.append(RefinementResult(
+            job_id=refinement.id,
+            parent_run_id=refinement.parent_run_id,
+            refinement_type=refinement.refinement_type,
+            status=refinement.status,
+            parent_image_id=refinement.parent_image_id,
+            parent_image_type=refinement.parent_image_type,
+            generation_index=refinement.generation_index,
+            image_path=refinement.image_path,
+            cost_usd=refinement.cost_usd,
+            refinement_summary=refinement.refinement_summary,
+            created_at=refinement.created_at,
+            completed_at=refinement.completed_at,
+            error_message=refinement.error_message
+        ))
+        
+        if refinement.cost_usd:
+            total_cost += refinement.cost_usd
+    
+    return RefinementListResponse(
+        refinements=refinement_results,
+        total_cost=total_cost,
+        total_refinements=len(refinement_results)
+    )
+
+
+@api_router.post("/refinements/{job_id}/cancel")
+async def cancel_refinement(
+    job_id: str,
+    session: Session = Depends(get_session)
+):
+    """Cancel a refinement job"""
+    
+    refinement = session.get(RefinementJob, job_id)
+    if not refinement:
+        raise HTTPException(status_code=404, detail="Refinement job not found")
+    
+    if refinement.status in [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED]:
+        return {"message": f"Refinement is already in final state: {refinement.status}"}
+    
+    # Attempt to cancel
+    cancelled = task_processor.cancel_refinement(job_id)
+    
+    if cancelled:
+        return {"message": "Refinement cancelled successfully"}
+    else:
+        # If not cancelled but status is RUNNING, it means the job is stalled
+        if refinement.status == RunStatus.RUNNING:
+            refinement.status = RunStatus.CANCELLED
+            refinement.completed_at = datetime.utcnow()
+            refinement.error_message = "Refinement execution was cancelled (stalled job)"
+            session.add(refinement)
+            session.commit()
+            return {"message": "Stalled refinement marked as cancelled"}
+        else:
+            return {"message": "Refinement is not currently running"}
+
+
+def _generate_refinement_summary(refinement_type: RefinementType, prompt: Optional[str], instructions: Optional[str]) -> str:
+    """Generate a brief summary of the refinement for UI display"""
+    if refinement_type == RefinementType.SUBJECT:
+        return f"Subject repair: {instructions or 'Replace main subject'}"
+    elif refinement_type == RefinementType.TEXT:
+        return f"Text repair: {instructions or 'Fix text elements'}"
+    elif refinement_type == RefinementType.PROMPT:
+        return f"Prompt refinement: {prompt or instructions or 'Refine image'}"
+    else:
+        return "Unknown refinement"
+
+
 @runs_router.get("/", response_model=RunListResponse)
 async def list_pipeline_runs(
     page: int = 1,
@@ -455,6 +638,30 @@ async def get_pipeline_results(
                     prompt_used=None  # Could extract from final_assembled_prompts
                 ))
         
+        # Get refinements for this run
+        refinements_query = select(RefinementJob).where(
+            RefinementJob.parent_run_id == run_id
+        ).order_by(RefinementJob.created_at)
+        refinements = session.exec(refinements_query).all()
+        
+        refinement_results = []
+        for refinement in refinements:
+            refinement_results.append(RefinementResult(
+                job_id=refinement.id,
+                parent_run_id=refinement.parent_run_id,
+                refinement_type=refinement.refinement_type,
+                status=refinement.status,
+                parent_image_id=refinement.parent_image_id,
+                parent_image_type=refinement.parent_image_type,
+                generation_index=refinement.generation_index,
+                image_path=refinement.image_path,
+                cost_usd=refinement.cost_usd,
+                refinement_summary=refinement.refinement_summary,
+                created_at=refinement.created_at,
+                completed_at=refinement.completed_at,
+                error_message=refinement.error_message
+            ))
+        
         # Extract cost information
         cost_summary = processing_context.get("cost_summary", {})
         
@@ -469,6 +676,8 @@ async def get_pipeline_results(
             generated_images=generated_images,
             # NEW: Include image assessments
             image_assessments=processing_context.get("image_assessment"),
+            # NEW: Include refinements
+            refinements=refinement_results,
             total_cost_usd=cost_summary.get("total_pipeline_cost_usd"),
             total_duration_seconds=cost_summary.get("total_pipeline_duration_seconds"),
             stage_costs=cost_summary.get("stage_costs")
