@@ -11,13 +11,14 @@ from sqlmodel import Session, select
 from sqlalchemy import desc
 
 from churns.api.database import (
-    get_session, PipelineRun, PipelineStage, 
+    get_session, PipelineRun, PipelineStage, RefinementJob, RefinementType,
     RunStatus, StageStatus, create_db_and_tables
 )
 from churns.api.schemas import (
     PipelineRunRequest, PipelineRunResponse, PipelineRunDetail, 
     RunListResponse, RunListItem, PipelineResults,
-    ImageReferenceInput, MarketingGoalsInput, GeneratedImageResult
+    ImageReferenceInput, MarketingGoalsInput, GeneratedImageResult,
+    RefinementResponse, RefinementListResponse, RefinementResult
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
@@ -264,8 +265,27 @@ async def create_refinement(
     session.commit()
     session.refresh(refinement_job)
     
+    # Prepare refinement data for background processing
+    refinement_data = {
+        "refinement_type": refinement_type,
+        "creativity_level": creativity_level,
+        "prompt": prompt,
+        "instructions": instructions,
+        "mask_coordinates": mask_data,
+        "reference_image_data": reference_image_data
+    }
+    
+    # Save reference image if provided
+    if reference_image_data:
+        parent_run_dir = Path(f"./data/runs/{run_id}")
+        parent_run_dir.mkdir(parents=True, exist_ok=True)
+        ref_image_path = parent_run_dir / f"ref_{refinement_job.id}_{reference_image.filename}"
+        with open(ref_image_path, "wb") as f:
+            f.write(reference_image_data)
+        refinement_data["reference_image_path"] = str(ref_image_path)
+    
     # Start background refinement execution
-    await task_processor.start_refinement_job(refinement_job.id, reference_image_data)
+    await task_processor.start_refinement_job(refinement_job.id, refinement_data)
     
     return RefinementResponse(
         job_id=refinement_job.id,

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 from churns.api.database import (
-    get_session, PipelineRun, PipelineStage, 
+    get_session, PipelineRun, PipelineStage, RefinementJob,
     RunStatus, StageStatus, engine
 )
 from churns.api.schemas import (
@@ -446,6 +446,299 @@ class PipelineTaskProcessor:
             
             # Send error notification
             await connection_manager.send_run_error(run_id, error_message, {"traceback": error_traceback})
+
+    async def start_refinement_job(self, job_id: str, refinement_data: Dict[str, Any]):
+        """Start a refinement job in the background"""
+        # Check if there's a stalled refinement job
+        with Session(engine) as session:
+            job = session.get(RefinementJob, job_id)
+            if not job:
+                logger.error(f"Refinement job {job_id} not found in database")
+                return
+            
+            # If job exists but shows as running and not in active tasks, it's stalled
+            if job.status == RunStatus.RUNNING and job_id not in self.active_tasks:
+                job.status = RunStatus.FAILED
+                job.completed_at = datetime.utcnow()
+                job.error_message = "Refinement execution was interrupted unexpectedly"
+                session.add(job)
+                session.commit()
+                
+                await connection_manager.send_run_error(
+                    job_id,
+                    "Refinement execution was interrupted unexpectedly",
+                    {"type": "stalled"}
+                )
+                return
+            
+            # If job is already active, don't start again
+            if job_id in self.active_tasks:
+                logger.warning(f"Refinement job {job_id} is already running")
+                return
+            
+            # Start the job
+            job.status = RunStatus.RUNNING
+            job.created_at = datetime.utcnow()
+            job.error_message = None  # Clear any previous error
+            session.add(job)
+            session.commit()
+        
+        # Create and start the background task
+        task = asyncio.create_task(self._execute_refinement(job_id, refinement_data))
+        self.active_tasks[job_id] = task
+        
+        # Start timeout monitor (shorter timeout for refinements)
+        refinement_timeout = 1800  # 30 minutes for refinements
+        timeout_task = asyncio.create_task(self._check_refinement_timeout(job_id, refinement_timeout))
+        self.run_timeouts[job_id] = timeout_task
+        
+        # Clean up completed tasks
+        def cleanup_tasks(t):
+            self.active_tasks.pop(job_id, None)
+            if job_id in self.run_timeouts:
+                self.run_timeouts[job_id].cancel()
+        
+        task.add_done_callback(cleanup_tasks)
+        
+        logger.info(f"Started background refinement task for job {job_id}")
+
+    async def _check_refinement_timeout(self, job_id: str, timeout_seconds: int):
+        """Check if a refinement job has exceeded the timeout limit"""
+        try:
+            await asyncio.sleep(timeout_seconds)
+            if job_id in self.active_tasks:
+                logger.warning(f"Refinement job {job_id} exceeded timeout limit of {timeout_seconds}s")
+                await self._handle_refinement_timeout(job_id)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.run_timeouts.pop(job_id, None)
+
+    async def _handle_refinement_timeout(self, job_id: str):
+        """Handle a timed out refinement job"""
+        if job_id in self.active_tasks:
+            task = self.active_tasks[job_id]
+            task.cancel()
+            self.active_tasks.pop(job_id, None)
+            
+            # Update database
+            with Session(engine) as session:
+                job = session.get(RefinementJob, job_id)
+                if job and job.status == RunStatus.RUNNING:
+                    job.status = RunStatus.FAILED
+                    job.completed_at = datetime.utcnow()
+                    job.error_message = "Refinement execution timed out"
+                    session.add(job)
+                    session.commit()
+            
+            # Notify clients
+            await connection_manager.send_run_error(
+                job_id, 
+                "Refinement execution timed out",
+                {"type": "timeout"}
+            )
+
+    async def _execute_refinement(self, job_id: str, refinement_data: Dict[str, Any]):
+        """Execute the refinement pipeline with progress updates"""
+        try:
+            # Get job details from database
+            with Session(engine) as session:
+                job = session.get(RefinementJob, job_id)
+                if not job:
+                    logger.error(f"Refinement job {job_id} not found in database")
+                    return
+                
+                job.status = RunStatus.RUNNING
+                job.created_at = datetime.utcnow()
+                session.add(job)
+                session.commit()
+                
+                # Get parent run details for context
+                parent_run = session.get(PipelineRun, job.parent_run_id)
+                if not parent_run:
+                    raise ValueError(f"Parent run {job.parent_run_id} not found")
+            
+            # Set up directories
+            parent_run_dir = Path(f"./data/runs/{job.parent_run_id}")
+            originals_dir = parent_run_dir / "originals"
+            refinements_dir = parent_run_dir / "refinements"
+            refinements_dir.mkdir(exist_ok=True)
+            
+            # Create pipeline context for refinement
+            context = PipelineContext()
+            context.run_id = job_id
+            context.parent_run_id = job.parent_run_id
+            context.parent_image_id = job.parent_image_id
+            context.parent_image_type = job.parent_image_type
+            context.generation_index = job.generation_index
+            context.refinement_type = job.refinement_type
+            context.creativity_level = refinement_data.get("creativity_level", 2)
+            context.base_run_dir = str(parent_run_dir)
+            
+            # Set refinement-specific inputs
+            if job.refinement_type == "subject":
+                context.instructions = refinement_data.get("instructions")
+                context.reference_image_path = refinement_data.get("reference_image_path")
+            elif job.refinement_type == "text":
+                context.instructions = refinement_data.get("instructions")
+            elif job.refinement_type == "prompt":
+                context.prompt = refinement_data.get("prompt")
+                context.mask_coordinates = refinement_data.get("mask_coordinates")
+            
+            # Load parent run metadata for context enhancement
+            metadata_path = parent_run_dir / "pipeline_metadata.json"
+            if metadata_path.exists():
+                with open(metadata_path, 'r') as f:
+                    context.original_pipeline_data = json.load(f)
+            
+            # Initialize cost tracking
+            total_cost = 0.0
+            stage_costs = []
+            
+            # Set up progress callback for refinement
+            async def refinement_progress_callback(stage_name: str, stage_order: int, status: StageStatus, 
+                                                  message: str, output_data: Optional[Dict] = None, 
+                                                  error_message: Optional[str] = None,
+                                                  duration_seconds: Optional[float] = None):
+                
+                # Calculate cost for refinement stages
+                nonlocal total_cost, stage_costs
+                if status == StageStatus.COMPLETED and duration_seconds:
+                    stage_cost = 0.0
+                    
+                    # Calculate refinement-specific costs
+                    if stage_name in ["subject_repair", "text_repair", "prompt_refine"]:
+                        # Get cost from context if calculated by stage
+                        stage_cost = getattr(context, 'refinement_cost', 0.0)
+                        if stage_cost == 0.0:
+                            # Fallback estimation
+                            stage_cost = 0.040  # Typical DALL-E edit cost
+                    else:
+                        stage_cost = 0.001  # Minimal cost for utility stages
+                    
+                    if stage_cost > 0:
+                        total_cost += stage_cost
+                        stage_costs.append({
+                            "stage_name": stage_name,
+                            "cost_usd": stage_cost,
+                            "duration_seconds": duration_seconds
+                        })
+                        logger.info(f"Refinement stage {stage_name} cost: ${stage_cost:.6f}")
+                
+                # Send WebSocket progress update
+                await self._send_stage_update(
+                    job_id, stage_name, stage_order, status, 
+                    message, output_data, error_message, duration_seconds
+                )
+            
+            # Execute refinement pipeline
+            executor = PipelineExecutor(mode="refinement")
+            await executor.run_async(context, refinement_progress_callback)
+            
+            # Update job with results
+            with Session(engine) as session:
+                job = session.get(RefinementJob, job_id)
+                if job:
+                    job.status = RunStatus.COMPLETED
+                    job.completed_at = datetime.utcnow()
+                    job.cost_usd = total_cost
+                    
+                    # Set result path from context
+                    if hasattr(context, 'refinement_result') and context.refinement_result:
+                        job.image_path = context.refinement_result.get("output_path")
+                        job.refinement_summary = context.refinement_result.get("summary", f"{job.refinement_type} refinement")
+                    
+                    session.add(job)
+                    session.commit()
+            
+            # Update refinements.json index
+            await self._update_refinements_index(job.parent_run_id, job_id, job)
+            
+            # Send completion notification with refinement-specific data
+            refinement_result = {
+                "job_id": job_id,
+                "type": job.refinement_type,
+                "status": "completed",
+                "parent_image_id": job.parent_image_id,
+                "parent_image_type": job.parent_image_type,
+                "generation_index": job.generation_index,
+                "image_path": job.image_path,
+                "cost_usd": job.cost_usd,
+                "summary": job.refinement_summary,
+                "created_at": job.created_at.isoformat() if job.created_at else None
+            }
+            
+            await connection_manager.send_run_complete(job_id, refinement_result)
+            logger.info(f"Refinement job {job_id} completed successfully")
+            
+        except Exception as e:
+            error_message = f"Refinement execution failed: {str(e)}"
+            error_traceback = traceback.format_exc()
+            logger.error(f"Refinement job {job_id} failed: {error_message}\n{error_traceback}")
+            
+            # Update database with error
+            with Session(engine) as session:
+                job = session.get(RefinementJob, job_id)
+                if job:
+                    job.status = RunStatus.FAILED
+                    job.completed_at = datetime.utcnow()
+                    job.error_message = error_message
+                    session.add(job)
+                    session.commit()
+            
+            # Send error notification
+            await connection_manager.send_run_error(job_id, error_message, {"traceback": error_traceback})
+
+    async def _update_refinements_index(self, parent_run_id: str, job_id: str, job: RefinementJob):
+        """Update the refinements.json index file"""
+        try:
+            parent_run_dir = Path(f"./data/runs/{parent_run_id}")
+            refinements_file = parent_run_dir / "refinements.json"
+            
+            # Load existing refinements or create new structure
+            if refinements_file.exists():
+                with open(refinements_file, 'r') as f:
+                    refinements_data = json.load(f)
+            else:
+                refinements_data = {
+                    "refinements": [],
+                    "total_cost": 0.0,
+                    "total_refinements": 0
+                }
+            
+            # Add new refinement
+            new_refinement = {
+                "job_id": job_id,
+                "parent_image_id": job.parent_image_id,
+                "parent_image_type": job.parent_image_type,
+                "parent_image_path": self._get_parent_image_path(parent_run_id, job),
+                "image_path": job.image_path,
+                "type": job.refinement_type,
+                "summary": job.refinement_summary or f"{job.refinement_type} refinement",
+                "cost": job.cost_usd or 0.0,
+                "created_at": job.created_at.isoformat() if job.created_at else datetime.utcnow().isoformat()
+            }
+            
+            refinements_data["refinements"].append(new_refinement)
+            refinements_data["total_cost"] += job.cost_usd or 0.0
+            refinements_data["total_refinements"] = len(refinements_data["refinements"])
+            
+            # Save updated index
+            with open(refinements_file, 'w') as f:
+                json.dump(refinements_data, f, indent=2)
+            
+            logger.info(f"Updated refinements index for run {parent_run_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update refinements index: {e}")
+
+    def _get_parent_image_path(self, parent_run_id: str, job: RefinementJob) -> str:
+        """Get the relative path to the parent image"""
+        if job.parent_image_type == "original":
+            return f"originals/image_{job.generation_index}.png"
+        else:
+            # It's a refinement, need to look up the path
+            return f"refinements/{job.parent_image_id}_from_{job.generation_index}.png"
     
     async def _send_stage_update(self, run_id: str, stage_name: str, stage_order: int, 
                                 status: StageStatus, message: str, 
@@ -762,6 +1055,48 @@ class PipelineTaskProcessor:
                 session.commit()
         
         logger.info(f"Cancelled pipeline run {run_id}")
+        return True
+
+    def cancel_refinement(self, job_id: str) -> bool:
+        """Cancel a running refinement job"""
+        if job_id not in self.active_tasks:
+            # Check if job exists but is stalled
+            with Session(engine) as session:
+                job = session.get(RefinementJob, job_id)
+                if job and job.status == RunStatus.RUNNING:
+                    job.status = RunStatus.CANCELLED
+                    job.completed_at = datetime.utcnow()
+                    job.error_message = "Refinement execution was cancelled"
+                    session.add(job)
+                    session.commit()
+                    
+                    asyncio.create_task(connection_manager.send_run_error(
+                        job_id,
+                        "Refinement execution was cancelled",
+                        {"type": "cancelled"}
+                    ))
+                    return True
+            return False
+        
+        # Cancel active task
+        task = self.active_tasks[job_id]
+        task.cancel()
+        
+        # Cancel timeout task if exists
+        if job_id in self.run_timeouts:
+            self.run_timeouts[job_id].cancel()
+        
+        # Update database
+        with Session(engine) as session:
+            job = session.get(RefinementJob, job_id)
+            if job:
+                job.status = RunStatus.CANCELLED
+                job.completed_at = datetime.utcnow()
+                job.error_message = "Refinement execution was cancelled"
+                session.add(job)
+                session.commit()
+        
+        logger.info(f"Cancelled refinement job {job_id}")
         return True
     
     def get_active_runs(self) -> list[str]:
