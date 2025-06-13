@@ -269,8 +269,10 @@ export default function RefinementModal({
       PaperProps={{
         sx: { 
           borderRadius: 3,
-          minHeight: '75vh',
-          maxHeight: '90vh',
+          height: '80vh',
+          maxHeight: '80vh',
+          display: 'flex',
+          flexDirection: 'column',
         }
       }}
     >
@@ -283,6 +285,7 @@ export default function RefinementModal({
         background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
         color: 'white',
         borderRadius: '12px 12px 0 0',
+        flexShrink: 0,
       }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <AutoFixHighIcon sx={{ fontSize: 28 }} />
@@ -295,7 +298,7 @@ export default function RefinementModal({
         </IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ p: 0 }}>
+      <DialogContent sx={{ p: 0, flex: 1, overflow: 'hidden' }}>
         <Box sx={{ display: 'flex', height: '100%' }}>
           {/* Left side - Current Image */}
           <Box sx={{ 
@@ -306,8 +309,9 @@ export default function RefinementModal({
             borderColor: 'divider',
             display: 'flex',
             flexDirection: 'column',
+            height: '100%',
           }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexShrink: 0 }}>
               <Typography variant="h6" sx={{ fontWeight: 600 }}>
                 Current Image
               </Typography>
@@ -333,8 +337,8 @@ export default function RefinementModal({
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  minHeight: 300,
                   position: 'relative',
+                  minHeight: 0, // Allow flex child to shrink
                 }}
               >
                 <Box
@@ -399,7 +403,7 @@ export default function RefinementModal({
             )}
             
             {maskCoordinates && tabValue === 2 && (
-              <Box sx={{ mt: 2 }}>
+              <Box sx={{ mt: 2, flexShrink: 0 }}>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Chip 
                     label="Region Selected" 
@@ -420,9 +424,9 @@ export default function RefinementModal({
           </Box>
 
           {/* Right side - Refinement Options */}
-          <Box sx={{ width: '60%', display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ width: '60%', display: 'flex', flexDirection: 'column', height: '100%' }}>
             {/* Refinement Type Tabs */}
-            <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 3, pt: 2 }}>
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 3, pt: 2, flexShrink: 0 }}>
               <Tabs
                 value={tabValue}
                 onChange={handleTabChange}
@@ -454,140 +458,151 @@ export default function RefinementModal({
             </Box>
 
             {/* Tab Content */}
-            <Box sx={{ flex: 1, p: 3 }}>
+            <Box sx={{ 
+              flex: 1, 
+              p: 3, 
+              overflow: 'auto',
+              minHeight: 0, // Allow flex child to shrink
+            }}>
               {/* Subject Repair Tab */}
               <TabPanel value={tabValue} index={0}>
-                <Stack spacing={3}>
-                  <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                      Replace or modify the main subject while preserving background and composition
-                    </Typography>
-                  </Alert>
-                  
-                  <TextField
-                    fullWidth
-                    label="What would you like to change about the subject?"
-                    multiline
-                    rows={3}
-                    value={subjectInstructions}
-                    onChange={(e) => setSubjectInstructions(e.target.value)}
-                    placeholder="e.g., 'Replace the burger with a pizza', 'Make the person younger', 'Change to a different product'"
-                    variant="outlined"
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        borderRadius: 2,
-                      }
-                    }}
-                  />
-
-                  <Box>
-                    <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, mb: 1 }}>
-                      Reference Image (Optional)
-                    </Typography>
-                    <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                      Upload a reference image to guide the subject replacement
-                    </Typography>
+                <Box sx={{ height: '100%', minHeight: '400px' }}>
+                  <Stack spacing={3}>
+                    <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Replace or modify the main subject while preserving background and composition
+                      </Typography>
+                    </Alert>
                     
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleReferenceImageUpload}
-                      style={{ display: 'none' }}
+                    <TextField
+                      fullWidth
+                      label="What would you like to change about the subject?"
+                      multiline
+                      rows={3}
+                      value={subjectInstructions}
+                      onChange={(e) => setSubjectInstructions(e.target.value)}
+                      placeholder="e.g., 'Replace the burger with a pizza', 'Make the person younger', 'Change to a different product'"
+                      variant="outlined"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 2,
+                        }
+                      }}
                     />
-                    
-                    <Stack direction="row" spacing={2} alignItems="center">
-                      <Button
-                        variant="outlined"
-                        startIcon={<CloudUploadIcon />}
-                        onClick={() => fileInputRef.current?.click()}
-                        sx={{ fontWeight: 500, borderRadius: 2 }}
-                      >
-                        Choose Image
-                      </Button>
+
+                    <Box>
+                      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, mb: 1 }}>
+                        Reference Image (Optional)
+                      </Typography>
+                      <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                        Upload a reference image to guide the subject replacement
+                      </Typography>
                       
-                      {referenceImage && (
-                        <Chip 
-                          label={referenceImage.name}
-                          onDelete={() => setReferenceImage(null)}
-                          color="success"
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleReferenceImageUpload}
+                        style={{ display: 'none' }}
+                      />
+                      
+                      <Stack direction="row" spacing={2} alignItems="center">
+                        <Button
                           variant="outlined"
-                          sx={{ maxWidth: 200 }}
-                        />
-                      )}
-                    </Stack>
-                  </Box>
-                </Stack>
+                          startIcon={<CloudUploadIcon />}
+                          onClick={() => fileInputRef.current?.click()}
+                          sx={{ fontWeight: 500, borderRadius: 2 }}
+                        >
+                          Choose Image
+                        </Button>
+                        
+                        {referenceImage && (
+                          <Chip 
+                            label={referenceImage.name}
+                            onDelete={() => setReferenceImage(null)}
+                            color="success"
+                            variant="outlined"
+                            sx={{ maxWidth: 200 }}
+                          />
+                        )}
+                      </Stack>
+                    </Box>
+                  </Stack>
+                </Box>
               </TabPanel>
 
               {/* Text Repair Tab */}
               <TabPanel value={tabValue} index={1}>
-                <Stack spacing={3}>
-                  <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                      Fix spelling errors, improve text clarity, and enhance text rendering quality
-                    </Typography>
-                  </Alert>
-                  
-                  <TextField
-                    fullWidth
-                    label="What text issues would you like to fix?"
-                    multiline
-                    rows={4}
-                    value={textInstructions}
-                    onChange={(e) => setTextInstructions(e.target.value)}
-                    placeholder="e.g., 'Fix spelling errors in the headline', 'Make the text more readable', 'Improve font clarity and contrast'"
-                    variant="outlined"
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        borderRadius: 2,
-                      }
-                    }}
-                  />
-                </Stack>
+                <Box sx={{ height: '100%', minHeight: '400px' }}>
+                  <Stack spacing={3}>
+                    <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Fix spelling errors, improve text clarity, and enhance text rendering quality
+                      </Typography>
+                    </Alert>
+                    
+                    <TextField
+                      fullWidth
+                      label="What text issues would you like to fix?"
+                      multiline
+                      rows={4}
+                      value={textInstructions}
+                      onChange={(e) => setTextInstructions(e.target.value)}
+                      placeholder="e.g., 'Fix spelling errors in the headline', 'Make the text more readable', 'Improve font clarity and contrast'"
+                      variant="outlined"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 2,
+                        }
+                      }}
+                    />
+                  </Stack>
+                </Box>
               </TabPanel>
 
               {/* Prompt Refinement Tab */}
               <TabPanel value={tabValue} index={2}>
-                <Stack spacing={3}>
-                  <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                      Apply global or regional enhancements to improve overall image quality and appearance
-                    </Typography>
-                  </Alert>
-                  
-                  <TextField
-                    fullWidth
-                    label="How would you like to enhance the image?"
-                    multiline
-                    rows={4}
-                    value={promptInstructions}
-                    onChange={(e) => setPromptInstructions(e.target.value)}
-                    placeholder="e.g., 'Add warm sunset lighting', 'Enhance colors and contrast', 'Improve image sharpness', 'Add depth of field effect'"
-                    variant="outlined"
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        borderRadius: 2,
-                      }
-                    }}
-                  />
+                <Box sx={{ height: '100%', minHeight: '400px' }}>
+                  <Stack spacing={3}>
+                    <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        Apply global or regional enhancements to improve overall image quality and appearance
+                      </Typography>
+                    </Alert>
+                    
+                    <TextField
+                      fullWidth
+                      label="How would you like to enhance the image?"
+                      multiline
+                      rows={4}
+                      value={promptInstructions}
+                      onChange={(e) => setPromptInstructions(e.target.value)}
+                      placeholder="e.g., 'Add warm sunset lighting', 'Enhance colors and contrast', 'Improve image sharpness', 'Add depth of field effect'"
+                      variant="outlined"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 2,
+                        }
+                      }}
+                    />
 
-                  {/* Regional Editing Instructions */}
-                  <Paper sx={{ p: 3, backgroundColor: 'success.light', borderRadius: 2, border: 1, borderColor: 'success.main' }}>
-                    <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, color: 'success.dark' }}>
-                      Regional Editing Available
-                    </Typography>
-                    <Typography variant="body2" color="success.dark" sx={{ mb: 1 }}>
-                      Click the <CropFreeIcon sx={{ fontSize: 16, mx: 0.5 }} /> button to select a specific region of the image to refine.
-                    </Typography>
-                    <Typography variant="body2" color="success.dark">
-                      {maskCoordinates ? 
-                        "Region selected! The refinement will be applied only to the selected area." :
-                        "No region selected. The refinement will be applied globally."
-                      }
-                    </Typography>
-                  </Paper>
-                </Stack>
+                    {/* Regional Editing Instructions */}
+                    <Paper sx={{ p: 3, backgroundColor: 'success.light', borderRadius: 2, border: 1, borderColor: 'success.main' }}>
+                      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, color: 'success.dark' }}>
+                        Regional Editing Available
+                      </Typography>
+                      <Typography variant="body2" color="success.dark" sx={{ mb: 1 }}>
+                        Click the <CropFreeIcon sx={{ fontSize: 16, mx: 0.5 }} /> button to select a specific region of the image to refine.
+                      </Typography>
+                      <Typography variant="body2" color="success.dark">
+                        {maskCoordinates ? 
+                          "Region selected! The refinement will be applied only to the selected area." :
+                          "No region selected. The refinement will be applied globally."
+                        }
+                      </Typography>
+                    </Paper>
+                  </Stack>
+                </Box>
               </TabPanel>
             </Box>
           </Box>
@@ -601,7 +616,8 @@ export default function RefinementModal({
         borderColor: 'divider',
         backgroundColor: 'grey.50',
         borderRadius: '0 0 12px 12px',
-        gap: 1
+        gap: 1,
+        flexShrink: 0,
       }}>
         <Button 
           onClick={handleClose} 
