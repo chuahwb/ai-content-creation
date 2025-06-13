@@ -311,23 +311,33 @@ export default function RefinementModal({
             flexDirection: 'column',
             height: '100%',
           }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexShrink: 0 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              mb: 2, 
+              flexShrink: 0,
+              minHeight: '40px', // Reserve consistent space for button area
+            }}>
               <Typography variant="h6" sx={{ fontWeight: 600 }}>
                 Current Image
               </Typography>
-              {tabValue === 2 && (
-                <Tooltip title={isDrawingMode ? "Exit drawing mode" : "Draw region to refine"}>
-                  <ToggleButton
-                    value="draw"
-                    selected={isDrawingMode}
-                    onChange={toggleDrawingMode}
-                    size="small"
-                    sx={{ borderRadius: 2 }}
-                  >
-                    <CropFreeIcon fontSize="small" />
-                  </ToggleButton>
-                </Tooltip>
-              )}
+              {/* Always render button container to prevent layout shift */}
+              <Box sx={{ width: '40px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {tabValue === 2 && (
+                  <Tooltip title={isDrawingMode ? "Exit drawing mode" : "Draw region to refine"}>
+                    <ToggleButton
+                      value="draw"
+                      selected={isDrawingMode}
+                      onChange={toggleDrawingMode}
+                      size="small"
+                      sx={{ borderRadius: 2 }}
+                    >
+                      <CropFreeIcon fontSize="small" />
+                    </ToggleButton>
+                  </Tooltip>
+                )}
+              </Box>
             </Box>
             
             {imagePath ? (
@@ -339,13 +349,17 @@ export default function RefinementModal({
                   justifyContent: 'center',
                   position: 'relative',
                   minHeight: 0, // Allow flex child to shrink
+                  overflow: 'hidden', // Prevent overflow
                 }}
               >
                 <Box
                   sx={{
                     position: 'relative',
-                    maxWidth: '100%',
-                    maxHeight: '100%',
+                    width: '100%',
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     cursor: isDrawingMode ? 'crosshair' : 'default',
                   }}
                   onMouseDown={handleMouseDown}
@@ -359,6 +373,8 @@ export default function RefinementModal({
                     sx={{
                       maxWidth: '100%',
                       maxHeight: '100%',
+                      width: 'auto',
+                      height: 'auto',
                       objectFit: 'contain',
                       borderRadius: 2,
                       border: 2,
@@ -403,7 +419,7 @@ export default function RefinementModal({
             )}
             
             {maskCoordinates && tabValue === 2 && (
-              <Box sx={{ mt: 2, flexShrink: 0 }}>
+              <Box sx={{ mt: 1.5, flexShrink: 0 }}>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Chip 
                     label="Region Selected" 
@@ -560,12 +576,12 @@ export default function RefinementModal({
                 </Box>
               </TabPanel>
 
-              {/* Prompt Refinement Tab */}
+              {/* Prompt Refinement Tab - Optimized for no scrolling */}
               <TabPanel value={tabValue} index={2}>
-                <Box sx={{ height: '100%', minHeight: '400px' }}>
-                  <Stack spacing={3}>
-                    <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <Stack spacing={2.5}>
+                    <Alert severity="info" icon={<InfoIcon />} sx={{ py: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
                         Apply global or regional enhancements to improve overall image quality and appearance
                       </Typography>
                     </Alert>
@@ -574,10 +590,10 @@ export default function RefinementModal({
                       fullWidth
                       label="How would you like to enhance the image?"
                       multiline
-                      rows={4}
+                      rows={3}
                       value={promptInstructions}
                       onChange={(e) => setPromptInstructions(e.target.value)}
-                      placeholder="e.g., 'Add warm sunset lighting', 'Enhance colors and contrast', 'Improve image sharpness', 'Add depth of field effect'"
+                      placeholder="e.g., 'Add warm sunset lighting', 'Enhance colors and contrast', 'Improve image sharpness'"
                       variant="outlined"
                       sx={{
                         '& .MuiOutlinedInput-root': {
@@ -586,18 +602,18 @@ export default function RefinementModal({
                       }}
                     />
 
-                    {/* Regional Editing Instructions */}
-                    <Paper sx={{ p: 3, backgroundColor: 'success.light', borderRadius: 2, border: 1, borderColor: 'success.main' }}>
-                      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, color: 'success.dark' }}>
-                        Regional Editing Available
-                      </Typography>
-                      <Typography variant="body2" color="success.dark" sx={{ mb: 1 }}>
-                        Click the <CropFreeIcon sx={{ fontSize: 16, mx: 0.5 }} /> button to select a specific region of the image to refine.
-                      </Typography>
-                      <Typography variant="body2" color="success.dark">
+                    {/* Regional Editing Instructions - Compact */}
+                    <Paper sx={{ p: 2, backgroundColor: 'success.light', borderRadius: 2, border: 1, borderColor: 'success.main' }}>
+                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                        <CropFreeIcon sx={{ fontSize: 16, color: 'success.dark' }} />
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'success.dark', fontSize: '0.875rem' }}>
+                          Regional Editing Available
+                        </Typography>
+                      </Stack>
+                      <Typography variant="body2" color="success.dark" sx={{ fontSize: '0.8rem', lineHeight: 1.3 }}>
                         {maskCoordinates ? 
-                          "Region selected! The refinement will be applied only to the selected area." :
-                          "No region selected. The refinement will be applied globally."
+                          "✓ Region selected! Refinement will be applied only to the selected area." :
+                          "Click the draw button above to select a specific region, or leave unselected for global enhancement."
                         }
                       </Typography>
                     </Paper>
