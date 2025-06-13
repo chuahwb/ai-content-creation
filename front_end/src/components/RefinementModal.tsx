@@ -482,10 +482,10 @@ export default function RefinementModal({
             }}>
               {/* Subject Repair Tab */}
               <TabPanel value={tabValue} index={0}>
-                <Box sx={{ height: '100%', minHeight: '400px' }}>
-                  <Stack spacing={3}>
-                    <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <Stack spacing={2.5}>
+                    <Alert severity="info" icon={<InfoIcon />} sx={{ py: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
                         Replace or modify the main subject while preserving background and composition
                       </Typography>
                     </Alert>
@@ -507,10 +507,10 @@ export default function RefinementModal({
                     />
 
                     <Box>
-                      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, mb: 1 }}>
+                      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, mb: 1, fontSize: '0.875rem' }}>
                         Reference Image (Optional)
                       </Typography>
-                      <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                      <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5, fontSize: '0.8rem', lineHeight: 1.3 }}>
                         Upload a reference image to guide the subject replacement
                       </Typography>
                       
@@ -527,7 +527,7 @@ export default function RefinementModal({
                           variant="outlined"
                           startIcon={<CloudUploadIcon />}
                           onClick={() => fileInputRef.current?.click()}
-                          sx={{ fontWeight: 500, borderRadius: 2 }}
+                          sx={{ fontWeight: 500, borderRadius: 2, fontSize: '0.875rem' }}
                         >
                           Choose Image
                         </Button>
@@ -538,7 +538,8 @@ export default function RefinementModal({
                             onDelete={() => setReferenceImage(null)}
                             color="success"
                             variant="outlined"
-                            sx={{ maxWidth: 200 }}
+                            size="small"
+                            sx={{ maxWidth: 180, fontSize: '0.75rem' }}
                           />
                         )}
                       </Stack>
@@ -549,10 +550,10 @@ export default function RefinementModal({
 
               {/* Text Repair Tab */}
               <TabPanel value={tabValue} index={1}>
-                <Box sx={{ height: '100%', minHeight: '400px' }}>
-                  <Stack spacing={3}>
-                    <Alert severity="info" icon={<InfoIcon />} sx={{ mb: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <Stack spacing={2.5}>
+                    <Alert severity="info" icon={<InfoIcon />} sx={{ py: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
                         Fix spelling errors, improve text clarity, and enhance text rendering quality
                       </Typography>
                     </Alert>
@@ -561,7 +562,7 @@ export default function RefinementModal({
                       fullWidth
                       label="What text issues would you like to fix?"
                       multiline
-                      rows={4}
+                      rows={3}
                       value={textInstructions}
                       onChange={(e) => setTextInstructions(e.target.value)}
                       placeholder="e.g., 'Fix spelling errors in the headline', 'Make the text more readable', 'Improve font clarity and contrast'"
