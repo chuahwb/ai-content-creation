@@ -2,7 +2,8 @@
 Text Repair Stage - Refinement Pipeline
 
 This stage performs text correction and enhancement on images.
-Focuses on fixing text legibility, accuracy, and visual presentation.
+Uses OpenAI's gpt-image-1 model via the images.edit API for text modifications.
+Leverages shared refinement utilities for consistency and code reuse.
 
 IMPLEMENTATION GUIDANCE:
 - Extract and correct text elements in the image
@@ -12,12 +13,22 @@ IMPLEMENTATION GUIDANCE:
 """
 
 import os
-import json
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from PIL import Image, ImageDraw, ImageFont
+
 from ..pipeline.context import PipelineContext
-from ..models import CostDetail
+from .refinement_utils import (
+    validate_refinement_inputs,
+    load_and_prepare_image,
+    determine_api_image_size,
+    call_openai_images_edit,
+    calculate_refinement_cost,
+    track_refinement_cost,
+    enhance_prompt_with_creativity_guidance
+)
+
+# Global variables for API clients are handled by refinement_utils and image_generation.py
 
 
 def run(ctx: PipelineContext) -> None:
@@ -45,382 +56,108 @@ def run(ctx: PipelineContext) -> None:
     
     ctx.log("Starting text repair stage...")
     
-    # Validate required inputs
-    _validate_inputs(ctx)
+    # Validate required inputs using shared utility
+    validate_refinement_inputs(ctx, "text")
     
-    # Load base image
-    base_image = _load_base_image(ctx)
+    # Additional validation specific to text repair
+    _validate_text_repair_inputs(ctx)
     
-    # Extract existing text (OCR)
-    extracted_text = _extract_text_from_image(ctx, base_image)
+    # Load and prepare base image using shared utility
+    base_image = load_and_prepare_image(ctx)
     
-    # Analyze text repair needs
-    text_corrections = _analyze_text_corrections(ctx, extracted_text)
-    
-    # TODO: IMPLEMENT ACTUAL TEXT REPAIR LOGIC
-    result_image = _perform_text_repair(ctx, base_image, text_corrections)
-    
-    # Save result
-    output_path = _save_result_image(ctx, result_image)
+    # Perform actual text repair using OpenAI API
+    result_image_path = asyncio.run(_perform_text_repair_api(ctx, base_image))
     
     # Update context with results
     ctx.refinement_result = {
         "type": "text_repair",
         "status": "completed",
-        "output_path": output_path,
+        "output_path": result_image_path,
         "modifications": {
-            "text_extracted": extracted_text,
-            "corrections_applied": text_corrections,
+            "text_corrected": True,
             "instructions_followed": ctx.instructions
         }
     }
     
-    # Track costs
-    ctx.refinement_cost = _calculate_cost(ctx, extracted_text)
+    # Calculate and track costs using shared utilities
+    ctx.refinement_cost = calculate_refinement_cost(
+        ctx, 
+        ctx.instructions or "", 
+        has_mask=False,
+        refinement_type="text repair"
+    )
+    track_refinement_cost(ctx, "text_repair", ctx.instructions or "", duration_seconds=3.0)
     
-    ctx.log(f"Text repair completed: {output_path}")
+    ctx.log(f"Text repair completed: {result_image_path}")
 
 
-def _validate_inputs(ctx: PipelineContext) -> None:
-    """Validate required inputs for text repair."""
-    
-    if not ctx.base_image_path or not os.path.exists(ctx.base_image_path):
-        raise ValueError("Base image path is required and must exist")
-    
-    if ctx.refinement_type != "text":
-        raise ValueError(f"Invalid refinement type for text repair: {ctx.refinement_type}")
+def _validate_text_repair_inputs(ctx: PipelineContext) -> None:
+    """Validate inputs specific to text repair (beyond common validation)."""
     
     if not ctx.instructions:
         ctx.instructions = "Fix and improve text elements in the image"
         ctx.log("No instructions provided, using default")
 
 
-def _load_base_image(ctx: PipelineContext) -> Image.Image:
-    """Load and validate the base image for text processing."""
-    
-    try:
-        image = Image.open(ctx.base_image_path)
-        ctx.log(f"Loaded base image: {image.size} {image.mode}")
-        
-        # Ensure RGB mode for processing
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-            ctx.log(f"Converted image to RGB mode")
-        
-        return image
-        
-    except Exception as e:
-        raise ValueError(f"Failed to load base image: {e}")
-
-
-def _extract_text_from_image(ctx: PipelineContext, image: Image.Image) -> List[Dict[str, Any]]:
+async def _perform_text_repair_api(ctx: PipelineContext, base_image) -> str:
     """
-    PLACEHOLDER: Extract text elements from the image using OCR.
-    
-    IMPLEMENTATION STRATEGY:
-    
-    1. OCR TEXT EXTRACTION:
-       - Use Tesseract, EasyOCR, or cloud OCR APIs
-       - Extract text content, positions, and confidence scores
-       - Identify font characteristics (size, style, color)
-    
-    2. TEXT REGION DETECTION:
-       - Use CRAFT, EAST, or similar text detection models
-       - Get precise bounding boxes for text regions
-       - Classify text types (headlines, body, captions)
-    
-    3. LAYOUT ANALYSIS:
-       - Understand text hierarchy and relationships
-       - Identify reading order and text flow
-       - Detect text alignment and spacing
-    
-    RECOMMENDED TOOLS:
-    - Google Cloud Vision API
-    - AWS Textract
-    - Azure Computer Vision
-    - Tesseract with preprocessing
-    - EasyOCR for multilingual support
-    
-    RETURN FORMAT:
-    [
-        {
-            "text": "extracted text content",
-            "bbox": [x1, y1, x2, y2],
-            "confidence": 0.95,
-            "font_size": 24,
-            "font_style": "bold",
-            "color": "#000000",
-            "text_type": "headline"
-        }
-    ]
+    Perform text repair using OpenAI's images.edit API.
+    Uses shared utilities for consistency with other refinement stages.
     """
     
-    ctx.log("PLACEHOLDER: Extracting text from image...")
-    
-    # TODO: Implement actual OCR
-    # For now, return placeholder extracted text
-    
-    # IMPLEMENTATION PSEUDOCODE:
-    """
-    # 1. Preprocess image for better OCR
-    processed_image = preprocess_for_ocr(image)
-    
-    # 2. Run OCR extraction
-    ocr_results = ocr_engine.extract_text(processed_image)
-    
-    # 3. Detect text regions
-    text_regions = text_detector.detect_regions(image)
-    
-    # 4. Combine OCR and detection results
-    extracted_text = combine_ocr_and_detection(ocr_results, text_regions)
-    
-    # 5. Analyze font characteristics
-    for text_item in extracted_text:
-        text_item['font_analysis'] = analyze_font_properties(image, text_item['bbox'])
-    
-    return extracted_text
-    """
-    
-    # PLACEHOLDER: Return mock extracted text
-    placeholder_text = [
-        {
-            "text": "Sample Text Found",
-            "bbox": [100, 50, 300, 80],
-            "confidence": 0.92,
-            "font_size": 24,
-            "font_style": "bold",
-            "color": "#000000",
-            "text_type": "headline"
-        },
-        {
-            "text": "Subtitle or description",
-            "bbox": [100, 100, 280, 120],
-            "confidence": 0.88,
-            "font_size": 16,
-            "font_style": "regular",
-            "color": "#333333",
-            "text_type": "body"
-        }
-    ]
-    
-    ctx.log(f"PLACEHOLDER: Found {len(placeholder_text)} text elements")
-    return placeholder_text
-
-
-def _analyze_text_corrections(ctx: PipelineContext, extracted_text: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Analyze what text corrections are needed based on instructions.
-    
-    ANALYSIS TYPES:
-    1. Spelling/Grammar corrections
-    2. Content updates/replacements
-    3. Style improvements (font, color, size)
-    4. Layout/positioning adjustments
-    5. Legibility enhancements
-    """
-    
-    ctx.log("Analyzing text correction needs...")
-    
-    corrections = []
-    
-    # Parse instructions for correction types
-    instructions_lower = ctx.instructions.lower()
-    
-    for i, text_item in enumerate(extracted_text):
-        correction = {
-            "original_text": text_item["text"],
-            "original_bbox": text_item["bbox"],
-            "corrections_needed": []
-        }
-        
-        # Example instruction parsing (simplified)
-        if "fix spelling" in instructions_lower or "correct" in instructions_lower:
-            correction["corrections_needed"].append("spelling_check")
-        
-        if "larger" in instructions_lower or "bigger" in instructions_lower:
-            correction["corrections_needed"].append("increase_font_size")
-        
-        if "clearer" in instructions_lower or "readable" in instructions_lower:
-            correction["corrections_needed"].append("improve_legibility")
-        
-        if "replace" in instructions_lower:
-            correction["corrections_needed"].append("content_replacement")
-        
-        # TODO: More sophisticated instruction parsing
-        # Consider using NLP models for better understanding
-        
-        corrections.append(correction)
-    
-    ctx.log(f"Identified corrections for {len(corrections)} text elements")
-    return corrections
-
-
-def _perform_text_repair(ctx: PipelineContext, base_image: Image.Image, text_corrections: List[Dict[str, Any]]) -> Image.Image:
-    """
-    PLACEHOLDER: Perform the actual text repair operations.
-    
-    IMPLEMENTATION STRATEGY:
-    
-    1. TEXT REMOVAL:
-       - Use inpainting to remove existing text cleanly
-       - Options: LaMa, EdgeConnect, or traditional inpainting
-       - Preserve background textures and patterns
-    
-    2. TEXT GENERATION:
-       - Generate corrected/improved text content
-       - Use typography rules for font selection
-       - Match original design aesthetic
-    
-    3. TEXT RENDERING:
-       - Render new text with appropriate fonts
-       - Apply styling (bold, italic, shadows, outlines)
-       - Ensure proper color contrast and legibility
-    
-    4. TEXT PLACEMENT:
-       - Position text optimally in the layout
-       - Maintain alignment and spacing rules
-       - Consider reading flow and hierarchy
-    
-    5. BLENDING/INTEGRATION:
-       - Seamlessly integrate new text into image
-       - Apply realistic lighting and shadow effects
-       - Ensure consistent visual style
-    
-    RECOMMENDED TOOLS:
-    - PIL/Pillow for basic text rendering
-    - Wand (ImageMagick) for advanced typography
-    - OpenCV for text effects and blending
-    - Custom deep learning models for style matching
-    
-    RETURN:
-    - Image with corrected/improved text elements
-    """
-    
-    ctx.log("PLACEHOLDER: Performing text repair...")
-    ctx.log(f"Processing {len(text_corrections)} text corrections")
+    from ..core.constants import IMAGE_GENERATION_MODEL_ID
+    ctx.log(f"Performing text repair using {IMAGE_GENERATION_MODEL_ID or 'gpt-image-1'}...")
     ctx.log(f"Instructions: {ctx.instructions}")
     ctx.log(f"Creativity level: {ctx.creativity_level}")
     
-    # TODO: Replace with actual implementation
+    # Prepare enhanced prompt using shared utility
+    enhanced_prompt = _prepare_text_repair_prompt(ctx)
     
-    # IMPLEMENTATION PSEUDOCODE:
-    """
-    result_image = base_image.copy()
+    # Determine image size using shared utility
+    image_size = determine_api_image_size(base_image.size)
     
-    for correction in text_corrections:
-        # 1. Remove original text
-        bbox = correction["original_bbox"]
-        text_removed_image = inpaint_text_region(result_image, bbox)
-        
-        # 2. Generate corrected text
-        if "content_replacement" in correction["corrections_needed"]:
-            new_text = generate_replacement_text(correction["original_text"], ctx.instructions)
-        else:
-            new_text = apply_text_corrections(correction["original_text"], correction["corrections_needed"])
-        
-        # 3. Determine styling
-        font_style = determine_font_style(correction, ctx.creativity_level)
-        
-        # 4. Render and place new text
-        result_image = render_text_on_image(text_removed_image, new_text, bbox, font_style)
-    
-    return result_image
-    """
-    
-    # PLACEHOLDER: Apply simple text overlay for demonstration
-    result_image = base_image.copy()
-    draw = ImageDraw.Draw(result_image)
-    
-    try:
-        # Try to use a default font
-        font = ImageFont.load_default()
-    except:
-        font = None
-    
-    # Add placeholder "CORRECTED" overlay
-    draw.text((10, 10), "TEXT CORRECTED", fill="red", font=font)
-    
-    ctx.log("WARNING: Using placeholder - applied simple text overlay")
-    return result_image
-
-
-def _save_result_image(ctx: PipelineContext, result_image: Image.Image) -> str:
-    """Save the result image to the appropriate location."""
-    
-    # Create output directory
-    output_dir = Path(f"./data/runs/{ctx.parent_run_id}/refinements")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Generate filename
-    parent_id = ctx.parent_image_id
-    if ctx.parent_image_type == "original":
-        parent_id = f"{ctx.generation_index}"
-    
-    filename = f"{ctx.run_id}_from_{parent_id}.png"
-    output_path = output_dir / filename
-    
-    # Save image
-    try:
-        result_image.save(output_path, format='PNG', optimize=True)
-        ctx.log(f"Saved result image: {output_path}")
-        return str(output_path)
-        
-    except Exception as e:
-        raise RuntimeError(f"Failed to save result image: {e}")
-
-
-def _calculate_cost(ctx: PipelineContext, extracted_text: List[Dict[str, Any]]) -> float:
-    """
-    Calculate cost for text repair operation.
-    
-    COST FACTORS:
-    - Number of text elements processed
-    - OCR API usage
-    - Text generation complexity
-    - Image inpainting operations
-    """
-    
-    # Base cost per text element
-    base_cost_per_text = 0.01
-    
-    # OCR cost (if using external API)
-    ocr_cost = 0.005
-    
-    # Inpainting cost per text region
-    inpainting_cost_per_region = 0.02
-    
-    num_text_elements = len(extracted_text)
-    
-    total_cost = (
-        ocr_cost +  # OCR processing
-        (num_text_elements * base_cost_per_text) +  # Text processing
-        (num_text_elements * inpainting_cost_per_region)  # Inpainting
+    # Call OpenAI API using shared utility (no mask for text repair)
+    result_image_path = await call_openai_images_edit(
+        ctx=ctx,
+        enhanced_prompt=enhanced_prompt,
+        image_size=image_size,
+        mask_path=None  # Text repair uses global editing, not masked editing
     )
     
-    # Adjust based on creativity level
-    creativity_multiplier = {1: 0.8, 2: 1.0, 3: 1.2}
-    total_cost *= creativity_multiplier.get(ctx.creativity_level, 1.0)
-    
-    ctx.log(f"Estimated text repair cost: ${total_cost:.3f} for {num_text_elements} text elements")
-    return total_cost
+    return result_image_path
 
 
-def _track_stage_cost(ctx: PipelineContext) -> None:
-    """Track detailed cost information for this stage."""
+def _prepare_text_repair_prompt(ctx: PipelineContext) -> str:
+    """
+    Prepare an enhanced prompt for text repair that incorporates
+    the user instructions and text-specific guidance.
+    """
     
-    try:
-        cost_detail = CostDetail(
-            stage_name="text_repair",
-            model_id="text_repair_pipeline",
-            provider="ocr_and_inpainting_apis",
-            duration_seconds=3.0,
-            total_stage_cost_usd=ctx.refinement_cost or 0.0,
-            cost_calculation_notes="Text extraction, correction, and inpainting operations"
-        )
-        
-        # Add to context cost summary
-        if ctx.cost_summary and 'stage_costs' in ctx.cost_summary:
-            ctx.cost_summary['stage_costs'].append(cost_detail.model_dump())
-            
-    except Exception as e:
-        ctx.log(f"Warning: Could not track cost for text_repair stage: {e}") 
+    base_instructions = ctx.instructions
+    
+    # Add context about text correction and enhancement
+    enhanced_prompt = f"{base_instructions}. Fix any text elements in the image including spelling errors, improve readability, and enhance text quality while preserving the original design and layout"
+    
+    # Use shared utility for creativity guidance
+    enhanced_prompt = enhance_prompt_with_creativity_guidance(
+        enhanced_prompt, 
+        ctx.creativity_level, 
+        "text"
+    )
+    
+    # Add quality and legibility hints specific to text
+    enhanced_prompt += " Ensure all text is clear, properly spelled, well-positioned, and easily readable. Maintain proper contrast and font characteristics appropriate for the image style."
+    
+    # Add marketing context if available from original generation
+    if ctx.original_pipeline_data:
+        processing_context = ctx.original_pipeline_data.get("processing_context", {})
+        strategies = processing_context.get("suggested_marketing_strategies", [])
+        if strategies and len(strategies) > 0:
+            strategy = strategies[0]  # Use first strategy
+            if isinstance(strategy, dict):
+                audience = strategy.get("target_audience", "")
+                if audience:
+                    enhanced_prompt += f" Ensure text is appropriate and appealing for {audience}."
+    
+    ctx.log(f"Enhanced text repair prompt: {enhanced_prompt}")
+    return enhanced_prompt 
