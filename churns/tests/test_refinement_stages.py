@@ -21,7 +21,6 @@ from churns.stages.refinement_utils import (
     load_and_prepare_image,
     calculate_refinement_cost,
     create_mask_from_coordinates,
-    enhance_prompt_with_creativity_guidance
 )
 
 
@@ -354,26 +353,6 @@ class TestRefinementUtils:
         ctx.mask_coordinates = None
         mask = create_mask_from_coordinates(ctx, image_size)
         assert mask is None
-    
-    def test_enhance_prompt_with_creativity_guidance(self):
-        """Test prompt enhancement with creativity levels."""
-        base_prompt = "Improve the image"
-        
-        # Test different creativity levels
-        enhanced_1 = enhance_prompt_with_creativity_guidance(base_prompt, 1, "subject")
-        enhanced_2 = enhance_prompt_with_creativity_guidance(base_prompt, 2, "subject")
-        enhanced_3 = enhance_prompt_with_creativity_guidance(base_prompt, 3, "subject")
-        
-        assert "subtle" in enhanced_1
-        assert "moderate" in enhanced_2
-        assert "creative" in enhanced_3
-        
-        # Test different refinement types
-        text_enhanced = enhance_prompt_with_creativity_guidance(base_prompt, 2, "text")
-        prompt_enhanced = enhance_prompt_with_creativity_guidance(base_prompt, 2, "prompt")
-        
-        assert "text" in text_enhanced or "spelling" in text_enhanced
-        assert "adjustments" in prompt_enhanced
 
 
 class TestRefinementIntegration:

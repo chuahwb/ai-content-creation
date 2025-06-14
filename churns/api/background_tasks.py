@@ -541,6 +541,10 @@ class PipelineTaskProcessor:
     async def _execute_refinement(self, job_id: str, refinement_data: Dict[str, Any]):
         """Execute the refinement pipeline with progress updates"""
         try:
+            # DEBUG: Log refinement data being processed in background task
+            logger.info(f"Starting refinement execution - Job ID: {job_id}")
+            logger.info(f"Refinement data in background processor: {refinement_data}")
+            
             # Get job details from database
             with Session(engine) as session:
                 job = session.get(RefinementJob, job_id)
