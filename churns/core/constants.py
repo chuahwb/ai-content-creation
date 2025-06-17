@@ -45,8 +45,8 @@ CREATIVE_EXPERT_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
 CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
 
 # Image Assessment Model (dedicated for image quality evaluation)
-IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenAI"  # Direct OpenAI for reliable multi-image processing
-IMAGE_ASSESSMENT_MODEL_ID = "gpt-4.1"  # OpenAI native client for vision tasks
+IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenRouter"  # Direct OpenAI for reliable multi-image processing
+IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision tasks
 
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 

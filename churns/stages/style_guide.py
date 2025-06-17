@@ -15,6 +15,11 @@ from pydantic import ValidationError
 
 from churns.models import StyleGuidance, StyleGuidanceList
 from churns.pipeline.context import PipelineContext
+from churns.core.json_parser import (
+    RobustJSONParser, 
+    JSONExtractionError,
+    should_use_manual_parsing
+)
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 instructor_client_style_guide = None
@@ -24,92 +29,8 @@ STYLE_GUIDER_MODEL_PROVIDER = None
 FORCE_MANUAL_JSON_PARSE = False
 INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 
-
-def _extract_json_from_llm_response(raw_text: str) -> Optional[str]:
-    """
-    Extracts a JSON string from an LLM's raw text response.
-    Handles markdown code blocks and attempts to parse direct JSON,
-    including cases with "Extra data" errors.
-    """
-    if not isinstance(raw_text, str):
-        return None
-
-    # 1. Try to find JSON within ```json ... ```
-    import re
-    match_md_json = re.search(r"```json\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_json:
-        json_str = match_md_json.group(1).strip()
-        try:
-            json.loads(json_str)  # Validate
-            return json_str
-        except json.JSONDecodeError:
-            pass  # Continue to other methods if this fails
-
-    # 2. Try to find JSON within ``` ... ``` (generic code block)
-    match_md_generic = re.search(r"```\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_generic:
-        potential_json = match_md_generic.group(1).strip()
-        if (potential_json.startswith('{') and potential_json.endswith('}')) or \
-           (potential_json.startswith('[') and potential_json.endswith(']')):
-            try:
-                json.loads(potential_json)  # Validate
-                return potential_json
-            except json.JSONDecodeError:
-                pass  # Continue
-
-    # 3. Try to parse the stripped raw_text directly
-    stripped_text = raw_text.strip()
-    if not stripped_text:
-        return None
-
-    try:
-        json.loads(stripped_text)  # Try to parse the whole stripped text
-        return stripped_text  # If successful, the whole thing is JSON
-    except json.JSONDecodeError as e:
-        # If "Extra data" error, it means a valid JSON object was parsed,
-        # but there was trailing data. e.pos is the index of the start of extra data.
-        if "Extra data" in str(e) and e.pos > 0:
-            potential_json_substring = stripped_text[:e.pos]
-            try:
-                json.loads(potential_json_substring)  # Re-validate the substring
-                return potential_json_substring.strip()
-            except json.JSONDecodeError:
-                pass  # Fall through to other methods
-
-    # 4. Fallback: find the first '{' to the last '}' or first '[' to last ']'
-    first_brace = stripped_text.find('{')
-    last_brace = stripped_text.rfind('}')
-    first_bracket = stripped_text.find('[')
-    last_bracket = stripped_text.rfind(']')
-
-    json_candidate = None
-
-    if first_brace != -1 and last_brace != -1 and first_brace < last_brace:
-        potential_obj_str = stripped_text[first_brace : last_brace + 1]
-        try:
-            json.loads(potential_obj_str)
-            json_candidate = potential_obj_str
-        except json.JSONDecodeError:
-            pass
-
-    if first_bracket != -1 and last_bracket != -1 and first_bracket < last_bracket:
-        potential_arr_str = stripped_text[first_bracket : last_bracket + 1]
-        try:
-            json.loads(potential_arr_str)
-            # If an object was also found, prefer the one that's not inside the other,
-            # or prefer object if ambiguity. For simplicity, if both are valid and standalone,
-            # this might need more sophisticated logic if LLM mixes them.
-            # Here, if an object was found, we'll stick with it unless the array is clearly not part of it.
-            if json_candidate:
-                # If array is outside or wraps the object, consider it
-                if not (first_bracket > first_brace and last_bracket < last_brace):
-                     json_candidate = potential_arr_str  # Or decide based on which is "more complete"
-            else:
-                json_candidate = potential_arr_str
-        except json.JSONDecodeError:
-            pass
-
-    return json_candidate
+# Initialize centralized JSON parser for this stage
+_json_parser = RobustJSONParser(debug_mode=False)
 
 
 def _get_style_guider_system_prompt(
@@ -248,8 +169,10 @@ def run(ctx: PipelineContext) -> None:
     ctx.log(f"Generating style guidance for {num_strategies} strategies (Creativity: {creativity_level})")
 
     # Use global client variables (injected by pipeline executor)
-    client_to_use_sg = instructor_client_style_guide if instructor_client_style_guide and not FORCE_MANUAL_JSON_PARSE else base_llm_client_style_guide
-    use_instructor_for_sg_call = bool(instructor_client_style_guide and not FORCE_MANUAL_JSON_PARSE and STYLE_GUIDER_MODEL_ID not in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS)
+    # Determine parsing strategy using centralized logic
+    use_manual_parsing = should_use_manual_parsing(STYLE_GUIDER_MODEL_ID)
+    client_to_use_sg = base_llm_client_style_guide if use_manual_parsing else instructor_client_style_guide
+    use_instructor_for_sg_call = bool(instructor_client_style_guide and not use_manual_parsing)
     
     if not client_to_use_sg:
         error_msg = "LLM Client for Style Guider not available."
@@ -312,28 +235,34 @@ def run(ctx: PipelineContext) -> None:
 
         if actually_use_instructor_parsing_sg:
             style_guidance_list_data = [item.model_dump() for item in completion_sg.style_guidance_sets]
-        else:  # Manual parse
+        else:  # Manual parse using centralized parser
             raw_content_sg = completion_sg.choices[0].message.content
-            json_str_sg = _extract_json_from_llm_response(raw_content_sg)
-            if not json_str_sg:
-                error_details_sg = f"Style Guider JSON extraction failed. Could not find JSON in response.\nRaw Content: {raw_content_sg}"
-                raise Exception(error_details_sg)
-                
+            
             try:
-                parsed_json_sg = json.loads(json_str_sg)
-                # Handle if LLM returns a list directly for style_guidance_sets
-                data_for_pydantic_sg_validation = {}
-                if isinstance(parsed_json_sg, list) and "style_guidance_sets" in StyleGuidanceList.model_fields:
-                    data_for_pydantic_sg_validation = {"style_guidance_sets": parsed_json_sg}
-                elif isinstance(parsed_json_sg, dict):  # Expected case
-                    data_for_pydantic_sg_validation = parsed_json_sg
-                else:
-                    raise ValidationError(f"Parsed JSON for Style Guidance is not a list or dict as expected: {type(parsed_json_sg)}")
+                # Use centralized parser with fallback validation for list handling
+                def fallback_validation(data: Dict[str, Any]) -> Dict[str, Any]:
+                    """Handle if LLM returns a list directly for style_guidance_sets."""
+                    data_for_validation = {}
+                    if isinstance(data, list) and "style_guidance_sets" in StyleGuidanceList.model_fields:
+                        data_for_validation = {"style_guidance_sets": data}
+                    elif isinstance(data, dict):  # Expected case
+                        data_for_validation = data
+                    else:
+                        raise ValidationError(f"Parsed JSON for Style Guidance is not a list or dict as expected: {type(data)}")
 
-                validated_model_sg = StyleGuidanceList(**data_for_pydantic_sg_validation)
-                style_guidance_list_data = [item.model_dump() for item in validated_model_sg.style_guidance_sets]
-            except (json.JSONDecodeError, ValidationError) as err_sg_parse:
-                error_details_sg = f"Style Guider JSON/Pydantic error: {err_sg_parse}\nExtracted JSON: {json_str_sg}\nRaw: {raw_content_sg}"
+                    validated_model = StyleGuidanceList(**data_for_validation)
+                    return {"style_guidance_sets": [item.model_dump() for item in validated_model.style_guidance_sets]}
+                
+                result_data = _json_parser.extract_and_parse(
+                    raw_content_sg,
+                    expected_schema=StyleGuidanceList,
+                    fallback_validation=fallback_validation
+                )
+                
+                style_guidance_list_data = result_data.get("style_guidance_sets", [])
+                
+            except JSONExtractionError as extract_err_sg:
+                error_details_sg = f"Style Guider JSON extraction/parsing failed: {extract_err_sg}\nRaw: {raw_content_sg}"
                 raise Exception(error_details_sg)
 
         ctx.log(f"Successfully generated {len(style_guidance_list_data)} style guidance sets")

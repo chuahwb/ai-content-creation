@@ -20,6 +20,11 @@ from churns.models import (
     StyleGuidance
 )
 from churns.pipeline.context import PipelineContext
+from churns.core.json_parser import (
+    RobustJSONParser, 
+    JSONExtractionError,
+    should_use_manual_parsing
+)
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 instructor_client_creative_expert = None
@@ -30,84 +35,11 @@ FORCE_MANUAL_JSON_PARSE = False
 INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 
 
-def _extract_json_from_llm_response(raw_text: str) -> Optional[str]:
-    """
-    Extracts a JSON string from an LLM's raw text response.
-    Handles markdown code blocks and attempts to parse direct JSON.
-    """
-    import re
-    
-    if not isinstance(raw_text, str):
-        return None
+# Initialize centralized JSON parser for this stage
+_json_parser = RobustJSONParser(debug_mode=False)
 
-    # 1. Try to find JSON within ```json ... ```
-    match_md_json = re.search(r"```json\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_json:
-        json_str = match_md_json.group(1).strip()
-        try:
-            json.loads(json_str)  # Validate
-            return json_str
-        except json.JSONDecodeError:
-            pass
 
-    # 2. Try to find JSON within ``` ... ``` (generic code block)
-    match_md_generic = re.search(r"```\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_generic:
-        potential_json = match_md_generic.group(1).strip()
-        if (potential_json.startswith('{') and potential_json.endswith('}')) or \
-           (potential_json.startswith('[') and potential_json.endswith(']')):
-            try:
-                json.loads(potential_json)
-                return potential_json
-            except json.JSONDecodeError:
-                pass
-
-    # 3. Try to parse the stripped raw_text directly
-    stripped_text = raw_text.strip()
-    if not stripped_text:
-        return None
-
-    try:
-        json.loads(stripped_text)
-        return stripped_text
-    except json.JSONDecodeError as e:
-        if "Extra data" in str(e) and e.pos > 0:
-            potential_json_substring = stripped_text[:e.pos]
-            try:
-                json.loads(potential_json_substring)
-                return potential_json_substring.strip()
-            except json.JSONDecodeError:
-                pass
-
-    # 4. Fallback: find the first '{' to the last '}' or first '[' to last ']'
-    first_brace = stripped_text.find('{')
-    last_brace = stripped_text.rfind('}')
-    first_bracket = stripped_text.find('[')
-    last_bracket = stripped_text.rfind(']')
-
-    json_candidate = None
-
-    if first_brace != -1 and last_brace != -1 and first_brace < last_brace:
-        potential_obj_str = stripped_text[first_brace : last_brace + 1]
-        try:
-            json.loads(potential_obj_str)
-            json_candidate = potential_obj_str
-        except json.JSONDecodeError:
-            pass
-
-    if first_bracket != -1 and last_bracket != -1 and first_bracket < last_bracket:
-        potential_arr_str = stripped_text[first_bracket : last_bracket + 1]
-        try:
-            json.loads(potential_arr_str)
-            if json_candidate:
-                if not (first_bracket > first_brace and last_bracket < last_brace):
-                     json_candidate = potential_arr_str
-            else:
-                json_candidate = potential_arr_str
-        except json.JSONDecodeError:
-            pass
-
-    return json_candidate
+# Old manual JSON extraction function removed - now using centralized parser
 
 
 def _map_to_supported_aspect_ratio_for_prompt(aspect_ratio: str) -> str:
@@ -515,8 +447,10 @@ async def _generate_visual_concept_for_strategy(
     is_default_edit_case = has_image_reference and not has_instruction_flag
 
     # Use global client variables (injected by pipeline executor)
-    client_to_use_ce = instructor_client_creative_expert if instructor_client_creative_expert and not FORCE_MANUAL_JSON_PARSE else base_llm_client_creative_expert
-    use_instructor_for_ce_call = bool(instructor_client_creative_expert and not FORCE_MANUAL_JSON_PARSE and CREATIVE_EXPERT_MODEL_ID not in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS)
+    # Determine parsing strategy using centralized logic
+    use_manual_parsing = should_use_manual_parsing(CREATIVE_EXPERT_MODEL_ID)
+    client_to_use_ce = base_llm_client_creative_expert if use_manual_parsing else instructor_client_creative_expert
+    use_instructor_for_ce_call = bool(instructor_client_creative_expert and not use_manual_parsing)
     
     if not client_to_use_ce:
         return None, None, "LLM Client for Creative Expert not available."
@@ -579,50 +513,54 @@ async def _generate_visual_concept_for_strategy(
 
         if actually_use_instructor_parsing_ce:
             prompt_data_ce = completion_ce.model_dump()
-        else:  # Manual parse
+        else:  # Manual parse using centralized parser
             raw_response_content_ce = completion_ce.choices[0].message.content
-            json_string_ce = _extract_json_from_llm_response(raw_response_content_ce)
-            if not json_string_ce:
-                error_details_ce = f"Creative Expert JSON extraction failed.\nRaw: {raw_response_content_ce}"
-                raise Exception(error_details_ce)
             
             try:
-                parsed_json_ce = json.loads(json_string_ce)
+                # Use centralized parser with fallback validation for promotional_text_visuals handling
+                def fallback_validation(data: Dict[str, Any]) -> Dict[str, Any]:
+                    """Handle special case where promotional_text_visuals might be returned as a dict."""
+                    if ('visual_concept' in data and 
+                        isinstance(data.get('visual_concept'), dict) and 
+                        'promotional_text_visuals' in data['visual_concept'] and 
+                        isinstance(data['visual_concept']['promotional_text_visuals'], dict)):
 
-                # Handle special case where promotional_text_visuals might be returned as a dict
-                if ('visual_concept' in parsed_json_ce and 
-                    isinstance(parsed_json_ce.get('visual_concept'), dict) and 
-                    'promotional_text_visuals' in parsed_json_ce['visual_concept'] and 
-                    isinstance(parsed_json_ce['visual_concept']['promotional_text_visuals'], dict)):
+                        ptv_dict = data['visual_concept']['promotional_text_visuals']
+                        description_parts = []
+                        for ptv_key, ptv_value in ptv_dict.items():
+                            formatted_ptv_key = ptv_key.replace('_', ' ').capitalize()
+                            if isinstance(ptv_value, list):
+                                item_strs = []
+                                for item in ptv_value:
+                                    if isinstance(item, dict) and 'type' in item and 'text' in item:
+                                        item_strs.append(f"{item.get('type', '').capitalize()}: \"{item.get('text', '')}\"")
+                                    elif isinstance(item, dict):
+                                        item_strs.append(json.dumps(item))
+                                    else:
+                                        item_strs.append(str(item))
+                                description_parts.append(f"{formatted_ptv_key}: [{'; '.join(item_strs)}]")
+                            elif isinstance(ptv_value, dict):
+                                description_parts.append(f"{formatted_ptv_key}: {json.dumps(ptv_value)}")
+                            else:
+                                description_parts.append(f"{formatted_ptv_key}: {str(ptv_value)}")
 
-                    ptv_dict = parsed_json_ce['visual_concept']['promotional_text_visuals']
-                    description_parts = []
-                    for ptv_key, ptv_value in ptv_dict.items():
-                        formatted_ptv_key = ptv_key.replace('_', ' ').capitalize()
-                        if isinstance(ptv_value, list):
-                            item_strs = []
-                            for item in ptv_value:
-                                if isinstance(item, dict) and 'type' in item and 'text' in item:
-                                    item_strs.append(f"{item.get('type', '').capitalize()}: \"{item.get('text', '')}\"")
-                                elif isinstance(item, dict):
-                                    item_strs.append(json.dumps(item))
-                                else:
-                                    item_strs.append(str(item))
-                            description_parts.append(f"{formatted_ptv_key}: [{'; '.join(item_strs)}]")
-                        elif isinstance(ptv_value, dict):
-                            description_parts.append(f"{formatted_ptv_key}: {json.dumps(ptv_value)}")
+                        if description_parts:
+                            data['visual_concept']['promotional_text_visuals'] = "; ".join(description_parts) + "."
                         else:
-                            description_parts.append(f"{formatted_ptv_key}: {str(ptv_value)}")
+                            data['visual_concept']['promotional_text_visuals'] = json.dumps(ptv_dict)
 
-                    if description_parts:
-                        parsed_json_ce['visual_concept']['promotional_text_visuals'] = "; ".join(description_parts) + "."
-                    else:
-                        parsed_json_ce['visual_concept']['promotional_text_visuals'] = json.dumps(ptv_dict)
-
-                validated_model_ce = ImageGenerationPrompt(**parsed_json_ce)
-                prompt_data_ce = validated_model_ce.model_dump()
-            except (json.JSONDecodeError, ValidationError) as val_err_ce:
-                error_details_ce = f"Creative Expert Pydantic/JSON validation error: {val_err_ce}\nExtracted JSON: {json_string_ce}\nRaw: {raw_response_content_ce}"
+                    # Validate with Pydantic model after transformation
+                    validated_model = ImageGenerationPrompt(**data)
+                    return validated_model.model_dump()
+                
+                prompt_data_ce = _json_parser.extract_and_parse(
+                    raw_response_content_ce,
+                    expected_schema=ImageGenerationPrompt,
+                    fallback_validation=fallback_validation
+                )
+                
+            except JSONExtractionError as extract_err_ce:
+                error_details_ce = f"Creative Expert JSON extraction/parsing failed: {extract_err_ce}\nRaw: {raw_response_content_ce}"
                 raise Exception(error_details_ce)
 
         if prompt_data_ce is None:
