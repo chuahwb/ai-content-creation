@@ -52,7 +52,6 @@ def test_subject_repair():
     ctx.parent_image_type = "original"
     ctx.generation_index = 0
     ctx.refinement_type = "subject"
-    ctx.creativity_level = 2
     ctx.instructions = "Replace subject with modern version"
     ctx.cost_summary = {"stage_costs": []}
     
@@ -98,7 +97,6 @@ def test_text_repair():
     ctx.parent_image_type = "original"
     ctx.generation_index = 0
     ctx.refinement_type = "text"
-    ctx.creativity_level = 2
     ctx.instructions = "Fix spelling and improve clarity"
     ctx.cost_summary = {"stage_costs": []}
     
@@ -143,63 +141,6 @@ def test_text_repair():
         image_generation.image_gen_client = original_client
 
 
-def test_prompt_refine():
-    """Test prompt refinement stage."""
-    print("🔧 Testing Prompt Refinement...")
-    
-    # Create test context
-    ctx = PipelineContext()
-    ctx.run_id = "test_prompt_123"
-    ctx.parent_run_id = "parent_123"
-    ctx.parent_image_id = "image_0"
-    ctx.parent_image_type = "original"
-    ctx.generation_index = 0
-    ctx.refinement_type = "prompt"
-    ctx.creativity_level = 2
-    ctx.prompt = "Add sunset lighting and warm tones"
-    ctx.cost_summary = {"stage_costs": []}
-    
-    # Add original pipeline data for context enhancement
-    ctx.original_pipeline_data = {
-        "processing_context": {
-            "style_guidance_sets": [
-                {"style_keywords": ["professional", "modern", "clean"]}
-            ],
-            "suggested_marketing_strategies": [
-                {"target_audience": "food enthusiasts", "platform": "Instagram"}
-            ]
-        }
-    }
-    
-    # Create test image
-    test_dir = tempfile.mkdtemp()
-    ctx.base_image_path = create_test_image(os.path.join(test_dir, "base.png"))
-    
-    # Inject mock client
-    original_client = image_generation.image_gen_client
-    image_generation.image_gen_client = create_mock_client()
-    
-    try:
-        # Run the stage
-        prompt_refine.run(ctx)
-        
-        # Validate results
-        assert ctx.refinement_result is not None
-        assert ctx.refinement_result["type"] == "prompt_refinement"
-        assert ctx.refinement_result["status"] == "completed"
-        assert ctx.refinement_cost > 0
-        
-        print("   ✅ Prompt refinement completed successfully")
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ Prompt refinement failed: {e}")
-        return False
-    finally:
-        # Restore original client
-        image_generation.image_gen_client = original_client
-
-
 def test_utilities():
     """Test utility functions."""
     print("🔧 Testing Shared Utilities...")
@@ -207,13 +148,11 @@ def test_utilities():
     from churns.stages.refinement_utils import (
         calculate_refinement_cost,
         create_mask_from_coordinates,
-        enhance_prompt_with_creativity_guidance
     )
     
     try:
         # Test cost calculation
         ctx = PipelineContext()
-        ctx.creativity_level = 2
         cost = calculate_refinement_cost(ctx, "test prompt")
         assert cost > 0
         
@@ -226,9 +165,6 @@ def test_utilities():
         mask = create_mask_from_coordinates(ctx, (200, 200))
         assert mask is not None
         
-        # Test prompt enhancement
-        enhanced = enhance_prompt_with_creativity_guidance("improve image", 2, "subject")
-        assert len(enhanced) > len("improve image")
         
         print("   ✅ All utilities working correctly")
         return True
@@ -246,7 +182,6 @@ def main():
     tests = [
         test_subject_repair,
         test_text_repair, 
-        test_prompt_refine,
         test_utilities
     ]
     

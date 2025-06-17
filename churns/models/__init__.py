@@ -52,6 +52,7 @@ class VisualConceptDetails(BaseModel):
     texture_and_details: Optional[str] = Field(None, description="Specific notes on textures, materials, or fine details.")
     negative_elements: Optional[str] = Field(None, description="Specific elements or concepts to actively avoid in the image.")
     creative_reasoning: Optional[str] = Field(None, description="Brief explanation connecting the key visual choices (style, mood, composition, subject focus) back to the marketing strategy (audience, niche, objective, voice) and user inputs.")
+    suggested_alt_text: str = Field(..., description="Concise, descriptive alt text (100-125 characters) for SEO and accessibility. Should clearly describe the image's subject, setting, and any important actions or text, naturally incorporating primary keywords from the marketing strategy.")
 
 class StyleGuidance(BaseModel):
     """Defines a specific style direction for a visual concept."""

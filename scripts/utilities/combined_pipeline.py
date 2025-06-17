@@ -24,7 +24,7 @@ The combined pipeline aims to:
 """
 
 # @title Step 0: Install Prerequisites
-!pip install openai pydantic instructor python-dotenv tenacity Pillow requests -q
+# !pip install openai pydantic instructor python-dotenv tenacity Pillow requests -q
 
 # @title Step 1: Setup - Import Libraries, Mount Drive, Define Paths & Constants
 
@@ -419,6 +419,7 @@ if BaseModel:
         texture_and_details: Optional[str] = Field(None, description="Specific notes on textures, materials, or fine details.")
         negative_elements: Optional[str] = Field(None, description="Specific elements or concepts to actively avoid in the image.")
         creative_reasoning: Optional[str] = Field(None, description="Brief explanation connecting the key visual choices (style, mood, composition, subject focus) back to the marketing strategy (audience, niche, objective, voice) and user inputs.")
+        suggested_alt_text: str = Field(..., description="Concise, descriptive alt text (100-125 characters) for SEO and accessibility. Should clearly describe the image's subject, setting, and any important actions or text, naturally incorporating primary keywords from the marketing strategy.")
 
     class StyleGuidance(BaseModel):
         """Defines a specific style direction for a visual concept."""
@@ -1151,10 +1152,10 @@ def get_user_prompt_parts( # For Creative Expert
 
     platform_guidance_map = {
         "Instagram Post (1:1 Square)": "Optimize for Instagram Feed: Aim for a polished, visually cohesive aesthetic. Consider compositions suitable for square or vertical feeds. Ensure text placement is easily readable.",
-        "Instagram Story/Reel (9:16 Vertical)": "Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for a vertical format. Consider bold text, trendy effects, or concepts suitable for short video loops or interactive elements.",
+        "Instagram Story/Reel (9:16 Vertical)": "Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for a vertical format. **Describe the visual as if it were a single, high-impact frame from a video Reel.** Incorporate a sense of motion or action in the `composition_and_framing` description (e.g., 'dynamic motion blur,' 'subject captured mid-action,' 'cinematic freeze-frame effect').",
         "Facebook Post (Mixed)": "Optimize for Facebook Feed: Design for broad appeal and shareability. Ensure clear branding and messaging for potential ad use.",
-        "Pinterest Pin (2:3 Vertical)": "Optimize for Pinterest: Create visually striking, informative vertical images. Focus on aesthetics, clear subject matter, and potential for text overlays that add value.",
-        "Xiaohongshu (Red Note) (3:4 Vertical)": "Optimize for Xiaohongshu: Focus on authentic, aesthetically pleasing, informative, and often lifestyle-oriented visuals. Use high-quality imagery, potentially with integrated text overlays in a blog-post style. Vertical format is preferred.",
+        "Pinterest Pin (2:3 Vertical)": "Optimize for Pinterest: Create visually striking, informative vertical images. **If text is enabled, the concept MUST include a prominent text overlay.** As per Pinterest best practices, the description in `promotional_text_visuals` should specify text that is **large, highly legible (e.g., bold sans-serif fonts), and contains primary keywords from the marketing strategy.**",
+        "Xiaohongshu (Red Note) (3:4 Vertical)": "Optimize for Xiaohongshu: Focus on an **authentic, User-Generated Content (UGC) aesthetic**. The concept should resemble a high-quality photo from a peer, not a polished ad. When describing the `visual_style`, favor terms like 'natural lighting' or 'candid shot.' **The concept should feature real people** interacting with the product or in the scene. If text is enabled, the `promotional_text_visuals` description must detail a **catchy, keyword-rich title overlay to act as a strong hook.**",
     }
     platform_guidance_text = platform_guidance_map.get(platform_name, f"Adapt the concept for the target platform '{platform_name}'.") if platform_name and platform_name != PLATFORM_DISPLAY_NAMES[0] else "Adapt the concept for general social media use."
     user_prompt_parts.append(f"\n**Platform Optimization (General Reminder):** {platform_guidance_text} (Detailed task-specific platform optimization is in system prompt).")
@@ -1182,6 +1183,7 @@ Ensure the nested `VisualConceptDetails` object is fully populated with rich, de
 - Add notes on `texture_and_details` if relevant.
 - List any `negative_elements` to avoid.
 - **Provide a brief `creative_reasoning` explaining how the main visual choices connect to the core marketing strategy (especially the `target_objective`), user inputs, task type, and style guidance.**
+- **Generate a concise and descriptive `suggested_alt_text` for SEO and accessibility (descriptive text only, no hashtags or promotional language).**
 
 Ensure the overall visual concept aligns strongly with the core marketing strategy, task type '{task_type}', and incorporates the image reference context as instructed in the system prompt.
 The `source_strategy_index` field in the JSON will be added programmatically later.

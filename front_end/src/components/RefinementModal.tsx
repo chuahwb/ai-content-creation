@@ -126,21 +126,52 @@ export default function RefinementModal({
   const getImageCoordinates = (event: React.MouseEvent<HTMLElement>) => {
     if (!imageRef.current) return null;
     
-    const rect = imageRef.current.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width);
-    const y = ((event.clientY - rect.top) / rect.height);
+    const img = imageRef.current;
+    const containerRect = img.parentElement?.getBoundingClientRect();
+    if (!containerRect) return null;
     
-    return { x, y };
+    // Get actual displayed image dimensions (accounting for object-fit: contain)
+    const containerWidth = containerRect.width;
+    const containerHeight = containerRect.height;
+    const imageAspectRatio = img.naturalWidth / img.naturalHeight;
+    const containerAspectRatio = containerWidth / containerHeight;
+    
+    let displayedWidth, displayedHeight, offsetX, offsetY;
+    
+    if (imageAspectRatio > containerAspectRatio) {
+      // Image is wider - constrained by width
+      displayedWidth = containerWidth;
+      displayedHeight = containerWidth / imageAspectRatio;
+      offsetX = 0;
+      offsetY = (containerHeight - displayedHeight) / 2;
+    } else {
+      // Image is taller - constrained by height  
+      displayedHeight = containerHeight;
+      displayedWidth = containerHeight * imageAspectRatio;
+      offsetX = (containerWidth - displayedWidth) / 2;
+      offsetY = 0;
+    }
+    
+    // Calculate coordinates relative to the actual displayed image
+    const x = (event.clientX - containerRect.left - offsetX) / displayedWidth;
+    const y = (event.clientY - containerRect.top - offsetY) / displayedHeight;
+    
+    // Clamp coordinates to [0, 1] range
+    const clampedX = Math.max(0, Math.min(1, x));
+    const clampedY = Math.max(0, Math.min(1, y));
+    
+    return { x: clampedX, y: clampedY };
   };
 
   const handleMouseDown = (event: React.MouseEvent<HTMLElement>) => {
     if (!isDrawingMode) return;
     
     const coords = getImageCoordinates(event);
-    if (coords) {
+    if (coords && coords.x >= 0 && coords.x <= 1 && coords.y >= 0 && coords.y <= 1) {
       setIsDrawing(true);
       setStartPoint(coords);
       setMaskCoordinates(null);
+      event.preventDefault();
     }
   };
 
@@ -149,19 +180,30 @@ export default function RefinementModal({
     
     const coords = getImageCoordinates(event);
     if (coords) {
-      const width = Math.abs(coords.x - startPoint.x);
-      const height = Math.abs(coords.y - startPoint.y);
-      const x = Math.min(startPoint.x, coords.x);
-      const y = Math.min(startPoint.y, coords.y);
+      // Ensure coordinates stay within image bounds
+      const clampedCoords = {
+        x: Math.max(0, Math.min(1, coords.x)),
+        y: Math.max(0, Math.min(1, coords.y))
+      };
       
-      setMaskCoordinates({ x, y, width, height });
+      const width = Math.abs(clampedCoords.x - startPoint.x);
+      const height = Math.abs(clampedCoords.y - startPoint.y);
+      const x = Math.min(startPoint.x, clampedCoords.x);
+      const y = Math.min(startPoint.y, clampedCoords.y);
+      
+      // Only set mask if it meets minimum size requirements (at least 5% of image in each dimension)
+      if (width >= 0.05 && height >= 0.05) {
+        setMaskCoordinates({ x, y, width, height });
+      }
+      event.preventDefault();
     }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (event: React.MouseEvent<HTMLElement>) => {
     if (isDrawing) {
       setIsDrawing(false);
       setStartPoint(null);
+      event.preventDefault();
     }
   };
 
@@ -341,69 +383,153 @@ export default function RefinementModal({
             </Box>
             
             {imagePath ? (
-              <Box
-                sx={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'relative',
-                  minHeight: 0, // Allow flex child to shrink
-                  overflow: 'hidden', // Prevent overflow
-                }}
-              >
+              <>
+                {/* Fixed height image container to prevent layout shifts */}
                 <Box
                   sx={{
-                    position: 'relative',
-                    width: '100%',
-                    height: '100%',
+                    height: 'calc(100% - 80px)', // Reserve space for buttons at bottom
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    cursor: isDrawingMode ? 'crosshair' : 'default',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    border: 1,
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    backgroundColor: 'white',
                   }}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
                 >
                   <Box
-                    ref={imageRef}
-                    component="img"
-                    src={PipelineAPI.getFileUrl(runId, imagePath)}
                     sx={{
-                      maxWidth: '100%',
-                      maxHeight: '100%',
-                      width: 'auto',
-                      height: 'auto',
-                      objectFit: 'contain',
-                      borderRadius: 2,
-                      border: 2,
-                      borderColor: 'divider',
-                      backgroundColor: 'white',
-                      boxShadow: 2,
-                      opacity: isDrawingMode ? 0.7 : 1,
-                      transition: 'opacity 0.2s ease',
-                    }}
-                    draggable={false}
-                  />
-                  
-                  {/* Mask overlay */}
-                  {maskCoordinates && imageRef.current && (
-                    <Box
-                      sx={{
+                      position: 'relative',
+                      width: '100%',
+                      height: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: isDrawingMode ? 'crosshair' : 'default',
+                      '&::before': isDrawingMode ? {
+                        content: '""',
                         position: 'absolute',
-                        left: `${maskCoordinates.x * 100}%`,
-                        top: `${maskCoordinates.y * 100}%`,
-                        width: `${maskCoordinates.width * 100}%`,
-                        height: `${maskCoordinates.height * 100}%`,
-                        border: '2px dashed #2196f3',
-                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
-                        pointerEvents: 'none',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(33, 150, 243, 0.05)',
+                        border: '2px dashed rgba(33, 150, 243, 0.3)',
+                        borderRadius: 1,
+                        zIndex: 0,
+                      } : {},
+                    }}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp} // Stop drawing if mouse leaves container
+                  >
+                    <Box
+                      ref={imageRef}
+                      component="img"
+                      src={PipelineAPI.getFileUrl(runId, imagePath)}
+                      sx={{
+                        maxWidth: '100%',
+                        maxHeight: '100%',
+                        width: 'auto',
+                        height: 'auto',
+                        objectFit: 'contain',
+                        opacity: isDrawingMode ? 0.7 : 1,
+                        transition: 'opacity 0.2s ease',
+                        userSelect: 'none',
+                        pointerEvents: 'none', // Let parent handle mouse events
                       }}
+                      draggable={false}
                     />
+                    
+                    {/* Improved mask overlay with proper bounds */}
+                    {maskCoordinates && imageRef.current && (
+                      (() => {
+                        const img = imageRef.current;
+                        if (!img || !img.parentElement) return null;
+                        
+                        // Calculate actual displayed image dimensions and position
+                        const containerRect = img.parentElement.getBoundingClientRect();
+                        const containerWidth = containerRect.width;
+                        const containerHeight = containerRect.height;
+                        const imageAspectRatio = img.naturalWidth / img.naturalHeight;
+                        const containerAspectRatio = containerWidth / containerHeight;
+                        
+                        let displayedWidth, displayedHeight, offsetX, offsetY;
+                        
+                        if (imageAspectRatio > containerAspectRatio) {
+                          // Image is wider - constrained by width
+                          displayedWidth = containerWidth;
+                          displayedHeight = containerWidth / imageAspectRatio;
+                          offsetX = 0;
+                          offsetY = (containerHeight - displayedHeight) / 2;
+                        } else {
+                          // Image is taller - constrained by height
+                          displayedHeight = containerHeight;
+                          displayedWidth = containerHeight * imageAspectRatio;
+                          offsetX = (containerWidth - displayedWidth) / 2;
+                          offsetY = 0;
+                        }
+                        
+                        // Convert normalized coordinates to pixel positions
+                        const maskLeft = offsetX + (maskCoordinates.x * displayedWidth);
+                        const maskTop = offsetY + (maskCoordinates.y * displayedHeight);
+                        const maskWidth = maskCoordinates.width * displayedWidth;
+                        const maskHeight = maskCoordinates.height * displayedHeight;
+                        
+                        return (
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              left: `${maskLeft}px`,
+                              top: `${maskTop}px`,
+                              width: `${maskWidth}px`,
+                              height: `${maskHeight}px`,
+                              border: '2px dashed #2196f3',
+                              backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                              pointerEvents: 'none',
+                              borderRadius: 1,
+                            }}
+                          />
+                        );
+                      })()
+                    )}
+                  </Box>
+                </Box>
+                
+                {/* Always present button area to prevent layout shifts */}
+                <Box sx={{ 
+                  height: '60px', 
+                  mt: 1.5, 
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  {maskCoordinates && tabValue === 2 ? (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Chip 
+                        label="Region Selected" 
+                        color="primary" 
+                        size="small" 
+                        variant="outlined"
+                      />
+                      <Button 
+                        size="small" 
+                        onClick={clearMask}
+                        sx={{ fontSize: '0.7rem' }}
+                      >
+                        Clear
+                      </Button>
+                    </Stack>
+                  ) : (
+                    // Invisible placeholder to maintain layout
+                    <Box sx={{ height: '32px' }} />
                   )}
                 </Box>
-              </Box>
+              </>
             ) : (
               <Box sx={{ 
                 flex: 1,
@@ -415,26 +541,6 @@ export default function RefinementModal({
               }}>
                 <ImageIcon sx={{ fontSize: 64, mb: 2 }} />
                 <Typography variant="body1">Image not available</Typography>
-              </Box>
-            )}
-            
-            {maskCoordinates && tabValue === 2 && (
-              <Box sx={{ mt: 1.5, flexShrink: 0 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Chip 
-                    label="Region Selected" 
-                    color="primary" 
-                    size="small" 
-                    variant="outlined"
-                  />
-                  <Button 
-                    size="small" 
-                    onClick={clearMask}
-                    sx={{ fontSize: '0.7rem' }}
-                  >
-                    Clear
-                  </Button>
-                </Stack>
               </Box>
             )}
           </Box>

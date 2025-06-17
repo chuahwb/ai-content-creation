@@ -546,7 +546,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
   const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
-  const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string} | null>(null);
+  const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string, visualConcept?: any} | null>(null);
   // NEW: Assessment data state
   const [imageAssessments, setImageAssessments] = useState<any[]>([]);
   const [assessmentDropdownStates, setAssessmentDropdownStates] = useState<{[key: number]: boolean}>({});
@@ -828,9 +828,13 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       // Get final prompt for this option
       const finalPrompt = results.final_prompts?.[optionIndex];
       
+      // Get visual concept for this option
+      const visualConcept = results.visual_concepts?.[optionIndex];
+      
       setOptionDetails({
         marketingGoals: marketingStrategy,
-        finalPrompt: finalPrompt?.prompt || 'No prompt available'
+        finalPrompt: finalPrompt?.prompt || 'No prompt available',
+        visualConcept: visualConcept
       });
       
       setDetailsDialog({open: true, optionIndex});
@@ -1707,6 +1711,50 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                         </Typography>
                       </Grid>
                     </Grid>
+                  </Paper>
+                </Grid>
+              )}
+
+              {/* Alt Text */}
+              {optionDetails.visualConcept?.visual_concept?.suggested_alt_text && (
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    SEO Alt Text
+                  </Typography>
+                  <Paper sx={{ p: 3, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2, position: 'relative' }}>
+                    <Typography 
+                      variant="body1" 
+                      sx={{ 
+                        fontWeight: 500,
+                        lineHeight: 1.6,
+                        pr: 5 // Make room for copy button
+                      }}
+                    >
+                      {optionDetails.visualConcept.visual_concept.suggested_alt_text}
+                    </Typography>
+                    
+                    <Tooltip title="Copy alt text to clipboard">
+                      <IconButton
+                        onClick={() => {
+                          navigator.clipboard.writeText(optionDetails.visualConcept.visual_concept.suggested_alt_text);
+                          toast.success('Alt text copied to clipboard!');
+                        }}
+                        sx={{
+                          position: 'absolute',
+                          top: 8,
+                          right: 8,
+                          color: 'grey.600',
+                          backgroundColor: 'rgba(255,255,255,0.8)',
+                          '&:hover': {
+                            backgroundColor: 'rgba(255,255,255,1)',
+                            color: 'primary.main'
+                          }
+                        }}
+                        size="small"
+                      >
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </Paper>
                 </Grid>
               )}

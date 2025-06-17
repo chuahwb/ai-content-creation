@@ -29,7 +29,6 @@ from churns.stages import subject_repair, text_repair, prompt_refine
 from churns.stages.refinement_utils import (
     calculate_refinement_cost,
     create_mask_from_coordinates,
-    enhance_prompt_with_creativity_guidance
 )
 
 
@@ -181,8 +180,7 @@ class RefinementTestRunner:
         
         tests = [
             self._test_cost_calculation,
-            self._test_mask_creation,
-            self._test_prompt_enhancement
+            self._test_mask_creation
         ]
         
         all_passed = True
@@ -259,35 +257,6 @@ class RefinementTestRunner:
             self._record_failure("mask_creation", f"❌ Mask creation failed: {e}")
             return False
     
-    def _test_prompt_enhancement(self):
-        """Test prompt enhancement utility."""
-        try:
-            base_prompt = "Improve this image"
-            
-            # Test different creativity levels
-            enhanced_1 = enhance_prompt_with_creativity_guidance(base_prompt, 1, "subject")
-            enhanced_2 = enhance_prompt_with_creativity_guidance(base_prompt, 2, "subject")
-            enhanced_3 = enhance_prompt_with_creativity_guidance(base_prompt, 3, "subject")
-            
-            assert "subtle" in enhanced_1.lower(), "Level 1 should include 'subtle'"
-            assert "moderate" in enhanced_2.lower(), "Level 2 should include 'moderate'"
-            assert "creative" in enhanced_3.lower() or "bold" in enhanced_3.lower(), "Level 3 should include creative language"
-            
-            # Test different refinement types
-            subject_enhanced = enhance_prompt_with_creativity_guidance(base_prompt, 2, "subject")
-            text_enhanced = enhance_prompt_with_creativity_guidance(base_prompt, 2, "text")
-            prompt_enhanced = enhance_prompt_with_creativity_guidance(base_prompt, 2, "prompt")
-            
-            assert len(subject_enhanced) > len(base_prompt), "Enhancement should add content"
-            assert len(text_enhanced) > len(base_prompt), "Enhancement should add content"
-            assert len(prompt_enhanced) > len(base_prompt), "Enhancement should add content"
-            
-            self._record_success("prompt_enhancement", "✅ Prompt enhancement working correctly")
-            return True
-            
-        except Exception as e:
-            self._record_failure("prompt_enhancement", f"❌ Prompt enhancement failed: {e}")
-            return False
     
     def _record_success(self, test_name, message):
         """Record a successful test."""

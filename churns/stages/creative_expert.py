@@ -301,10 +301,14 @@ Ensure concepts are memorable while aligning with the marketing strategy and tas
     
     reasoning_ce = "**Creative Reasoning:** After defining the visual concept, provide a brief explanation in the `creative_reasoning` field, connecting the key visual choices (style, mood, composition, subject focus, color palette) back to the core marketing strategy (audience, niche, objective, voice), the specific Task Type, the provided Style Guidance, and any significant user inputs or refinements made, especially noting how the image reference was handled. **Justify why the chosen creative direction is effective and aligns with the overall marketing objectives from the strategy.**"
     
+    alt_text_ce = """
+**Alt Text Generation:** Based on the final visual concept, you MUST generate a concise, descriptive alt text (100-125 characters) in the `suggested_alt_text` field. This text is crucial for SEO and accessibility. It should clearly describe the image's subject, setting, and any important visual elements, naturally incorporating primary keywords from the marketing strategy. **IMPORTANT: Do NOT include hashtags, emojis, or promotional language - focus purely on accurate visual description.**
+"""
+    
     # Output format instructions
     adherence_ce = ""
     if use_instructor_parsing and CREATIVE_EXPERT_MODEL_ID not in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS:
-        adherence_ce = "Adhere strictly to the requested Pydantic JSON output format (`ImageGenerationPrompt` containing `VisualConceptDetails`). Note that `main_subject`, `promotional_text_visuals`, and `branding_visuals` are optional and should be omitted (set to null) if the specific scenario instructs it. Ensure all other required descriptions are detailed enough to guide image generation effectively."
+        adherence_ce = "Adhere strictly to the requested Pydantic JSON output format (`ImageGenerationPrompt` containing `VisualConceptDetails`). Note that `main_subject`, `promotional_text_visuals`, and `branding_visuals` are optional and should be omitted (set to null) if the specific scenario instructs it. The `suggested_alt_text` field is mandatory. Ensure all other required descriptions are detailed enough to guide image generation effectively."
     else:
         adherence_ce = """
 VERY IMPORTANT: Format your entire response *only* as a valid JSON object conforming to the structure described below. Do not include any introductory text, explanations, or markdown formatting outside the JSON structure itself.
@@ -322,7 +326,8 @@ JSON Structure:
     "branding_visuals": "string | null", // Omit (set to null) if apply_branding_flag is false
     "texture_and_details": "string | null",
     "negative_elements": "string | null",
-    "creative_reasoning": "string | null"
+    "creative_reasoning": "string | null",
+    "suggested_alt_text": "string" // MANDATORY: 100-125 character SEO-friendly alt text
   },
   "source_strategy_index": "integer | null" // This will be added programmatically later
 }
@@ -332,7 +337,7 @@ Ensure all descriptions are detailed enough to guide image generation effectivel
     prompt_parts_ce = [
         base_persona_ce, input_refinement_ce, core_task_ce, task_type_awareness_ce,
         creativity_instruction_ce, image_ref_handling_ce, text_branding_field_instruction_ce,
-        reasoning_ce, adherence_ce
+        reasoning_ce, alt_text_ce, adherence_ce
     ]
     
     if target_model_family == "qwen":
@@ -418,10 +423,10 @@ def _get_creative_expert_user_prompt(
     # Platform optimization guidance - updated to use cleaned platform names and consistent aspect ratios
     platform_guidance_map = {
         "Instagram Post": f"Optimize for Instagram Feed: Aim for a polished, visually cohesive aesthetic suitable for {aspect_ratio_for_prompt} format. Consider compositions suitable for feed posts. Ensure text placement is easily readable.",
-        "Instagram Story/Reel": f"Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for {aspect_ratio_for_prompt} vertical format. Consider bold text, trendy effects, or concepts suitable for short video loops or interactive elements.",
+        "Instagram Story/Reel": f"Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for {aspect_ratio_for_prompt} vertical format. **Describe the visual as if it were a single, high-impact frame from a video Reel.** Incorporate a sense of motion or action in the `composition_and_framing` description (e.g., 'dynamic motion blur,' 'subject captured mid-action,' 'cinematic freeze-frame effect').",
         "Facebook Post": f"Optimize for Facebook Feed: Design for broad appeal and shareability in {aspect_ratio_for_prompt} format. Ensure clear branding and messaging for potential ad use.",
-        "Pinterest Pin": f"Optimize for Pinterest: Create visually striking, informative vertical images in {aspect_ratio_for_prompt} format. Focus on aesthetics, clear subject matter, and potential for text overlays that add value.",
-        "Xiaohongshu (Red Note)": f"Optimize for Xiaohongshu: Focus on authentic, aesthetically pleasing, informative, and often lifestyle-oriented visuals in {aspect_ratio_for_prompt} vertical format. Use high-quality imagery, potentially with integrated text overlays in a blog-post style.",
+        "Pinterest Pin": f"Optimize for Pinterest: Create visually striking, informative vertical images in {aspect_ratio_for_prompt} format. **If text is enabled, the concept MUST include a prominent text overlay.** As per Pinterest best practices, the description in `promotional_text_visuals` should specify text that is **large, highly legible (e.g., bold sans-serif fonts), and contains primary keywords from the marketing strategy.**",
+        "Xiaohongshu (Red Note)": f"Optimize for Xiaohongshu: Focus on an **authentic, User-Generated Content (UGC) aesthetic** in {aspect_ratio_for_prompt} format. The concept should resemble a high-quality photo from a peer, not a polished ad. When describing the `visual_style`, favor terms like 'natural lighting' or 'candid shot.' **The concept should feature real people** interacting with the product or in the scene. If text is enabled, the `promotional_text_visuals` description must detail a **catchy, keyword-rich title overlay to act as a strong hook.**",
     }
     platform_guidance_text = platform_guidance_map.get(clean_platform_name, f"Adapt the concept for the target platform '{clean_platform_name}' using {aspect_ratio_for_prompt} aspect ratio.")
     user_prompt_parts.append(f"\n**Platform Optimization (General Reminder):** {platform_guidance_text} (Detailed task-specific platform optimization is in system prompt).")
@@ -459,6 +464,7 @@ Ensure the nested `VisualConceptDetails` object is fully populated with rich, de
 - Add notes on `texture_and_details` if relevant.
 - List any `negative_elements` to avoid.
 - **Provide a brief `creative_reasoning` explaining how the main visual choices connect to the core marketing strategy (especially the `target_objective`), user inputs, task type, and style guidance.**
+- **Generate a concise and descriptive `suggested_alt_text` for SEO and accessibility (descriptive text only, no hashtags or promotional language).**
 
 Ensure the overall visual concept aligns strongly with the core marketing strategy, task type '{task_type}', and incorporates the image reference context as instructed in the system prompt.
 The `source_strategy_index` field in the JSON will be added programmatically later.

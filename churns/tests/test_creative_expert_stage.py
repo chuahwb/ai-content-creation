@@ -7,7 +7,7 @@ client injection, error handling, and style guidance integration.
 
 import pytest
 import json
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, patch
 from churns.stages.creative_expert import run
 from churns.pipeline.context import PipelineContext
 from churns.models import ImageGenerationPrompt, VisualConceptDetails, StyleGuidance
@@ -70,57 +70,109 @@ class TestCreativeExpertStage:
         
         return ctx
 
+    async def run_with_mocked_client(self, ctx, response_type="success"):
+        """Helper method to run the stage with properly mocked global clients."""
+        mock_client = self.create_mock_client(response_type)
+        
+        # Mock the global clients and configuration
+        with patch('churns.stages.creative_expert.instructor_client_creative_expert', mock_client), \
+             patch('churns.stages.creative_expert.base_llm_client_creative_expert', mock_client), \
+             patch('churns.stages.creative_expert.CREATIVE_EXPERT_MODEL_ID', 'test-model'), \
+             patch('churns.stages.creative_expert.CREATIVE_EXPERT_MODEL_PROVIDER', 'OpenAI'):
+            await run(ctx)
+
     def create_mock_client(self, response_type="success"):
         """Create a mock LLM client with different response types."""
         mock_client = Mock()
         mock_completion = Mock()
         
         if response_type == "success":
-            # Mock successful response
-            sample_visual_concept = {
-                "main_subject": "A gourmet burger with artisanal bun, fresh lettuce, tomato, and premium beef patty",
-                "composition_and_framing": "Close-up shot with shallow depth of field, centered composition",
-                "background_environment": "Clean white marble surface with soft natural lighting",
-                "foreground_elements": None,
-                "lighting_and_mood": "Soft, natural daylight from the side creating gentle shadows",
-                "color_palette": "Warm browns and greens with clean white background",
-                "visual_style": "Modern minimalist food photography with clean lines and natural textures",
-                "promotional_text_visuals": None,
-                "branding_visuals": None,
-                "texture_and_details": "Visible sesame seeds on bun, glistening lettuce, juicy beef texture",
-                "negative_elements": "Avoid cluttered backgrounds, harsh lighting, or oversaturated colors",
-                "creative_reasoning": "The minimalist style aligns with the young professional audience's preference for clean aesthetics while the natural lighting enhances the burger's appeal."
-            }
-            
-            mock_response = {
-                "visual_concept": sample_visual_concept,
-                "source_strategy_index": 0
-            }
-            
-            mock_completion.model_dump.return_value = mock_response
-            mock_completion.choices = [Mock()]
-            mock_completion.choices[0].message.content = json.dumps(mock_response)
-            
-        elif response_type == "json_in_markdown":
-            # Mock response with JSON in markdown blocks
-            sample_response = {
-                "visual_concept": {
-                    "main_subject": "Elegant fine dining dish with artistic plating",
-                    "composition_and_framing": "Overhead shot with dramatic angles",
-                    "background_environment": "Dark wooden table with ambient lighting",
-                    "foreground_elements": "Elegant silverware and wine glass",
-                    "lighting_and_mood": "Warm, dramatic lighting with soft shadows",
-                    "color_palette": "Rich browns, golds, and deep reds",
-                    "visual_style": "Sophisticated food photography with dramatic lighting and elegant styling",
+            # Mock successful response - create a function that returns a new response each time
+            def create_mock_response():
+                sample_visual_concept = {
+                    "main_subject": "A gourmet burger with artisanal bun, fresh lettuce, tomato, and premium beef patty",
+                    "composition_and_framing": "Close-up shot with shallow depth of field, centered composition",
+                    "background_environment": "Clean white marble surface with soft natural lighting",
+                    "foreground_elements": None,
+                    "lighting_and_mood": "Soft, natural daylight from the side creating gentle shadows",
+                    "color_palette": "Warm browns and greens with clean white background",
+                    "visual_style": "Modern minimalist food photography with clean lines and natural textures",
                     "promotional_text_visuals": None,
                     "branding_visuals": None,
-                    "texture_and_details": "Smooth sauces, crispy garnishes, polished surfaces",
-                    "negative_elements": "Avoid casual presentation or bright lighting",
-                    "creative_reasoning": "The sophisticated style conveys luxury dining experience that appeals to foodie bloggers."
+                    "texture_and_details": "Visible sesame seeds on bun, glistening lettuce, juicy beef texture",
+                    "negative_elements": "Avoid cluttered backgrounds, harsh lighting, or oversaturated colors",
+                    "creative_reasoning": "The minimalist style aligns with the young professional audience's preference for clean aesthetics while the natural lighting enhances the burger's appeal.",
+                    "suggested_alt_text": "Gourmet burger with artisanal bun and fresh ingredients on clean white marble surface"
                 }
-            }
-            mock_completion.choices = [Mock()]
-            mock_completion.choices[0].message.content = f"```json\n{json.dumps(sample_response)}\n```"
+                
+                return {
+                    "visual_concept": sample_visual_concept
+                }
+            
+            # Create a new mock completion for each call
+            def create_mock_completion():
+                mock_comp = Mock()
+                mock_comp.model_dump.return_value = create_mock_response()
+                mock_comp.choices = [Mock()]
+                mock_comp.choices[0].message.content = json.dumps(create_mock_response())
+                
+                # Add usage information
+                mock_usage = Mock()
+                mock_usage.model_dump.return_value = {
+                    "prompt_tokens": 1500,
+                    "completion_tokens": 800,
+                    "total_tokens": 2300
+                }
+                mock_comp._raw_response = Mock()
+                mock_comp._raw_response.usage = mock_usage
+                return mock_comp
+            
+            # Set the mock client to return a new completion each time
+            mock_client.chat.completions.create.side_effect = lambda **kwargs: create_mock_completion()
+            return mock_client
+            
+        elif response_type == "json_in_markdown":
+            # Mock response with JSON in markdown blocks - create a function that returns a new response each time
+            def create_markdown_mock_response():
+                sample_response = {
+                    "visual_concept": {
+                        "main_subject": "Elegant fine dining dish with artistic plating",
+                        "composition_and_framing": "Overhead shot with dramatic angles",
+                        "background_environment": "Dark wooden table with ambient lighting",
+                        "foreground_elements": "Elegant silverware and wine glass",
+                        "lighting_and_mood": "Warm, dramatic lighting with soft shadows",
+                        "color_palette": "Rich browns, golds, and deep reds",
+                        "visual_style": "Sophisticated food photography with dramatic lighting and elegant styling",
+                        "promotional_text_visuals": None,
+                        "branding_visuals": None,
+                        "texture_and_details": "Smooth sauces, crispy garnishes, polished surfaces",
+                        "negative_elements": "Avoid casual presentation or bright lighting",
+                        "creative_reasoning": "The sophisticated style conveys luxury dining experience that appeals to foodie bloggers.",
+                        "suggested_alt_text": "Elegant fine dining dish with artistic plating on dark wooden table with dramatic lighting"
+                    }
+                }
+                return sample_response
+            
+            # Create a new mock completion for each call
+            def create_markdown_mock_completion():
+                mock_comp = Mock()
+                mock_comp.choices = [Mock()]
+                mock_comp.choices[0].message.content = f"```json\n{json.dumps(create_markdown_mock_response())}\n```"
+                
+                # Add usage information
+                mock_usage = Mock()
+                mock_usage.model_dump.return_value = {
+                    "prompt_tokens": 1500,
+                    "completion_tokens": 800,
+                    "total_tokens": 2300
+                }
+                mock_comp._raw_response = Mock()
+                mock_comp._raw_response.usage = mock_usage
+                return mock_comp
+            
+            # Set the mock client to return a new completion each time
+            mock_client.chat.completions.create.side_effect = lambda **kwargs: create_markdown_mock_completion()
+            return mock_client
             
         elif response_type == "invalid_json":
             # Mock response with invalid JSON
@@ -133,6 +185,7 @@ class TestCreativeExpertStage:
             mock_client.chat.completions.create.side_effect = APIConnectionError("Connection failed")
             return mock_client
         
+        # For other response types, use the old setup
         # Add usage information
         mock_usage = Mock()
         mock_usage.model_dump.return_value = {
@@ -146,44 +199,52 @@ class TestCreativeExpertStage:
         mock_client.chat.completions.create.return_value = mock_completion
         return mock_client
 
-    def test_creative_expert_basic_functionality(self):
+    async def test_creative_expert_basic_functionality(self):
         """Test basic creative expert functionality with successful client response."""
         ctx = self.create_test_context()
-        ctx.creative_expert_client = self.create_mock_client("success")
+        mock_client = self.create_mock_client("success")
         
-        # Run the stage
-        run(ctx)
+        # Mock the global clients and configuration
+        with patch('churns.stages.creative_expert.instructor_client_creative_expert', mock_client), \
+             patch('churns.stages.creative_expert.base_llm_client_creative_expert', mock_client), \
+             patch('churns.stages.creative_expert.CREATIVE_EXPERT_MODEL_ID', 'test-model'), \
+             patch('churns.stages.creative_expert.CREATIVE_EXPERT_MODEL_PROVIDER', 'OpenAI'):
+            # Run the stage
+            await run(ctx)
         
         # Verify the stage completed successfully
         assert ctx.generated_image_prompts is not None
         assert len(ctx.generated_image_prompts) == 2
         
-        # Verify structure of first visual concept
-        first_concept = ctx.generated_image_prompts[0]
-        assert "visual_concept" in first_concept
-        assert "source_strategy_index" in first_concept
+        # Verify structure of visual concepts
+        for i, concept in enumerate(ctx.generated_image_prompts):
+            assert "visual_concept" in concept
+            assert "source_strategy_index" in concept
+            
+            visual_concept = concept["visual_concept"]
+            assert "main_subject" in visual_concept
+            assert "composition_and_framing" in visual_concept
+            assert "background_environment" in visual_concept
+            assert "lighting_and_mood" in visual_concept
+            assert "color_palette" in visual_concept
+            assert "visual_style" in visual_concept
+            assert "creative_reasoning" in visual_concept
+            assert "suggested_alt_text" in visual_concept
+            
+            # Verify content
+            assert "gourmet burger" in visual_concept["main_subject"]
+            assert "minimalist" in visual_concept["visual_style"]
         
-        visual_concept = first_concept["visual_concept"]
-        assert "main_subject" in visual_concept
-        assert "composition_and_framing" in visual_concept
-        assert "background_environment" in visual_concept
-        assert "lighting_and_mood" in visual_concept
-        assert "color_palette" in visual_concept
-        assert "visual_style" in visual_concept
-        assert "creative_reasoning" in visual_concept
-        
-        # Verify content
-        assert "gourmet burger" in visual_concept["main_subject"]
-        assert "minimalist" in visual_concept["visual_style"]
-        assert first_concept["source_strategy_index"] == 0
+        # Verify that we have the expected strategy indices (may be in any order due to parallel processing)
+        strategy_indices = [concept["source_strategy_index"] for concept in ctx.generated_image_prompts]
+        assert set(strategy_indices) == {0, 1}
 
-    def test_json_parsing_from_markdown(self):
+    async def test_json_parsing_from_markdown(self):
         """Test parsing JSON from markdown code blocks."""
         ctx = self.create_test_context()
-        ctx.creative_expert_client = self.create_mock_client("json_in_markdown")
         
         # Run the stage
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "json_in_markdown")
         
         # Verify successful parsing
         assert ctx.generated_image_prompts is not None
@@ -195,43 +256,40 @@ class TestCreativeExpertStage:
         assert "fine dining dish" in visual_concept["main_subject"]
         assert "Sophisticated" in visual_concept["visual_style"]  # Capital S to match the mock response
 
-    def test_creativity_levels(self):
+    async def test_creativity_levels(self):
         """Test different creativity levels affect generation."""
         # Test creativity level 1 (photorealistic)
         ctx_level1 = self.create_test_context(creativity_level=1)
-        ctx_level1.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx_level1)
+        await self.run_with_mocked_client(ctx_level1, "success")
         
         assert ctx_level1.generated_image_prompts is not None
         assert len(ctx_level1.generated_image_prompts) == 2
         
         # Test creativity level 3 (abstract)
         ctx_level3 = self.create_test_context(creativity_level=3)
-        ctx_level3.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx_level3)
+        await self.run_with_mocked_client(ctx_level3, "success")
         
         assert ctx_level3.generated_image_prompts is not None
         assert len(ctx_level3.generated_image_prompts) == 2
 
-    def test_text_and_branding_flags(self):
+    async def test_text_and_branding_flags(self):
         """Test that text and branding flags are handled correctly."""
         ctx = self.create_test_context()
         ctx.render_text = True
         ctx.apply_branding = True
         ctx.task_description = "Special promotion: 50% off burgers"
         ctx.branding_elements = "Logo in top-right corner, use brand colors #FF6B35"
-        ctx.creative_expert_client = self.create_mock_client("success")
         
         # Run the stage
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         # Verify the stage completed successfully
         assert ctx.generated_image_prompts is not None
         assert len(ctx.generated_image_prompts) == 2
 
-    def test_image_reference_handling(self):
+    async def test_image_reference_handling(self):
         """Test handling of image references."""
         ctx = self.create_test_context()
         ctx.image_reference = {
@@ -241,14 +299,13 @@ class TestCreativeExpertStage:
         ctx.image_analysis_result = {
             "main_subject": "Gourmet Burger"
         }
-        ctx.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         assert ctx.generated_image_prompts is not None
         assert len(ctx.generated_image_prompts) == 2
 
-    def test_default_edit_scenario(self):
+    async def test_default_edit_scenario(self):
         """Test default edit scenario (image reference without instruction)."""
         ctx = self.create_test_context()
         ctx.image_reference = {
@@ -258,14 +315,13 @@ class TestCreativeExpertStage:
         ctx.image_analysis_result = {
             "main_subject": "Gourmet Burger"
         }
-        ctx.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         assert ctx.generated_image_prompts is not None
         assert len(ctx.generated_image_prompts) == 2
 
-    def test_different_task_types(self):
+    async def test_different_task_types(self):
         """Test different task types generate appropriate concepts."""
         task_types = [
             "1. Product Photography",
@@ -276,54 +332,50 @@ class TestCreativeExpertStage:
         
         for task_type in task_types:
             ctx = self.create_test_context(task_type=task_type)
-            ctx.creative_expert_client = self.create_mock_client("success")
             
-            run(ctx)
+            await self.run_with_mocked_client(ctx, "success")
             
             assert ctx.generated_image_prompts is not None
             assert len(ctx.generated_image_prompts) == 2
 
-    def test_missing_client(self):
+    async def test_missing_client(self):
         """Test behavior when client is not available."""
         ctx = self.create_test_context()
         # Don't set creative_expert_client
         
-        run(ctx)
+        await run(ctx)
         
         # Should handle gracefully
         assert ctx.generated_image_prompts is None
 
-    def test_missing_models(self):
+    async def test_missing_models(self):
         """Test behavior when Pydantic models are not available."""
         ctx = self.create_test_context()
-        ctx.creative_expert_client = self.create_mock_client("success")
         
         # This would happen if imports failed
         # We can't easily mock this without modifying the module
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         # Should still work with current imports
         assert ctx.generated_image_prompts is not None
 
-    def test_missing_strategies(self):
+    async def test_missing_strategies(self):
         """Test behavior when no strategies are provided."""
         ctx = self.create_test_context(strategies=[])
-        ctx.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         assert ctx.generated_image_prompts == []
 
-    def test_missing_style_guidance(self):
+    async def test_missing_style_guidance(self):
         """Test behavior when no style guidance is provided."""
         ctx = self.create_test_context(style_guidance=[])
-        ctx.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         assert ctx.generated_image_prompts is None
 
-    def test_strategy_style_mismatch(self):
+    async def test_strategy_style_mismatch(self):
         """Test behavior when strategies and style guidance counts don't match."""
         strategies = [
             {
@@ -349,25 +401,23 @@ class TestCreativeExpertStage:
         ]
         
         ctx = self.create_test_context(strategies=strategies, style_guidance=style_guidance)
-        ctx.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         # Should detect mismatch and fail gracefully
         assert ctx.generated_image_prompts is None
 
-    def test_invalid_json_response(self):
+    async def test_invalid_json_response(self):
         """Test handling of invalid JSON responses."""
         ctx = self.create_test_context()
-        ctx.creative_expert_client = self.create_mock_client("invalid_json")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "invalid_json")
         
         # Should handle JSON parsing errors gracefully
         # When all concepts fail, result should be None (not an empty list)
         assert ctx.generated_image_prompts is None
 
-    def test_api_error_handling(self):
+    async def test_api_error_handling(self):
         """Test handling of API errors.""" 
         ctx = self.create_test_context()
         
@@ -376,13 +426,13 @@ class TestCreativeExpertStage:
         mock_client.chat.completions.create.side_effect = Exception("API connection failed")
         ctx.creative_expert_client = mock_client
         
-        run(ctx)
+        await run(ctx)
         
         # Should handle API errors gracefully
         # When all concepts fail due to API errors, result should be None
         assert ctx.generated_image_prompts is None
 
-    def test_style_guidance_integration(self):
+    async def test_style_guidance_integration(self):
         """Test that style guidance is properly integrated into prompts."""
         style_guidance = [
             {
@@ -401,19 +451,17 @@ class TestCreativeExpertStage:
             strategies=[single_strategy],
             style_guidance=style_guidance
         )
-        ctx.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         assert ctx.generated_image_prompts is not None
         assert len(ctx.generated_image_prompts) == 1
 
-    def test_usage_tracking(self):
+    async def test_usage_tracking(self):
         """Test that usage information is tracked correctly."""
         ctx = self.create_test_context()
-        ctx.creative_expert_client = self.create_mock_client("success")
         
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         # Check that usage information was stored
         assert hasattr(ctx, 'llm_usage')
@@ -425,7 +473,7 @@ class TestCreativeExpertStage:
         assert "completion_tokens" in usage_0
         assert "total_tokens" in usage_0
 
-    def test_platform_optimization(self):
+    async def test_platform_optimization(self):
         """Test platform-specific optimization."""
         platforms = [
             {
@@ -445,20 +493,18 @@ class TestCreativeExpertStage:
         for platform in platforms:
             ctx = self.create_test_context()
             ctx.target_platform = platform
-            ctx.creative_expert_client = self.create_mock_client("success")
             
-            run(ctx)
+            await self.run_with_mocked_client(ctx, "success")
             
             assert ctx.generated_image_prompts is not None
             assert len(ctx.generated_image_prompts) == 2 
 
-    def test_visual_concept_structure_validation(self):
+    async def test_visual_concept_structure_validation(self):
         """Test that visual concept structure exactly matches original VisualConceptDetails model."""
         ctx = self.create_test_context()
-        ctx.creative_expert_client = self.create_mock_client("success")
         
         # Run the stage
-        run(ctx)
+        await self.run_with_mocked_client(ctx, "success")
         
         # Verify complete structure matches original VisualConceptDetails
         assert ctx.generated_image_prompts is not None
@@ -478,7 +524,8 @@ class TestCreativeExpertStage:
                 "background_environment", 
                 "lighting_and_mood",
                 "color_palette",
-                "visual_style"
+                "visual_style",
+                "suggested_alt_text"  # NEW: mandatory alt text field
             ]
             for field in required_fields:
                 assert field in vc, f"Required field '{field}' missing from visual_concept"
@@ -506,4 +553,42 @@ class TestCreativeExpertStage:
             if "promotional_text_visuals" in vc:
                 assert vc["promotional_text_visuals"] is None, "promotional_text_visuals should be None when render_text=False"
             if "branding_visuals" in vc:
-                assert vc["branding_visuals"] is None, "branding_visuals should be None when apply_branding=False" 
+                assert vc["branding_visuals"] is None, "branding_visuals should be None when apply_branding=False"
+
+    async def test_alt_text_generation(self):
+        """Test that alt text is generated for SEO and accessibility."""
+        ctx = self.create_test_context()
+        mock_client = self.create_mock_client("success")
+        
+        # Mock the global clients and configuration
+        with patch('churns.stages.creative_expert.instructor_client_creative_expert', mock_client), \
+             patch('churns.stages.creative_expert.base_llm_client_creative_expert', mock_client), \
+             patch('churns.stages.creative_expert.CREATIVE_EXPERT_MODEL_ID', 'test-model'), \
+             patch('churns.stages.creative_expert.CREATIVE_EXPERT_MODEL_PROVIDER', 'OpenAI'):
+            # Run the stage
+            await run(ctx)
+        
+        # Verify alt text is present and valid
+        assert ctx.generated_image_prompts is not None
+        assert len(ctx.generated_image_prompts) == 2
+        
+        for prompt_data in ctx.generated_image_prompts:
+            vc = prompt_data["visual_concept"]
+            
+            # Alt text should be mandatory
+            assert "suggested_alt_text" in vc, "suggested_alt_text field is mandatory"
+            assert vc["suggested_alt_text"] is not None, "suggested_alt_text should not be None"
+            assert isinstance(vc["suggested_alt_text"], str), "suggested_alt_text should be a string"
+            assert len(vc["suggested_alt_text"]) > 0, "suggested_alt_text should not be empty"
+            
+            # Alt text should be reasonably sized (100-125 characters as per requirements)
+            alt_text_length = len(vc["suggested_alt_text"])
+            assert 50 <= alt_text_length <= 150, f"Alt text length ({alt_text_length}) should be between 50-150 characters for practical use"
+            
+            # Alt text should contain relevant keywords
+            alt_text = vc["suggested_alt_text"].lower()
+            assert any(keyword in alt_text for keyword in ["burger", "gourmet", "food"]), "Alt text should contain relevant food keywords"
+            
+            # Check that alt text doesn't contain hashtags or promotional language
+            assert "#" not in vc["suggested_alt_text"], "Alt text should not contain hashtags"
+            assert not any(promo_word in alt_text for promo_word in ["buy", "sale", "discount", "offer"]), "Alt text should not contain promotional language" 
