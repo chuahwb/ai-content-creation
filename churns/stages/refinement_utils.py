@@ -77,6 +77,15 @@ def determine_api_image_size(original_size: Tuple[int, int]) -> str:
         return "1024x1792"
 
 
+def create_openai_client():
+    """Create an OpenAI client using environment variable."""
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is not set")
+    image_client = OpenAI(api_key=api_key)
+    return image_client
+
+
 async def call_openai_images_edit(
     ctx: PipelineContext,
     enhanced_prompt: str,
