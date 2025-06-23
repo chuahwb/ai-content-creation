@@ -23,6 +23,7 @@ INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 
 # Import task group pools from constants
 from churns.core.constants import TASK_GROUP_POOLS
+from churns.core.json_parser import RobustJSONParser, JSONExtractionError
 from churns.models import (
     RelevantNicheList,
     MarketingGoalSetStage2,
@@ -39,99 +40,6 @@ def get_pools_for_task(task_type_str: Optional[str]) -> Dict[str, List[str]]:
     if task_type_str.startswith('3.') or task_type_str.startswith('5.') or task_type_str.startswith('7.') or task_type_str.startswith('8.'): return TASK_GROUP_POOLS["brand_atmosphere"]
     if task_type_str.startswith('6.'): return TASK_GROUP_POOLS["informative"]
     return TASK_GROUP_POOLS["default"]
-
-
-def extract_json_from_llm_response(raw_text: str) -> Optional[str]:
-    """
-    Extracts a JSON string from an LLM's raw text response.
-    Handles markdown code blocks and attempts to parse direct JSON,
-    including cases with "Extra data" errors.
-    """
-    if not isinstance(raw_text, str): # Ensure raw_text is a string
-        return None
-
-    # 1. Try to find JSON within ```json ... ```
-    import re
-    match_md_json = re.search(r"```json\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_json:
-        json_str = match_md_json.group(1).strip()
-        try:
-            json.loads(json_str) # Validate
-            return json_str
-        except json.JSONDecodeError:
-            pass # Continue to other methods if this fails
-
-    # 2. Try to find JSON within ``` ... ``` (generic code block)
-    match_md_generic = re.search(r"```\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_generic:
-        potential_json = match_md_generic.group(1).strip()
-        if (potential_json.startswith('{') and potential_json.endswith('}')) or \
-           (potential_json.startswith('[') and potential_json.endswith(']')):
-            try:
-                json.loads(potential_json) # Validate
-                return potential_json
-            except json.JSONDecodeError:
-                pass # Continue
-
-    # 3. Try to parse the stripped raw_text directly
-    stripped_text = raw_text.strip()
-    if not stripped_text:
-        return None
-
-    try:
-        json.loads(stripped_text) # Try to parse the whole stripped text
-        return stripped_text # If successful, the whole thing is JSON
-    except json.JSONDecodeError as e:
-        # If "Extra data" error, it means a valid JSON object was parsed,
-        # but there was trailing data. e.pos is the index of the start of extra data.
-        if "Extra data" in str(e) and e.pos > 0:
-            potential_json_substring = stripped_text[:e.pos]
-            try:
-                json.loads(potential_json_substring) # Re-validate the substring
-                return potential_json_substring.strip()
-            except json.JSONDecodeError:
-                 # This can happen if the initial part wasn't actually complete JSON
-                 # or if the LLM output is very malformed, e.g. "Here is the JSON: {incomplete..."
-                 pass # Fall through to other methods
-        # If it's not "Extra data" or e.pos is 0, it means the beginning itself is not JSON.
-        # Example: "Sure, here is the JSON: {...}" - e.pos would be 0 if it fails immediately.
-        # In this case, we try to find the first '{' or '['.
-
-    # 4. Fallback: find the first '{' to the last '}' or first '[' to last ']'
-    # This is a simpler heuristic if the above fail.
-    first_brace = stripped_text.find('{')
-    last_brace = stripped_text.rfind('}')
-    first_bracket = stripped_text.find('[')
-    last_bracket = stripped_text.rfind(']')
-
-    json_candidate = None
-
-    if first_brace != -1 and last_brace != -1 and first_brace < last_brace:
-        potential_obj_str = stripped_text[first_brace : last_brace + 1]
-        try:
-            json.loads(potential_obj_str)
-            json_candidate = potential_obj_str
-        except json.JSONDecodeError:
-            pass
-
-    if first_bracket != -1 and last_bracket != -1 and first_bracket < last_bracket:
-        potential_arr_str = stripped_text[first_bracket : last_bracket + 1]
-        try:
-            json.loads(potential_arr_str)
-            # If an object was also found, prefer the one that's not inside the other,
-            # or prefer object if ambiguity. For simplicity, if both are valid and standalone,
-            # this might need more sophisticated logic if LLM mixes them.
-            # Here, if an object was found, we'll stick with it unless the array is clearly not part of it.
-            if json_candidate:
-                # If array is outside or wraps the object, consider it
-                if not (first_bracket > first_brace and last_bracket < last_brace):
-                     json_candidate = potential_arr_str # Or decide based on which is "more complete"
-            else:
-                json_candidate = potential_arr_str
-        except json.JSONDecodeError:
-            pass
-
-    return json_candidate
 
 
 def simulate_marketing_strategy_fallback_staged(
@@ -221,6 +129,9 @@ def run(ctx: PipelineContext) -> None:
     task_pools = get_pools_for_task(task_type)
     niche_pool_inspiration = task_pools.get("niche", TASK_GROUP_POOLS["default"]["niche"])
 
+    # Initialize centralized JSON parser
+    json_parser = RobustJSONParser(debug_mode=False)
+
     # Stage 1: Niche Identification
     identified_niches = []
     stage1_status = "Starting Niche Identification..."
@@ -267,15 +178,10 @@ def run(ctx: PipelineContext) -> None:
 
             if use_instructor_for_strat_call:
                 identified_niches = completion_niche.relevant_niches
-            else: # Manual parse
+            else: # Manual parse using centralized parser
                 raw_content_niche = completion_niche.choices[0].message.content
-                json_str_niche = extract_json_from_llm_response(raw_content_niche)
-                if not json_str_niche:
-                    ctx.log(f"    ERROR: Could not extract JSON for Niche ID from LLM response.")
-                    ctx.log(f"    Raw Niche ID content: {raw_content_niche}")
-                    raise Exception(f"JSON object not found for niches. Raw: {raw_content_niche}")
                 try:
-                    parsed_data_niche = json.loads(json_str_niche)
+                    parsed_data_niche = json_parser.extract_and_parse(raw_content_niche)
                     # Handle if LLM returns a list directly for relevant_niches
                     if isinstance(parsed_data_niche, list) and "relevant_niches" in RelevantNicheList.model_fields:
                         data_for_pydantic_niche = {"relevant_niches": parsed_data_niche}
@@ -286,9 +192,12 @@ def run(ctx: PipelineContext) -> None:
                         from pydantic import ValidationError
                         raise ValidationError(f"Parsed JSON for Niche ID is not a list or dict: {type(parsed_data_niche)}")
                     identified_niches = validated_niche_list.relevant_niches
-                except (json.JSONDecodeError, Exception) as parse_err_niche:
+                except JSONExtractionError as parse_err_niche:
+                    ctx.log(f"    ERROR: JSON extraction failed for Niche ID: {parse_err_niche}")
+                    ctx.log(f"    Raw Niche ID content: {raw_content_niche}")
+                    raise Exception(f"Niche ID response parsing error: {parse_err_niche}")
+                except Exception as parse_err_niche:
                     ctx.log(f"    ERROR: Manual JSON parsing/validation failed for Niche ID: {parse_err_niche}")
-                    ctx.log(f"    Extracted Niche ID JSON string: {json_str_niche}")
                     ctx.log(f"    Raw Niche ID content: {raw_content_niche}")
                     raise Exception(f"Niche ID response parsing error: {parse_err_niche}")
 
@@ -360,15 +269,10 @@ def run(ctx: PipelineContext) -> None:
             temp_strategies_stage2 = []
             if use_instructor_for_strat_call:
                 temp_strategies_stage2 = [s.model_dump() for s in completion_stage2.strategies]
-            else: # Manual parse
+            else: # Manual parse using centralized parser
                 raw_content_goals = completion_stage2.choices[0].message.content
-                json_str_goals = extract_json_from_llm_response(raw_content_goals)
-                if not json_str_goals:
-                    ctx.log(f"    ERROR: Could not extract JSON for Goal Gen from LLM response.")
-                    ctx.log(f"    Raw Goal Gen content: {raw_content_goals}")
-                    raise Exception(f"JSON object not found for strategies. Raw: {raw_content_goals}")
                 try:
-                    parsed_data_goals = json.loads(json_str_goals)
+                    parsed_data_goals = json_parser.extract_and_parse(raw_content_goals)
 
                     data_for_pydantic_validation = {}
 
@@ -412,9 +316,12 @@ def run(ctx: PipelineContext) -> None:
                     validated_goals_output = MarketingStrategyOutputStage2(**data_for_pydantic_validation)
                     temp_strategies_stage2 = [s.model_dump() for s in validated_goals_output.strategies]
 
-                except (json.JSONDecodeError, Exception) as parse_err_goals:
+                except JSONExtractionError as parse_err_goals:
+                    ctx.log(f"    ERROR: JSON extraction failed for Goal Gen: {parse_err_goals}")
+                    ctx.log(f"    Raw Goal Gen content: {raw_content_goals}")
+                    raise Exception(f"Goal Gen response parsing error: {parse_err_goals}")
+                except Exception as parse_err_goals:
                     ctx.log(f"    ERROR: Manual JSON parsing/validation failed for Goal Gen: {parse_err_goals}")
-                    ctx.log(f"    Extracted Goal Gen JSON string: {json_str_goals}")
                     ctx.log(f"    Raw Goal Gen content: {raw_content_goals}")
                     raise Exception(f"Goal Gen response parsing error: {parse_err_goals}")
 

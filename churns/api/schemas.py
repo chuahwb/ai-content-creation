@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, HttpUrl
 from datetime import datetime
-from churns.api.database import RunStatus, StageStatus
+from churns.api.database import RunStatus, StageStatus, RefinementType
 
 
 class ImageReferenceInput(BaseModel):
@@ -43,6 +43,56 @@ class PipelineRunRequest(BaseModel):
     
     # Marketing goals (for custom/task_specific modes)
     marketing_goals: Optional[MarketingGoalsInput] = Field(default=None, description="Marketing strategy goals")
+
+
+class RefinementRequest(BaseModel):
+    """Request model for image refinement"""
+    refine_type: RefinementType = Field(description="Type of refinement: subject, text, or prompt")
+    parent_image_id: str = Field(description="ID of the image to refine")
+    parent_image_type: str = Field(default="original", description="'original' or 'refinement'")
+    generation_index: Optional[int] = Field(None, description="Which of N original images (0-based)")
+    
+    # Refinement inputs
+    prompt: Optional[str] = Field(None, description="Refinement prompt")
+    instructions: Optional[str] = Field(None, description="Specific instructions")
+    mask_data: Optional[str] = Field(None, description="JSON string of mask coordinates")
+    
+    # Reference image for subject repair
+    reference_image: Optional[ImageReferenceInput] = Field(None, description="Reference image for subject repair")
+
+
+class RefinementResponse(BaseModel):
+    """Response model for refinement job creation"""
+    job_id: str
+    parent_run_id: str
+    refinement_type: RefinementType
+    status: RunStatus
+    created_at: datetime
+    refinement_summary: Optional[str] = None
+
+
+class RefinementResult(BaseModel):
+    """Result of a refinement job"""
+    job_id: str
+    parent_run_id: str
+    refinement_type: RefinementType
+    status: RunStatus
+    parent_image_id: str
+    parent_image_type: str
+    generation_index: Optional[int] = None
+    image_path: Optional[str] = None
+    cost_usd: Optional[float] = None
+    refinement_summary: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class RefinementListResponse(BaseModel):
+    """Response for listing refinements of a run"""
+    refinements: List[RefinementResult]
+    total_cost: float = 0.0
+    total_refinements: int = 0
 
 
 class StageProgressUpdate(BaseModel):
@@ -122,6 +172,9 @@ class PipelineResults(BaseModel):
     # NEW: Image assessments
     image_assessments: Optional[List[Dict[str, Any]]] = None
     
+    # NEW: Refinements
+    refinements: Optional[List[RefinementResult]] = None
+    
     # Cost and performance
     total_cost_usd: Optional[float] = None
     total_duration_seconds: Optional[float] = None
@@ -153,6 +206,9 @@ class WSMessageType(str):
     STAGE_UPDATE = "stage_update"
     RUN_COMPLETE = "run_complete"
     RUN_ERROR = "run_error"
+    REFINEMENT_UPDATE = "refinement_update"
+    REFINEMENT_COMPLETE = "refinement_complete"
+    REFINEMENT_ERROR = "refinement_error"
     PING = "ping"
 
 

@@ -25,7 +25,7 @@ All constants copied verbatim from the original combined_pipeline.py
 from typing import Dict, List, Any
 
 # --- LLM Configuration ---
-MAX_LLM_RETRIES = 1
+MAX_LLM_RETRIES = 3
 FORCE_MANUAL_JSON_PARSE = False  # Set to False to try Instructor first where applicable
 VERBOSE_COST_LATENCY_SUMMARY = True  # Control verbosity of cost/latency summary
 
@@ -45,8 +45,8 @@ CREATIVE_EXPERT_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
 CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
 
 # Image Assessment Model (dedicated for image quality evaluation)
-IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenAI"  # Direct OpenAI for reliable multi-image processing
-IMAGE_ASSESSMENT_MODEL_ID = "gpt-4.1"  # OpenAI native client for vision tasks
+IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenRouter"  # Direct OpenAI for reliable multi-image processing
+IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision tasks
 
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 

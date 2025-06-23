@@ -24,6 +24,11 @@ from ..pipeline.context import PipelineContext
 from ..models import ImageAssessmentResult
 from ..core.constants import IMAGE_ASSESSMENT_MODEL_ID
 from ..core.token_cost_manager import get_token_cost_manager
+from ..core.json_parser import (
+    RobustJSONParser, 
+    JSONExtractionError,
+    should_use_manual_parsing
+)
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 instructor_client_image_assessment = None
@@ -37,6 +42,9 @@ INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 class ImageAssessmentError(Exception):
     """Custom exception for image assessment failures."""
     pass
+
+
+# Centralized JSON parser will be initialized when needed
 
 
 class ImageAssessor:
@@ -118,7 +126,15 @@ class ImageAssessor:
             temperature = 0.1
             max_tokens = 1500
         
-        # Make API call to OpenAI with manual retry logic
+        # Special handling for o4-mini model which has known JSON issues
+        if "o4-mini" in self.model_id.lower():
+            system_content = """You are an expert art director. CRITICAL: Your response must be ONLY a valid JSON object. No explanations, no markdown, no text before or after the JSON. Start with { and end with }."""
+            temperature = 0.05  # Very low temperature for consistency
+            max_tokens = 2500  # More tokens to avoid truncation
+            # Add JSON schema hint in system prompt for better reliability
+            system_content += "\n\nJSON SCHEMA REMINDER: The response must match this exact structure:\n{\"assessment_scores\": {\"concept_adherence\": 1-5, ...}, \"assessment_justification\": {...}, \"general_score\": 0.0-5.0, \"needs_subject_repair\": false, \"needs_regeneration\": false, \"needs_text_repair\": false}"
+        
+        # Make API call to OpenAI with improved retry logic
         max_retries = 2 if is_problematic_model else 1
         last_exception = None
         
@@ -128,7 +144,11 @@ class ImageAssessor:
                 if attempt > 0:
                     print(f"Image assessment retry attempt {attempt + 1}/{max_retries} for model {self.model_id}")
                 
-                response = self.client.chat.completions.create(
+                # Shorter timeout for retries to fail fast
+                timeout = 30 if attempt == 0 else 15
+                
+                response = await asyncio.to_thread(
+                    self.client.chat.completions.create,
                     model=self.model_id,
                     messages=[
                         {
@@ -140,9 +160,9 @@ class ImageAssessor:
                             "content": user_content
                         }
                     ],
-                    #temperature=temperature,
+                    temperature=temperature,
                     max_completion_tokens=max_tokens,
-                    timeout=60  # Add 60 second timeout
+                    timeout=timeout  # Progressive timeout reduction
                 )
                 
                 # Check if response is None
@@ -162,8 +182,14 @@ class ImageAssessor:
                 if not raw_content:
                     raise ImageAssessmentError("Empty response from OpenAI")
                 
-                # Extract and validate JSON
-                assessment_data = self._parse_assessment_response(raw_content, has_reference_image, render_text_enabled)
+                # Extract and validate JSON with enhanced error reporting
+                try:
+                    assessment_data = self._parse_assessment_response(raw_content, has_reference_image, render_text_enabled)
+                except ImageAssessmentError as parse_err:
+                    # For JSON extraction failures, log the raw content for debugging
+                    if "Could not extract JSON" in str(parse_err) and len(raw_content) < 2000:
+                        print(f"JSON extraction failed for attempt {attempt + 1}. Raw content: {raw_content[:500]}...")
+                    raise parse_err
                 
                 # Store token usage info for aggregated tracking (but not in individual result)
                 token_info = {
@@ -188,16 +214,20 @@ class ImageAssessor:
                 print(f"Image assessment attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
                 
                 if attempt < max_retries - 1:
-                    # Wait before retrying (exponential backoff)
-                    import time
-                    await asyncio.sleep(2 ** attempt)  # Use async sleep
+                    # Shorter wait time to fail faster (reduce from exponential backoff)
+                    wait_time = min(1.0, 0.5 * (attempt + 1))  # 0.5s, 1s instead of 1s, 2s
+                    await asyncio.sleep(wait_time)
                     continue
                 else:
                     # Final attempt failed
                     break
         
-        # All retries failed
-        raise ImageAssessmentError(f"OpenAI API call failed after {max_retries} attempts: {str(last_exception)}")
+        # All retries failed - provide detailed error context
+        error_context = f"Model: {self.model_id}, Attempts: {max_retries}"
+        if "Could not extract JSON" in str(last_exception):
+            error_context += " (JSON parsing issue - may need model-specific handling)"
+        
+        raise ImageAssessmentError(f"OpenAI API call failed after {max_retries} attempts: {str(last_exception)}. Context: {error_context}")
 
     def assess_image(
         self, 
@@ -572,97 +602,46 @@ Begin your assessment now."""
         return flags
     
     def _parse_assessment_response(self, raw_content: str, has_reference_image: bool, render_text_enabled: bool) -> Dict[str, Any]:
-        """Parse and validate assessment response from OpenAI."""
-        # Extract JSON from response (handle markdown code blocks)
-        json_str = self._extract_json_from_response(raw_content)
-        if not json_str:
-            raise ImageAssessmentError("Could not extract JSON from response")
+        """Parse and validate assessment response from OpenAI using centralized parser."""
+        # Initialize parser instance
+        json_parser = RobustJSONParser(debug_mode=False)
         
         try:
-            # Parse JSON
-            parsed_data = json.loads(json_str)
+            # Try with centralized parser first
+            result_data = json_parser.extract_and_parse(
+                raw_content,
+                expected_schema=ImageAssessmentResult
+            )
             
-            # Try pydantic validation first
-            try:
-                validated_model = ImageAssessmentResult(**parsed_data)
-                result_data = validated_model.model_dump()
-            except (ValidationError, TypeError):
-                # Manual validation fallback
-                result_data = self._validate_and_fix_assessment_data(parsed_data)
-            
-            # Calculate general score manually
-            general_score = self._calculate_general_score(result_data["assessment_scores"])
-            result_data["general_score"] = general_score
-            
-            # Calculate refinement flags manually
-            refinement_flags = self._calculate_refinement_flags(result_data, has_reference_image, render_text_enabled)
-            result_data.update(refinement_flags)
+            # Calculate derived fields that aren't directly in the schema
+            if "general_score" not in result_data:
+                general_score = self._calculate_general_score(result_data["assessment_scores"])
+                result_data["general_score"] = general_score
+                
+            if "needs_regeneration" not in result_data:
+                refinement_flags = self._calculate_refinement_flags(result_data, has_reference_image, render_text_enabled)
+                result_data.update(refinement_flags)
             
             return result_data
+            
+        except JSONExtractionError as e:
+            # Fallback: try manual parsing and validation
+            try:
+                parsed_data = json_parser.extract_and_parse(raw_content)  # Just extract, no schema
+                result_data = self._validate_and_fix_assessment_data(parsed_data)
                 
-        except json.JSONDecodeError as e:
-            raise ImageAssessmentError(f"Invalid JSON in response: {str(e)}")
+                # Calculate derived fields
+                general_score = self._calculate_general_score(result_data["assessment_scores"])
+                result_data["general_score"] = general_score
+                
+                refinement_flags = self._calculate_refinement_flags(result_data, has_reference_image, render_text_enabled)
+                result_data.update(refinement_flags)
+                
+                return result_data
+            except Exception as fallback_error:
+                raise ImageAssessmentError(f"JSON extraction and fallback validation failed: {str(e)} | Fallback error: {str(fallback_error)}")
     
-    def _extract_json_from_response(self, raw_text: str) -> Optional[str]:
-        """Extract JSON string from LLM response."""
-        import re
-        
-        if not isinstance(raw_text, str):
-            return None
-
-        # Try to find JSON within ```json ... ```
-        match_md_json = re.search(r"```json\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-        if match_md_json:
-            json_str = match_md_json.group(1).strip()
-            try:
-                json.loads(json_str)  # Validate
-                return json_str
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find JSON within ``` ... ``` (generic code block)
-        match_md_generic = re.search(r"```\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-        if match_md_generic:
-            potential_json = match_md_generic.group(1).strip()
-            if (potential_json.startswith('{') and potential_json.endswith('}')) or \
-               (potential_json.startswith('[') and potential_json.endswith(']')):
-                try:
-                    json.loads(potential_json)  # Validate
-                    return potential_json
-                except json.JSONDecodeError:
-                    pass
-
-        # Try to parse the stripped raw_text directly
-        stripped_text = raw_text.strip()
-        if not stripped_text:
-            return None
-
-        try:
-            json.loads(stripped_text)
-            return stripped_text
-        except json.JSONDecodeError as e:
-            # If "Extra data" error, extract valid JSON substring
-            if "Extra data" in str(e) and e.pos > 0:
-                potential_json_substring = stripped_text[:e.pos]
-                try:
-                    json.loads(potential_json_substring)
-                    return potential_json_substring.strip()
-                except json.JSONDecodeError:
-                    pass
-
-        # Fallback: find the first '{' to the last '}'
-        first_brace = stripped_text.find('{')
-        last_brace = stripped_text.rfind('}')
-
-        if first_brace != -1 and last_brace != -1 and first_brace < last_brace:
-            potential_obj_str = stripped_text[first_brace : last_brace + 1]
-            try:
-                json.loads(potential_obj_str)
-                return potential_obj_str
-            except json.JSONDecodeError:
-                pass
-
-        return None
+    # Old JSON extraction and repair functions removed - now using centralized parser
     
     def _validate_and_fix_assessment_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Manually validate and fix assessment data structure."""
@@ -745,8 +724,8 @@ Begin your assessment now."""
 def _create_simulation_fallback(has_reference_image: bool, render_text_enabled: bool) -> Dict[str, Any]:
     """Create simulated assessment when real assessment fails."""
     scores = {
-        "concept_adherence": 4,  # Updated to 1-5 scale
-        "technical_quality": 4   # Updated to 1-5 scale
+        "concept_adherence": 4,  # 1-5 scale
+        "technical_quality": 4   # 1-5 scale
     }
     
     justifications = {
@@ -755,18 +734,18 @@ def _create_simulation_fallback(has_reference_image: bool, render_text_enabled: 
     }
     
     if has_reference_image:
-        scores["subject_preservation"] = 4  # Updated to 1-5 scale
+        scores["subject_preservation"] = 4  # 1-5 scale
         justifications["subject_preservation"] = "Simulated assessment - good subject preservation"
     
     if render_text_enabled:
-        scores["text_rendering_quality"] = 3  # Updated to 1-5 scale
+        scores["text_rendering_quality"] = 3  # 1-5 scale
         justifications["text_rendering_quality"] = "Simulated assessment - acceptable text quality"
     
     # Create realistic image token breakdown for simulation
     simulated_image_tokens = 1500 if has_reference_image else 1000  # Estimate for 1-2 images
     simulated_text_tokens = 500
     
-    # Return assessment data with token info for aggregation (no _meta in final result)
+    # Return assessment data with token info for aggregation
     return {
         "assessment_scores": scores,
         "assessment_justification": justifications,

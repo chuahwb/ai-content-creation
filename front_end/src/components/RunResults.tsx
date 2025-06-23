@@ -45,6 +45,8 @@ import {
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
   Warning as WarningIcon,
+  AutoFixHigh as AutoFixHighIcon,
+  Edit as EditIcon,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -62,6 +64,7 @@ import {
 } from '@/types/api';
 import { PipelineAPI, WebSocketManager } from '@/lib/api';
 import { statusColors } from '@/lib/theme';
+import RefinementModal from './RefinementModal';
 
 interface RunResultsProps {
   runId: string;
@@ -543,7 +546,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
   const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
-  const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string} | null>(null);
+  const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string, visualConcept?: any} | null>(null);
   // NEW: Assessment data state
   const [imageAssessments, setImageAssessments] = useState<any[]>([]);
   const [assessmentDropdownStates, setAssessmentDropdownStates] = useState<{[key: number]: boolean}>({});
@@ -552,6 +555,15 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [isDeveloperMode, setIsDeveloperMode] = useState(false);
   const [developerDialog, setDeveloperDialog] = useState(false);
   const [developerCode, setDeveloperCode] = useState('');
+  
+  // Refinement state
+  const [refinementModal, setRefinementModal] = useState<{
+    open: boolean;
+    imageIndex: number | null;
+    imagePath: string | null;
+  }>({ open: false, imageIndex: null, imagePath: null });
+  const [refinements, setRefinements] = useState<any[]>([]);
+  const [refinementProgress, setRefinementProgress] = useState<{ [key: string]: any }>({});
   const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
 
   // Initialize developer mode from localStorage
@@ -620,6 +632,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             setGeneratedImages(mergedImages);
             addLog('info', `Loaded ${results.generated_images.length} generated images`);
           }
+          
+          // Load refinements for completed runs
+          await loadRefinements();
         } catch (resultsErr: any) {
           addLog('warning', `Could not load results: ${resultsErr.message}`);
           // Fallback to extracting from stage output data
@@ -813,9 +828,13 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       // Get final prompt for this option
       const finalPrompt = results.final_prompts?.[optionIndex];
       
+      // Get visual concept for this option
+      const visualConcept = results.visual_concepts?.[optionIndex];
+      
       setOptionDetails({
         marketingGoals: marketingStrategy,
-        finalPrompt: finalPrompt?.prompt || 'No prompt available'
+        finalPrompt: finalPrompt?.prompt || 'No prompt available',
+        visualConcept: visualConcept
       });
       
       setDetailsDialog({open: true, optionIndex});
@@ -838,6 +857,33 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       ...prev,
       [imageIndex]: !prev[imageIndex]
     }));
+  };
+
+  // Refinement functions
+  const openRefinementModal = (imageIndex: number, imagePath: string) => {
+    if (runDetails?.status !== 'COMPLETED') {
+      toast.error('Cannot refine images from incomplete runs');
+      return;
+    }
+    
+    setRefinementModal({
+      open: true,
+      imageIndex,
+      imagePath
+    });
+  };
+
+  const closeRefinementModal = () => {
+    setRefinementModal({ open: false, imageIndex: null, imagePath: null });
+  };
+
+  const loadRefinements = async () => {
+    try {
+      const data = await PipelineAPI.getRefinements(runId);
+      setRefinements(data.refinements || []);
+    } catch (error) {
+      console.error('Failed to load refinements:', error);
+    }
   };
 
   const getStatusIcon = (status: RunStatus | StageStatus) => {
@@ -1087,6 +1133,18 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                     sx={{ fontWeight: 500, fontSize: '0.75rem' }}
                                   >
                                     Download
+                                  </Button>
+                                </Tooltip>
+                                <Tooltip title="Refine this image">
+                                  <Button
+                                    size="small"
+                                    startIcon={<AutoFixHighIcon />}
+                                    onClick={() => openRefinementModal(result.strategy_index, result.image_path!)}
+                                    color="secondary"
+                                    variant="contained"
+                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                                  >
+                                    Refine
                                   </Button>
                                 </Tooltip>
                               </Box>
@@ -1654,6 +1712,50 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 </Grid>
               )}
 
+              {/* Alt Text */}
+              {optionDetails.visualConcept?.visual_concept?.suggested_alt_text && (
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    SEO Alt Text
+                  </Typography>
+                  <Paper sx={{ p: 3, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2, position: 'relative' }}>
+                    <Typography 
+                      variant="body1" 
+                      sx={{ 
+                        fontWeight: 500,
+                        lineHeight: 1.6,
+                        pr: 5 // Make room for copy button
+                      }}
+                    >
+                      {optionDetails.visualConcept.visual_concept.suggested_alt_text}
+                    </Typography>
+                    
+                    <Tooltip title="Copy alt text to clipboard">
+                      <IconButton
+                        onClick={() => {
+                          navigator.clipboard.writeText(optionDetails.visualConcept.visual_concept.suggested_alt_text);
+                          toast.success('Alt text copied to clipboard!');
+                        }}
+                        sx={{
+                          position: 'absolute',
+                          top: 8,
+                          right: 8,
+                          color: 'grey.600',
+                          backgroundColor: 'rgba(255,255,255,0.8)',
+                          '&:hover': {
+                            backgroundColor: 'rgba(255,255,255,1)',
+                            color: 'primary.main'
+                          }
+                        }}
+                        size="small"
+                      >
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Paper>
+                </Grid>
+              )}
+
               {/* Final Prompt */}
               <Grid item xs={12}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1778,6 +1880,21 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         </Button>
       </DialogActions>
     </Dialog>
+
+    {/* Refinement Modal */}
+    <RefinementModal
+      open={refinementModal.open}
+      onClose={closeRefinementModal}
+      runId={runId}
+      imageIndex={refinementModal.imageIndex}
+      imagePath={refinementModal.imagePath}
+      onRefinementSubmit={(result) => {
+        addLog('info', `Refinement started: ${result.job_id}`);
+        toast.success('Refinement job started successfully!');
+        // Optionally refresh refinements or setup progress tracking
+        setTimeout(() => loadRefinements(), 1000);
+      }}
+    />
   </motion.div>
 );
 } 
