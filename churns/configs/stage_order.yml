@@ -2,6 +2,21 @@
 # Each stage is executed in the order listed below
 # Stage files must exist in churns/stages/ and have a run() function
 
+generation:
+  - image_eval    # Vision-LLM subject analysis  
+  - strategy      # Marketing strategy generation (2-stage: niche ID + goal combinations)
+  - style_guide   # Style guider agent
+  - creative_expert # Detailed concept generator  
+  - prompt_assembly # Build final prompt string
+  - image_generation # Call gpt-image-1 API
+  - image_assessment # Quality assessment of generated images
+
+refinement:
+  - load_base_image      # Load parent image + metadata into context
+  - conditional_stage    # Execute specific refinement (subject_repair, text_repair, or prompt_refine)
+  - save_outputs         # Persist PNG + update refinement list
+
+# Legacy support - 'stages' key defaults to 'generation'
 stages:
   - image_eval    # Vision-LLM subject analysis  
   - strategy      # Marketing strategy generation (2-stage: niche ID + goal combinations)

@@ -19,8 +19,10 @@ from ..api.database import StageStatus
 class PipelineExecutor:
     """Executes pipeline stages in configurable order."""
     
-    def __init__(self, stages_config_path: Optional[str] = None, env_path: Optional[str] = None):
+    def __init__(self, mode: str = "generation", stages_config_path: Optional[str] = None, env_path: Optional[str] = None):
         """Initialize executor with stage configuration and API clients."""
+        self.mode = mode  # "generation" or "refinement"
+        
         if stages_config_path is None:
             # Default to stage_order.yml in configs directory
             self.config_path = Path(__file__).parent.parent / "configs" / "stage_order.yml"
@@ -31,17 +33,35 @@ class PipelineExecutor:
         
         # Load and configure API clients
         self.clients = get_configured_clients(env_path)
-        print(f"🔧 Pipeline executor initialized with {len(self.stages)} stages and {len([k for k, v in self.clients.items() if v is not None and k not in ['model_config', 'force_manual_json_parse', 'instructor_tool_mode_problem_models']])} configured clients")
+        print(f"🔧 Pipeline executor initialized for {mode} mode with {len(self.stages)} stages and {len([k for k, v in self.clients.items() if v is not None and k not in ['model_config', 'force_manual_json_parse', 'instructor_tool_mode_problem_models']])} configured clients")
     
     def _load_stage_config(self) -> List[str]:
-        """Load stage execution order from YAML config."""
+        """Load stage execution order from YAML config based on mode."""
         try:
             with open(self.config_path, 'r') as f:
                 config = yaml.safe_load(f)
-                return config.get('stages', [])
+                
+                # Try to get stages for specific mode first
+                if self.mode in config:
+                    return config[self.mode]
+                
+                # Fallback to legacy 'stages' key (for generation mode)
+                if 'stages' in config:
+                    return config['stages']
+                
+                # Final fallback to hardcoded order
+                return self._get_fallback_stages()
+                
         except Exception as e:
             print(f"Warning: Could not load stage config from {self.config_path}: {e}")
-            # Fallback to hardcoded order
+            return self._get_fallback_stages()
+    
+    def _get_fallback_stages(self) -> List[str]:
+        """Get fallback stage order based on mode."""
+        if self.mode == "refinement":
+            return ['load_base_image', 'conditional_stage', 'save_outputs']
+        else:
+            # Default generation stages
             return ['image_eval', 'strategy', 'style_guide', 'creative_expert', 'prompt_assembly', 'image_generation']
     
     def get_client_summary(self) -> Dict[str, str]:
@@ -122,7 +142,7 @@ class PipelineExecutor:
     
     def run(self, ctx: PipelineContext) -> PipelineContext:
         """Execute all stages in order."""
-        ctx.log(f"Starting pipeline execution with {len(self.stages)} stages")
+        ctx.log(f"Starting {self.mode} pipeline execution with {len(self.stages)} stages")
         
         overall_start_time = time.time()
         
@@ -131,8 +151,18 @@ class PipelineExecutor:
             ctx.log(f"--- Stage: {stage_name} ---")
             
             try:
-                # Dynamically import stage module
-                stage_module = importlib.import_module(f"churns.stages.{stage_name}")
+                # Handle conditional stage execution for refinements
+                if stage_name == "conditional_stage" and self.mode == "refinement":
+                    actual_stage_name = self._resolve_conditional_stage(ctx)
+                    if actual_stage_name:
+                        stage_module = importlib.import_module(f"churns.stages.{actual_stage_name}")
+                        ctx.log(f"Resolved conditional stage to: {actual_stage_name}")
+                    else:
+                        ctx.log(f"Warning: Could not resolve conditional stage for refinement type: {getattr(ctx, 'refinement_type', 'unknown')}")
+                        continue
+                else:
+                    # Regular stage import
+                    stage_module = importlib.import_module(f"churns.stages.{stage_name}")
                 
                 # Inject clients into stage
                 self._inject_clients_into_stage(stage_module)
@@ -151,9 +181,22 @@ class PipelineExecutor:
                 # In production, you might want to halt on critical failures
         
         overall_duration = time.time() - overall_start_time
-        ctx.log(f"Pipeline execution completed in {overall_duration:.2f}s")
+        ctx.log(f"{self.mode.capitalize()} pipeline execution completed in {overall_duration:.2f}s")
         
         return ctx
+    
+    def _resolve_conditional_stage(self, ctx: PipelineContext) -> Optional[str]:
+        """Resolve conditional_stage to actual stage name based on refinement type."""
+        refinement_type = getattr(ctx, 'refinement_type', None)
+        
+        if refinement_type == "subject":
+            return "subject_repair"
+        elif refinement_type == "text":
+            return "text_repair"
+        elif refinement_type == "prompt":
+            return "prompt_refine"
+        else:
+            return None
     
     async def run_async(
         self, 
@@ -161,7 +204,7 @@ class PipelineExecutor:
         progress_callback: Optional[Callable[[str, int, StageStatus, str, Optional[Dict], Optional[str], Optional[float]], Awaitable[None]]] = None
     ) -> PipelineContext:
         """Execute all stages in order with async support and progress callbacks."""
-        ctx.log(f"Starting async pipeline execution with {len(self.stages)} stages")
+        ctx.log(f"Starting async {self.mode} pipeline execution with {len(self.stages)} stages")
         
         overall_start_time = time.time()
         
@@ -169,16 +212,27 @@ class PipelineExecutor:
             stage_start_time = time.time()
             ctx.log(f"--- Stage {stage_order}: {stage_name} ---")
             
+            # Handle conditional stage resolution for refinements
+            actual_stage_name = stage_name
+            if stage_name == "conditional_stage" and self.mode == "refinement":
+                resolved_stage = self._resolve_conditional_stage(ctx)
+                if resolved_stage:
+                    actual_stage_name = resolved_stage
+                    ctx.log(f"Resolved conditional stage to: {actual_stage_name}")
+                else:
+                    ctx.log(f"Warning: Could not resolve conditional stage for refinement type: {getattr(ctx, 'refinement_type', 'unknown')}")
+                    continue
+            
             # Send stage starting notification
             if progress_callback:
                 await progress_callback(
-                    stage_name, stage_order, StageStatus.RUNNING, 
-                    f"Starting stage {stage_name}...", None, None, None
+                    actual_stage_name, stage_order, StageStatus.RUNNING, 
+                    f"Starting stage {actual_stage_name}...", None, None, None
                 )
             
             try:
                 # Dynamically import stage module
-                stage_module = importlib.import_module(f"churns.stages.{stage_name}")
+                stage_module = importlib.import_module(f"churns.stages.{actual_stage_name}")
                 
                 # Inject clients into stage
                 self._inject_clients_into_stage(stage_module)
@@ -196,29 +250,29 @@ class PipelineExecutor:
                     await loop.run_in_executor(None, run_stage)
                 
                 stage_duration = time.time() - stage_start_time
-                ctx.log(f"Stage {stage_name} completed in {stage_duration:.2f}s")
+                ctx.log(f"Stage {actual_stage_name} completed in {stage_duration:.2f}s")
                 
                 # Send stage completion notification
                 if progress_callback:
                     # Extract output data based on stage
-                    output_data = self._extract_stage_output(ctx, stage_name)
+                    output_data = self._extract_stage_output(ctx, actual_stage_name)
                     await progress_callback(
-                        stage_name, stage_order, StageStatus.COMPLETED, 
-                        f"Stage {stage_name} completed successfully", 
+                        actual_stage_name, stage_order, StageStatus.COMPLETED, 
+                        f"Stage {actual_stage_name} completed successfully", 
                         output_data, None, stage_duration
                     )
                 
             except Exception as e:
                 stage_duration = time.time() - stage_start_time
-                error_msg = f"ERROR in stage {stage_name}: {e}"
+                error_msg = f"ERROR in stage {actual_stage_name}: {e}"
                 ctx.log(error_msg)
-                ctx.log(f"Stage {stage_name} failed after {stage_duration:.2f}s")
+                ctx.log(f"Stage {actual_stage_name} failed after {stage_duration:.2f}s")
                 
                 # Send stage error notification
                 if progress_callback:
                     await progress_callback(
-                        stage_name, stage_order, StageStatus.FAILED, 
-                        f"Stage {stage_name} failed", 
+                        actual_stage_name, stage_order, StageStatus.FAILED, 
+                        f"Stage {actual_stage_name} failed", 
                         None, str(e), stage_duration
                     )
                 
@@ -226,7 +280,7 @@ class PipelineExecutor:
                 # In production, you might want to halt on critical failures
         
         overall_duration = time.time() - overall_start_time
-        ctx.log(f"Pipeline execution completed in {overall_duration:.2f}s")
+        ctx.log(f"{self.mode.capitalize()} pipeline execution completed in {overall_duration:.2f}s")
         
         return ctx
     
@@ -247,6 +301,12 @@ class PipelineExecutor:
             return {"generated_images": ctx.generated_image_results}
         elif stage_name == "image_assessment":
             return {"image_assessments": ctx.image_assessments}
+        elif stage_name in ["load_base_image", "subject_repair", "text_repair", "prompt_refine", "save_outputs"]:
+            # Refinement stages - extract relevant data
+            return {
+                "refinement_result": getattr(ctx, 'refinement_result', None),
+                "base_image_loaded": getattr(ctx, 'base_image_path', None) is not None
+            }
         else:
             return None
     
@@ -264,14 +324,31 @@ class PipelineExecutor:
         
         return ctx
 
-def load_stage_order() -> List[str]:
+def load_stage_order(mode: str = "generation") -> List[str]:
     """Load stage execution order from YAML config (standalone function for compatibility)."""
     config_path = Path(__file__).parent.parent / "configs" / "stage_order.yml"
     try:
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
-            return config.get('stages', [])
+            
+            # Try to get stages for specific mode first
+            if mode in config:
+                return config[mode]
+            
+            # Fallback to legacy 'stages' key (for generation mode)
+            if 'stages' in config:
+                return config['stages']
+            
+            # Final fallback to hardcoded order
+            if mode == "refinement":
+                return ['load_base_image', 'conditional_stage', 'save_outputs']
+            else:
+                return ['image_eval', 'strategy', 'style_guide', 'creative_expert', 'prompt_assembly', 'image_generation']
+                
     except Exception as e:
         print(f"Warning: Could not load stage config from {config_path}: {e}")
         # Fallback to hardcoded order
-        return ['image_eval', 'strategy', 'style_guide', 'creative_expert', 'prompt_assembly', 'image_generation'] 
+        if mode == "refinement":
+            return ['load_base_image', 'conditional_stage', 'save_outputs']
+        else:
+            return ['image_eval', 'strategy', 'style_guide', 'creative_expert', 'prompt_assembly', 'image_generation'] 

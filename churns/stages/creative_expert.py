@@ -20,6 +20,11 @@ from churns.models import (
     StyleGuidance
 )
 from churns.pipeline.context import PipelineContext
+from churns.core.json_parser import (
+    RobustJSONParser, 
+    JSONExtractionError,
+    should_use_manual_parsing
+)
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 instructor_client_creative_expert = None
@@ -30,84 +35,11 @@ FORCE_MANUAL_JSON_PARSE = False
 INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 
 
-def _extract_json_from_llm_response(raw_text: str) -> Optional[str]:
-    """
-    Extracts a JSON string from an LLM's raw text response.
-    Handles markdown code blocks and attempts to parse direct JSON.
-    """
-    import re
-    
-    if not isinstance(raw_text, str):
-        return None
+# Initialize centralized JSON parser for this stage
+_json_parser = RobustJSONParser(debug_mode=False)
 
-    # 1. Try to find JSON within ```json ... ```
-    match_md_json = re.search(r"```json\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_json:
-        json_str = match_md_json.group(1).strip()
-        try:
-            json.loads(json_str)  # Validate
-            return json_str
-        except json.JSONDecodeError:
-            pass
 
-    # 2. Try to find JSON within ``` ... ``` (generic code block)
-    match_md_generic = re.search(r"```\s*([\s\S]+?)\s*```", raw_text, re.IGNORECASE)
-    if match_md_generic:
-        potential_json = match_md_generic.group(1).strip()
-        if (potential_json.startswith('{') and potential_json.endswith('}')) or \
-           (potential_json.startswith('[') and potential_json.endswith(']')):
-            try:
-                json.loads(potential_json)
-                return potential_json
-            except json.JSONDecodeError:
-                pass
-
-    # 3. Try to parse the stripped raw_text directly
-    stripped_text = raw_text.strip()
-    if not stripped_text:
-        return None
-
-    try:
-        json.loads(stripped_text)
-        return stripped_text
-    except json.JSONDecodeError as e:
-        if "Extra data" in str(e) and e.pos > 0:
-            potential_json_substring = stripped_text[:e.pos]
-            try:
-                json.loads(potential_json_substring)
-                return potential_json_substring.strip()
-            except json.JSONDecodeError:
-                pass
-
-    # 4. Fallback: find the first '{' to the last '}' or first '[' to last ']'
-    first_brace = stripped_text.find('{')
-    last_brace = stripped_text.rfind('}')
-    first_bracket = stripped_text.find('[')
-    last_bracket = stripped_text.rfind(']')
-
-    json_candidate = None
-
-    if first_brace != -1 and last_brace != -1 and first_brace < last_brace:
-        potential_obj_str = stripped_text[first_brace : last_brace + 1]
-        try:
-            json.loads(potential_obj_str)
-            json_candidate = potential_obj_str
-        except json.JSONDecodeError:
-            pass
-
-    if first_bracket != -1 and last_bracket != -1 and first_bracket < last_bracket:
-        potential_arr_str = stripped_text[first_bracket : last_bracket + 1]
-        try:
-            json.loads(potential_arr_str)
-            if json_candidate:
-                if not (first_bracket > first_brace and last_bracket < last_brace):
-                     json_candidate = potential_arr_str
-            else:
-                json_candidate = potential_arr_str
-        except json.JSONDecodeError:
-            pass
-
-    return json_candidate
+# Old manual JSON extraction function removed - now using centralized parser
 
 
 def _map_to_supported_aspect_ratio_for_prompt(aspect_ratio: str) -> str:
@@ -301,10 +233,14 @@ Ensure concepts are memorable while aligning with the marketing strategy and tas
     
     reasoning_ce = "**Creative Reasoning:** After defining the visual concept, provide a brief explanation in the `creative_reasoning` field, connecting the key visual choices (style, mood, composition, subject focus, color palette) back to the core marketing strategy (audience, niche, objective, voice), the specific Task Type, the provided Style Guidance, and any significant user inputs or refinements made, especially noting how the image reference was handled. **Justify why the chosen creative direction is effective and aligns with the overall marketing objectives from the strategy.**"
     
+    alt_text_ce = """
+**Alt Text Generation:** Based on the final visual concept, you MUST generate a concise, descriptive alt text (100-125 characters) in the `suggested_alt_text` field. This text is crucial for SEO and accessibility. It should clearly describe the image's subject, setting, and any important visual elements, naturally incorporating primary keywords from the marketing strategy. **IMPORTANT: Do NOT include hashtags, emojis, or promotional language - focus purely on accurate visual description.**
+"""
+    
     # Output format instructions
     adherence_ce = ""
     if use_instructor_parsing and CREATIVE_EXPERT_MODEL_ID not in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS:
-        adherence_ce = "Adhere strictly to the requested Pydantic JSON output format (`ImageGenerationPrompt` containing `VisualConceptDetails`). Note that `main_subject`, `promotional_text_visuals`, and `branding_visuals` are optional and should be omitted (set to null) if the specific scenario instructs it. Ensure all other required descriptions are detailed enough to guide image generation effectively."
+        adherence_ce = "Adhere strictly to the requested Pydantic JSON output format (`ImageGenerationPrompt` containing `VisualConceptDetails`). Note that `main_subject`, `promotional_text_visuals`, and `branding_visuals` are optional and should be omitted (set to null) if the specific scenario instructs it. The `suggested_alt_text` field is mandatory. Ensure all other required descriptions are detailed enough to guide image generation effectively."
     else:
         adherence_ce = """
 VERY IMPORTANT: Format your entire response *only* as a valid JSON object conforming to the structure described below. Do not include any introductory text, explanations, or markdown formatting outside the JSON structure itself.
@@ -322,7 +258,8 @@ JSON Structure:
     "branding_visuals": "string | null", // Omit (set to null) if apply_branding_flag is false
     "texture_and_details": "string | null",
     "negative_elements": "string | null",
-    "creative_reasoning": "string | null"
+    "creative_reasoning": "string | null",
+    "suggested_alt_text": "string" // MANDATORY: 100-125 character SEO-friendly alt text
   },
   "source_strategy_index": "integer | null" // This will be added programmatically later
 }
@@ -332,7 +269,7 @@ Ensure all descriptions are detailed enough to guide image generation effectivel
     prompt_parts_ce = [
         base_persona_ce, input_refinement_ce, core_task_ce, task_type_awareness_ce,
         creativity_instruction_ce, image_ref_handling_ce, text_branding_field_instruction_ce,
-        reasoning_ce, adherence_ce
+        reasoning_ce, alt_text_ce, adherence_ce
     ]
     
     if target_model_family == "qwen":
@@ -379,7 +316,7 @@ def _get_creative_expert_user_prompt(
         user_prompt_parts.append("\n**Style Direction to Follow (Provided by Style Guider):**")
         user_prompt_parts.append(f"- Style Keywords: {', '.join(style_guidance_item.style_keywords if style_guidance_item.style_keywords else [])}")
         user_prompt_parts.append(f"- Style Description: {style_guidance_item.style_description if style_guidance_item.style_description else 'N/A'}")
-        user_prompt_parts.append(f"- Marketing Impact of this Style: {style_guidance_item.marketing_impact if style_guidance_item.marketing_impact else 'N/A'}")
+        # user_prompt_parts.append(f"- Marketing Impact of this Style: {style_guidance_item.marketing_impact if style_guidance_item.marketing_impact else 'N/A'}")
         user_prompt_parts.append("   Your `visual_style` field description in the JSON output MUST be a detailed and creative elaboration of these provided style elements, adhering to its artistic boundaries and constraints.")
     else:
         user_prompt_parts.append("\n**Style Direction to Follow:** No specific style guidance provided by Style Guider; invent a style based on the creativity level (from system prompt) and other inputs.")
@@ -418,10 +355,10 @@ def _get_creative_expert_user_prompt(
     # Platform optimization guidance - updated to use cleaned platform names and consistent aspect ratios
     platform_guidance_map = {
         "Instagram Post": f"Optimize for Instagram Feed: Aim for a polished, visually cohesive aesthetic suitable for {aspect_ratio_for_prompt} format. Consider compositions suitable for feed posts. Ensure text placement is easily readable.",
-        "Instagram Story/Reel": f"Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for {aspect_ratio_for_prompt} vertical format. Consider bold text, trendy effects, or concepts suitable for short video loops or interactive elements.",
+        "Instagram Story/Reel": f"Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for {aspect_ratio_for_prompt} vertical format. **Describe the visual as if it were a single, high-impact frame from a video Reel.** Incorporate a sense of motion or action in the `composition_and_framing` description (e.g., 'dynamic motion blur,' 'subject captured mid-action,' 'cinematic freeze-frame effect').",
         "Facebook Post": f"Optimize for Facebook Feed: Design for broad appeal and shareability in {aspect_ratio_for_prompt} format. Ensure clear branding and messaging for potential ad use.",
-        "Pinterest Pin": f"Optimize for Pinterest: Create visually striking, informative vertical images in {aspect_ratio_for_prompt} format. Focus on aesthetics, clear subject matter, and potential for text overlays that add value.",
-        "Xiaohongshu (Red Note)": f"Optimize for Xiaohongshu: Focus on authentic, aesthetically pleasing, informative, and often lifestyle-oriented visuals in {aspect_ratio_for_prompt} vertical format. Use high-quality imagery, potentially with integrated text overlays in a blog-post style.",
+        "Pinterest Pin": f"Optimize for Pinterest: Create visually striking, informative vertical images in {aspect_ratio_for_prompt} format. **If text is enabled, the concept MUST include a prominent text overlay.** As per Pinterest best practices, the description in `promotional_text_visuals` should specify text that is **large, highly legible (e.g., bold sans-serif fonts), and contains primary keywords from the marketing strategy.**",
+        "Xiaohongshu (Red Note)": f"Optimize for Xiaohongshu: Focus on an **authentic, User-Generated Content (UGC) aesthetic** in {aspect_ratio_for_prompt} format. The concept should resemble a high-quality photo from a peer, not a polished ad. When describing the `visual_style`, favor terms like 'natural lighting' or 'candid shot.' **The concept should feature real people** interacting with the product or in the scene. If text is enabled, the `promotional_text_visuals` description must detail a **catchy, keyword-rich title overlay to act as a strong hook.**",
     }
     platform_guidance_text = platform_guidance_map.get(clean_platform_name, f"Adapt the concept for the target platform '{clean_platform_name}' using {aspect_ratio_for_prompt} aspect ratio.")
     user_prompt_parts.append(f"\n**Platform Optimization (General Reminder):** {platform_guidance_text} (Detailed task-specific platform optimization is in system prompt).")
@@ -459,6 +396,7 @@ Ensure the nested `VisualConceptDetails` object is fully populated with rich, de
 - Add notes on `texture_and_details` if relevant.
 - List any `negative_elements` to avoid.
 - **Provide a brief `creative_reasoning` explaining how the main visual choices connect to the core marketing strategy (especially the `target_objective`), user inputs, task type, and style guidance.**
+- **Generate a concise and descriptive `suggested_alt_text` for SEO and accessibility (descriptive text only, no hashtags or promotional language).**
 
 Ensure the overall visual concept aligns strongly with the core marketing strategy, task type '{task_type}', and incorporates the image reference context as instructed in the system prompt.
 The `source_strategy_index` field in the JSON will be added programmatically later.
@@ -509,8 +447,10 @@ async def _generate_visual_concept_for_strategy(
     is_default_edit_case = has_image_reference and not has_instruction_flag
 
     # Use global client variables (injected by pipeline executor)
-    client_to_use_ce = instructor_client_creative_expert if instructor_client_creative_expert and not FORCE_MANUAL_JSON_PARSE else base_llm_client_creative_expert
-    use_instructor_for_ce_call = bool(instructor_client_creative_expert and not FORCE_MANUAL_JSON_PARSE and CREATIVE_EXPERT_MODEL_ID not in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS)
+    # Determine parsing strategy using centralized logic
+    use_manual_parsing = should_use_manual_parsing(CREATIVE_EXPERT_MODEL_ID)
+    client_to_use_ce = base_llm_client_creative_expert if use_manual_parsing else instructor_client_creative_expert
+    use_instructor_for_ce_call = bool(instructor_client_creative_expert and not use_manual_parsing)
     
     if not client_to_use_ce:
         return None, None, "LLM Client for Creative Expert not available."
@@ -573,50 +513,54 @@ async def _generate_visual_concept_for_strategy(
 
         if actually_use_instructor_parsing_ce:
             prompt_data_ce = completion_ce.model_dump()
-        else:  # Manual parse
+        else:  # Manual parse using centralized parser
             raw_response_content_ce = completion_ce.choices[0].message.content
-            json_string_ce = _extract_json_from_llm_response(raw_response_content_ce)
-            if not json_string_ce:
-                error_details_ce = f"Creative Expert JSON extraction failed.\nRaw: {raw_response_content_ce}"
-                raise Exception(error_details_ce)
             
             try:
-                parsed_json_ce = json.loads(json_string_ce)
+                # Use centralized parser with fallback validation for promotional_text_visuals handling
+                def fallback_validation(data: Dict[str, Any]) -> Dict[str, Any]:
+                    """Handle special case where promotional_text_visuals might be returned as a dict."""
+                    if ('visual_concept' in data and 
+                        isinstance(data.get('visual_concept'), dict) and 
+                        'promotional_text_visuals' in data['visual_concept'] and 
+                        isinstance(data['visual_concept']['promotional_text_visuals'], dict)):
 
-                # Handle special case where promotional_text_visuals might be returned as a dict
-                if ('visual_concept' in parsed_json_ce and 
-                    isinstance(parsed_json_ce.get('visual_concept'), dict) and 
-                    'promotional_text_visuals' in parsed_json_ce['visual_concept'] and 
-                    isinstance(parsed_json_ce['visual_concept']['promotional_text_visuals'], dict)):
+                        ptv_dict = data['visual_concept']['promotional_text_visuals']
+                        description_parts = []
+                        for ptv_key, ptv_value in ptv_dict.items():
+                            formatted_ptv_key = ptv_key.replace('_', ' ').capitalize()
+                            if isinstance(ptv_value, list):
+                                item_strs = []
+                                for item in ptv_value:
+                                    if isinstance(item, dict) and 'type' in item and 'text' in item:
+                                        item_strs.append(f"{item.get('type', '').capitalize()}: \"{item.get('text', '')}\"")
+                                    elif isinstance(item, dict):
+                                        item_strs.append(json.dumps(item))
+                                    else:
+                                        item_strs.append(str(item))
+                                description_parts.append(f"{formatted_ptv_key}: [{'; '.join(item_strs)}]")
+                            elif isinstance(ptv_value, dict):
+                                description_parts.append(f"{formatted_ptv_key}: {json.dumps(ptv_value)}")
+                            else:
+                                description_parts.append(f"{formatted_ptv_key}: {str(ptv_value)}")
 
-                    ptv_dict = parsed_json_ce['visual_concept']['promotional_text_visuals']
-                    description_parts = []
-                    for ptv_key, ptv_value in ptv_dict.items():
-                        formatted_ptv_key = ptv_key.replace('_', ' ').capitalize()
-                        if isinstance(ptv_value, list):
-                            item_strs = []
-                            for item in ptv_value:
-                                if isinstance(item, dict) and 'type' in item and 'text' in item:
-                                    item_strs.append(f"{item.get('type', '').capitalize()}: \"{item.get('text', '')}\"")
-                                elif isinstance(item, dict):
-                                    item_strs.append(json.dumps(item))
-                                else:
-                                    item_strs.append(str(item))
-                            description_parts.append(f"{formatted_ptv_key}: [{'; '.join(item_strs)}]")
-                        elif isinstance(ptv_value, dict):
-                            description_parts.append(f"{formatted_ptv_key}: {json.dumps(ptv_value)}")
+                        if description_parts:
+                            data['visual_concept']['promotional_text_visuals'] = "; ".join(description_parts) + "."
                         else:
-                            description_parts.append(f"{formatted_ptv_key}: {str(ptv_value)}")
+                            data['visual_concept']['promotional_text_visuals'] = json.dumps(ptv_dict)
 
-                    if description_parts:
-                        parsed_json_ce['visual_concept']['promotional_text_visuals'] = "; ".join(description_parts) + "."
-                    else:
-                        parsed_json_ce['visual_concept']['promotional_text_visuals'] = json.dumps(ptv_dict)
-
-                validated_model_ce = ImageGenerationPrompt(**parsed_json_ce)
-                prompt_data_ce = validated_model_ce.model_dump()
-            except (json.JSONDecodeError, ValidationError) as val_err_ce:
-                error_details_ce = f"Creative Expert Pydantic/JSON validation error: {val_err_ce}\nExtracted JSON: {json_string_ce}\nRaw: {raw_response_content_ce}"
+                    # Validate with Pydantic model after transformation
+                    validated_model = ImageGenerationPrompt(**data)
+                    return validated_model.model_dump()
+                
+                prompt_data_ce = _json_parser.extract_and_parse(
+                    raw_response_content_ce,
+                    expected_schema=ImageGenerationPrompt,
+                    fallback_validation=fallback_validation
+                )
+                
+            except JSONExtractionError as extract_err_ce:
+                error_details_ce = f"Creative Expert JSON extraction/parsing failed: {extract_err_ce}\nRaw: {raw_response_content_ce}"
                 raise Exception(error_details_ce)
 
         if prompt_data_ce is None:

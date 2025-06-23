@@ -35,6 +35,27 @@ class PipelineContext:
     task_description: Optional[str] = None
     marketing_goals: Optional[Dict[str, Any]] = None
     
+    # === REFINEMENT PROPERTIES ===
+    # Pipeline mode ("generation" or "refinement")
+    pipeline_mode: str = "generation"
+    
+    # Parent information for refinements
+    parent_run_id: Optional[str] = None
+    parent_image_id: Optional[str] = None
+    parent_image_type: str = "original"
+    generation_index: Optional[int] = None
+    base_image_path: Optional[str] = None
+    
+    # Refinement specifics
+    refinement_type: Optional[str] = None  # "subject", "text", "prompt"
+    mask_coordinates: Optional[List] = None
+    reference_image_path: Optional[str] = None
+    instructions: Optional[str] = None
+    
+    # Refinement results
+    refinement_result: Optional[Dict[str, Any]] = None
+    refinement_cost: Optional[float] = None
+    
     # Processing results
     image_analysis_result: Optional[Dict[str, Any]] = None
     suggested_marketing_strategies: Optional[List[Dict[str, Any]]] = None
@@ -96,6 +117,34 @@ class PipelineContext:
                 return assessment
         return None
     
+    def is_refinement_mode(self) -> bool:
+        """Check if this is a refinement context."""
+        return self.pipeline_mode == "refinement"
+    
+    def set_refinement_context(
+        self, 
+        parent_run_id: str,
+        parent_image_id: str,
+        parent_image_type: str,
+        refinement_type: str,
+        base_image_path: str,
+        generation_index: Optional[int] = None,
+        mask_coordinates: Optional[List] = None,
+        reference_image_path: Optional[str] = None,
+        instructions: Optional[str] = None
+    ) -> None:
+        """Set refinement context properties."""
+        self.pipeline_mode = "refinement"
+        self.parent_run_id = parent_run_id
+        self.parent_image_id = parent_image_id
+        self.parent_image_type = parent_image_type
+        self.refinement_type = refinement_type
+        self.base_image_path = base_image_path
+        self.generation_index = generation_index
+        self.mask_coordinates = mask_coordinates
+        self.reference_image_path = reference_image_path
+        self.instructions = instructions
+    
     @property
     def data(self) -> Dict[str, Any]:
         """
@@ -106,11 +155,12 @@ class PipelineContext:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert context to dictionary format (for compatibility with original monolith)."""
-        return {
+        base_dict = {
             "pipeline_settings": {
                 "run_timestamp": self.run_id,
                 "creativity_level_selected": self.creativity_level,
-                "num_variants": self.num_variants
+                "num_variants": self.num_variants,
+                "pipeline_mode": self.pipeline_mode
             },
             "request_details": {
                 "mode": self.mode,
@@ -138,6 +188,24 @@ class PipelineContext:
                 "cost_summary": self.cost_summary
             }
         }
+        
+        # Add refinement context if in refinement mode
+        if self.is_refinement_mode():
+            base_dict["refinement_context"] = {
+                "parent_run_id": self.parent_run_id,
+                "parent_image_id": self.parent_image_id,
+                "parent_image_type": self.parent_image_type,
+                "generation_index": self.generation_index,
+                "base_image_path": self.base_image_path,
+                "refinement_type": self.refinement_type,
+                "mask_coordinates": self.mask_coordinates,
+                "reference_image_path": self.reference_image_path,
+                "instructions": self.instructions,
+                "refinement_result": self.refinement_result,
+                "refinement_cost": self.refinement_cost
+            }
+        
+        return base_dict
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PipelineContext':
@@ -146,11 +214,13 @@ class PipelineContext:
         request_details = data.get("request_details", {})
         user_inputs = data.get("user_inputs", {})
         processing_context = data.get("processing_context", {})
+        refinement_context = data.get("refinement_context", {})
         
-        return cls(
+        ctx = cls(
             run_id=pipeline_settings.get("run_timestamp", datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")),
             creativity_level=pipeline_settings.get("creativity_level_selected", 2),
             num_variants=pipeline_settings.get("num_variants", 3),
+            pipeline_mode=pipeline_settings.get("pipeline_mode", "generation"),
             mode=request_details.get("mode", "easy_mode"),
             task_type=request_details.get("task_type"),
             target_platform=request_details.get("target_platform"),
@@ -171,6 +241,22 @@ class PipelineContext:
             llm_usage=processing_context.get("llm_call_usage", {}),
             cost_summary=processing_context.get("cost_summary")
         )
+        
+        # Set refinement context if present
+        if refinement_context:
+            ctx.parent_run_id = refinement_context.get("parent_run_id")
+            ctx.parent_image_id = refinement_context.get("parent_image_id")
+            ctx.parent_image_type = refinement_context.get("parent_image_type", "original")
+            ctx.generation_index = refinement_context.get("generation_index")
+            ctx.base_image_path = refinement_context.get("base_image_path")
+            ctx.refinement_type = refinement_context.get("refinement_type")
+            ctx.mask_coordinates = refinement_context.get("mask_coordinates")
+            ctx.reference_image_path = refinement_context.get("reference_image_path")
+            ctx.instructions = refinement_context.get("instructions")
+            ctx.refinement_result = refinement_context.get("refinement_result")
+            ctx.refinement_cost = refinement_context.get("refinement_cost")
+        
+        return ctx
 
     def __post_init__(self):
         """Initialize cost summary after creation."""
