@@ -24,6 +24,8 @@ from .constants import (
     CREATIVE_EXPERT_MODEL_ID,
     IMAGE_ASSESSMENT_MODEL_PROVIDER,
     IMAGE_ASSESSMENT_MODEL_ID,
+    CAPTION_MODEL_PROVIDER,
+    CAPTION_MODEL_ID,
     IMAGE_GENERATION_MODEL_ID
 )
 
@@ -71,6 +73,9 @@ class ClientConfig:
             
             "IMAGE_ASSESSMENT_MODEL_PROVIDER": IMAGE_ASSESSMENT_MODEL_PROVIDER,
             "IMAGE_ASSESSMENT_MODEL_ID": IMAGE_ASSESSMENT_MODEL_ID,
+            
+            "CAPTION_MODEL_PROVIDER": CAPTION_MODEL_PROVIDER,
+            "CAPTION_MODEL_ID": CAPTION_MODEL_ID,
             
             "IMAGE_GENERATION_MODEL_ID": IMAGE_GENERATION_MODEL_ID
         }
@@ -127,6 +132,8 @@ class ClientConfig:
             "CREATIVE_EXPERT_MODEL_ID": "CREATIVE_EXPERT_MODEL_ID",
             "IMAGE_ASSESSMENT_MODEL_PROVIDER": "IMAGE_ASSESSMENT_MODEL_PROVIDER",
             "IMAGE_ASSESSMENT_MODEL_ID": "IMAGE_ASSESSMENT_MODEL_ID",
+            "CAPTION_MODEL_PROVIDER": "CAPTION_MODEL_PROVIDER",
+            "CAPTION_MODEL_ID": "CAPTION_MODEL_ID",
             "IMAGE_GENERATION_MODEL_ID": "IMAGE_GENERATION_MODEL_ID"
         }
         
@@ -237,6 +244,12 @@ class ClientConfig:
             "Image Assessment"
         )
         
+        base_llm_client_caption, instructor_client_caption = self._configure_llm_client(
+            self.model_config["CAPTION_MODEL_PROVIDER"], 
+            self.model_config["CAPTION_MODEL_ID"], 
+            "Caption Generation"
+        )
+        
         # Configure Image Generation Client (typically OpenAI)
         image_gen_client = None
         if OpenAI and self.openai_api_key:
@@ -266,6 +279,8 @@ class ClientConfig:
             'instructor_client_creative_expert': instructor_client_creative_expert,
             'base_llm_client_image_assessment': base_llm_client_image_assessment,
             'instructor_client_image_assessment': instructor_client_image_assessment,
+            'base_llm_client_caption': base_llm_client_caption,
+            'instructor_client_caption': instructor_client_caption,
             'image_gen_client': image_gen_client
         }
         

@@ -48,6 +48,10 @@ CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "
 IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenRouter"  # Direct OpenAI for reliable multi-image processing
 IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision tasks
 
+# Caption Generation Model (for social media caption creation)
+CAPTION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"
+CAPTION_MODEL_ID = "openai/gpt-4.1-mini"  # Cost-effective model for caption generation
+
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 
 # Models known to have issues with instructor's default TOOLS mode via OpenRouter
@@ -155,6 +159,13 @@ MODEL_PRICING = {
         "output_cost_per_mtok": 4.4,  # $0.600 per 1M output tokens
         "currency": "USD",
         "notes": "Pricing for gpt-4.1 via OpenAI native client (vision capabilities)."
+    },
+    "openai/gpt-4o-mini": {  # Used for Caption Generation
+        "provider": "OpenRouter",
+        "input_cost_per_mtok": 0.15,  # $0.15 per 1M input tokens via OpenRouter
+        "output_cost_per_mtok": 0.60,  # $0.60 per 1M output tokens via OpenRouter
+        "currency": "USD",
+        "notes": "Pricing for openai/gpt-4o-mini via OpenRouter (cost-effective for caption generation)."
     },
     "gpt-image-1": {
         "provider": "OpenAI",
