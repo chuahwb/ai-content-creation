@@ -144,6 +144,28 @@ export interface PipelineResults {
   stage_costs?: Record<string, any>[];
 }
 
+// Caption-related interfaces
+export interface CaptionSettings {
+  tone?: 'professional' | 'friendly' | 'witty' | 'inspirational' | 'direct';
+  cta?: string;
+  include_emojis?: boolean;
+  hashtag_strategy?: 'none' | 'niche' | 'broad' | 'balanced';
+}
+
+export interface CaptionResult {
+  version: number;
+  text: string;
+  settings_used: CaptionSettings;
+  brief_used?: Record<string, any>;
+  created_at: string;
+}
+
+export interface CaptionResponse {
+  message: string;
+  task_id: string;
+  status: string;
+}
+
 export interface RunListItem {
   id: string;
   status: RunStatus;
@@ -164,7 +186,7 @@ export interface RunListResponse {
 
 // WebSocket message types
 export interface WebSocketMessage {
-  type: 'stage_update' | 'run_complete' | 'run_error' | 'ping';
+  type: 'stage_update' | 'run_complete' | 'run_error' | 'ping' | 'caption_update' | 'caption_complete' | 'caption_error';
   run_id: string;
   timestamp: string;
   data: Record<string, any>;

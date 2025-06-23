@@ -26,6 +26,7 @@ import {
   Switch,
   FormControlLabel,
   TextField,
+  CircularProgress,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -47,6 +48,7 @@ import {
   Warning as WarningIcon,
   AutoFixHigh as AutoFixHighIcon,
   Edit as EditIcon,
+  AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -61,10 +63,14 @@ import {
   StageStatus,
   WebSocketMessage,
   GeneratedImageResult,
+  CaptionSettings,
+  CaptionResult,
 } from '@/types/api';
 import { PipelineAPI, WebSocketManager } from '@/lib/api';
 import { statusColors } from '@/lib/theme';
 import RefinementModal from './RefinementModal';
+import CaptionDialog from './CaptionDialog';
+import CaptionDisplay from './CaptionDisplay';
 
 interface RunResultsProps {
   runId: string;
@@ -564,6 +570,14 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   }>({ open: false, imageIndex: null, imagePath: null });
   const [refinements, setRefinements] = useState<any[]>([]);
   const [refinementProgress, setRefinementProgress] = useState<{ [key: string]: any }>({});
+  
+  // Caption state
+  const [captionDialogOpen, setCaptionDialogOpen] = useState(false);
+  const [captionImageIndex, setCaptionImageIndex] = useState<number>(0);
+  const [captionInitialSettings, setCaptionInitialSettings] = useState<CaptionSettings | undefined>(undefined);
+  const [captionGenerating, setCaptionGenerating] = useState<Record<number, boolean>>({});
+  const [imageCaptions, setImageCaptions] = useState<Record<number, CaptionResult[]>>({});
+  
   const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
 
   // Initialize developer mode from localStorage
@@ -631,6 +645,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             });
             setGeneratedImages(mergedImages);
             addLog('info', `Loaded ${results.generated_images.length} generated images`);
+            
+
           }
           
           // Load refinements for completed runs
@@ -648,6 +664,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             }
           });
           setGeneratedImages(images);
+          
+
         }
       } else {
         // For non-completed runs, clear generated images
@@ -712,6 +730,33 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       case 'run_error':
         addLog('error', `Pipeline run failed: ${message.data.error_message}`);
         fetchRunDetails(); // Refresh to get error details
+        break;
+        
+      case 'caption_complete':
+        if (message.data?.image_id) {
+          // Extract image index from image_id (format: "image_0", "image_1", etc.)
+          const imageIndex = parseInt(message.data.image_id.split('_')[1]);
+          addLog('success', `Caption generated for Option ${imageIndex + 1}`);
+          // Load the updated captions for this image
+          loadCaptions(imageIndex);
+          // Stop the loading spinner
+          setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+        }
+        break;
+        
+      case 'caption_update':
+        if (message.data?.image_id) {
+          const imageIndex = parseInt(message.data.image_id.split('_')[1]);
+          addLog('info', `Caption generation progress: ${message.data.message}`);
+        }
+        break;
+        
+      case 'caption_error':
+        if (message.data?.image_id) {
+          const imageIndex = parseInt(message.data.image_id.split('_')[1]);
+          addLog('error', `Caption generation failed for Option ${imageIndex + 1}: ${message.data.error_message}`);
+          setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+        }
         break;
     }
   }, [addLog, fetchRunDetails]);
@@ -886,6 +931,98 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     }
   };
 
+  // Caption functions
+  const openCaptionDialog = (imageIndex: number) => {
+    setCaptionImageIndex(imageIndex);
+    setCaptionInitialSettings(undefined); // Clear any previous settings
+    setCaptionDialogOpen(true);
+  };
+
+  const closeCaptionDialog = () => {
+    setCaptionDialogOpen(false);
+    setCaptionInitialSettings(undefined); // Clear settings when closing
+  };
+
+  const handleOpenCaptionSettingsDialog = (imageIndex: number, currentSettings: CaptionSettings) => {
+    setCaptionImageIndex(imageIndex);
+    setCaptionInitialSettings(currentSettings); // Pre-populate with current settings
+    setCaptionDialogOpen(true);
+  };
+
+  const handleCaptionGenerate = async (settings: CaptionSettings) => {
+    const imageId = `image_${captionImageIndex}`;
+    
+    try {
+      setCaptionGenerating(prev => ({ ...prev, [captionImageIndex]: true }));
+      closeCaptionDialog();
+      
+      const response = await PipelineAPI.generateCaption(runId, imageId, settings);
+      addLog('info', `Caption generation started for Option ${captionImageIndex + 1}`);
+      toast.success('Caption generation started! Check progress in real-time.');
+      
+      // Don't clear loading state here - let WebSocket handler do it when complete
+      
+    } catch (error: any) {
+      const errorMsg = `Failed to generate caption: ${error.message}`;
+      addLog('error', errorMsg);
+      toast.error(errorMsg);
+      // Only clear loading state on error
+      setCaptionGenerating(prev => ({ ...prev, [captionImageIndex]: false }));
+    }
+  };
+
+  const handleCaptionRegenerate = async (imageIndex: number, version?: number, settings?: CaptionSettings) => {
+    const imageId = `image_${imageIndex}`;
+    
+    try {
+      setCaptionGenerating(prev => ({ ...prev, [imageIndex]: true }));
+      
+      let response;
+      // Get the current highest version number for proper versioning
+      const currentCaptions = imageCaptions[imageIndex] || [];
+      const latestVersion = currentCaptions.length > 0 ? Math.max(...currentCaptions.map(c => c.version)) : -1;
+      
+      if (version !== undefined) {
+        // Regenerate specific version - use the provided version
+        response = await PipelineAPI.regenerateCaption(runId, imageId, version, settings);
+      } else {
+        // Generate new caption - use the latest version for incrementing
+        response = await PipelineAPI.regenerateCaption(runId, imageId, latestVersion, settings);
+      }
+      
+      addLog('info', `Caption regeneration started for Option ${imageIndex + 1}`);
+      toast.success('Caption regeneration started!');
+      
+      // Don't clear loading state here - let WebSocket handler do it when complete
+      
+    } catch (error: any) {
+      const errorMsg = `Failed to regenerate caption: ${error.message}`;
+      addLog('error', errorMsg);
+      toast.error(errorMsg);
+      // Only clear loading state on error
+      setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+    }
+  };
+
+  const loadCaptions = async (imageIndex: number) => {
+    try {
+      const imageId = `image_${imageIndex}`;
+      const response = await PipelineAPI.getCaptions(runId, imageId);
+      
+      if (response.captions && response.captions.length > 0) {
+        setImageCaptions(prev => ({
+          ...prev,
+          [imageIndex]: response.captions
+        }));
+      }
+    } catch (error) {
+      // Silently fail - captions might not exist yet
+      console.debug('No captions found for image', imageIndex);
+    }
+  };
+
+
+
   const getStatusIcon = (status: RunStatus | StageStatus) => {
     switch (status) {
       case 'COMPLETED':
@@ -936,6 +1073,19 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       }
     };
   }, [runId]);
+
+  // Load captions whenever generatedImages changes
+  useEffect(() => {
+    const loadCaptionsForAllImages = async () => {
+      if (generatedImages.length > 0 && runDetails?.status === 'COMPLETED') {
+        for (const image of generatedImages) {
+          await loadCaptions(image.strategy_index);
+        }
+      }
+    };
+    
+    loadCaptionsForAllImages();
+  }, [generatedImages, runDetails?.status]);
 
   if (isLoading) {
     return (
@@ -1147,6 +1297,19 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                     Refine
                                   </Button>
                                 </Tooltip>
+                                <Tooltip title="Generate social media caption">
+                                  <Button
+                                    size="small"
+                                    startIcon={captionGenerating[result.strategy_index] ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+                                    onClick={() => openCaptionDialog(result.strategy_index)}
+                                    color="primary"
+                                    variant="outlined"
+                                    disabled={captionGenerating[result.strategy_index]}
+                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                                  >
+                                    {captionGenerating[result.strategy_index] ? 'Generating...' : 'Caption'}
+                                  </Button>
+                                </Tooltip>
                               </Box>
                               
                               {/* NEW: Assessment Indicators */}
@@ -1168,6 +1331,36 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                     sx={{ fontSize: '0.7rem' }}
                                   />
                                 </Box>
+                              )}
+
+                              {/* Caption Loading Indicator */}
+                              {captionGenerating[result.strategy_index] && (!imageCaptions[result.strategy_index] || imageCaptions[result.strategy_index].length === 0) && (
+                                <Box sx={{ 
+                                  mt: 2, 
+                                  p: 2, 
+                                  backgroundColor: 'grey.50', 
+                                  borderRadius: 2, 
+                                  border: 1, 
+                                  borderColor: 'divider',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 2
+                                }}>
+                                  <CircularProgress size={20} />
+                                  <Typography variant="body2" color="textSecondary">
+                                    Generating caption... This may take a moment.
+                                  </Typography>
+                                </Box>
+                              )}
+
+                              {/* Caption Display */}
+                              {imageCaptions[result.strategy_index] && imageCaptions[result.strategy_index].length > 0 && (
+                                <CaptionDisplay
+                                  captions={imageCaptions[result.strategy_index]}
+                                  onRegenerate={() => handleCaptionRegenerate(result.strategy_index)}
+                                  onOpenSettingsDialog={(currentSettings) => handleOpenCaptionSettingsDialog(result.strategy_index, currentSettings)}
+                                  isRegenerating={captionGenerating[result.strategy_index]}
+                                />
                               )}
                             </Box>
                           ) : (
@@ -1894,6 +2087,16 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         // Optionally refresh refinements or setup progress tracking
         setTimeout(() => loadRefinements(), 1000);
       }}
+    />
+
+    {/* Caption Dialog */}
+    <CaptionDialog
+      open={captionDialogOpen}
+      onClose={closeCaptionDialog}
+      onGenerate={handleCaptionGenerate}
+      isGenerating={captionGenerating[captionImageIndex]}
+      imageIndex={captionImageIndex}
+      initialSettings={captionInitialSettings}
     />
   </motion.div>
 );

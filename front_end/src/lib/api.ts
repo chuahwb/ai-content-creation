@@ -259,6 +259,57 @@ export class PipelineAPI {
       return handleApiError(error as AxiosError);
     }
   }
+
+  // Caption generation methods
+  static async generateCaption(
+    runId: string, 
+    imageId: string, 
+    settings?: {
+      tone?: string;
+      cta?: string;
+      include_emojis?: boolean;
+      hashtag_strategy?: string;
+    }
+  ): Promise<any> {
+    try {
+      const response = await apiClient.post(`/runs/${runId}/images/${imageId}/caption`, {
+        settings: settings || {}
+      });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async regenerateCaption(
+    runId: string, 
+    imageId: string, 
+    version: number,
+    settings?: {
+      tone?: string;
+      cta?: string;
+      include_emojis?: boolean;
+      hashtag_strategy?: string;
+    }
+  ): Promise<any> {
+    try {
+      const response = await apiClient.post(`/runs/${runId}/images/${imageId}/caption/${version}/regenerate`, {
+        settings: settings || {}
+      });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async getCaptions(runId: string, imageId: string): Promise<any> {
+    try {
+      const response = await apiClient.get(`/runs/${runId}/images/${imageId}/captions`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
 }
 
 // WebSocket connection manager for real-time updates
