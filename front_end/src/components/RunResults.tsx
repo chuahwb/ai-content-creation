@@ -879,11 +879,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   const loadRefinements = async () => {
     try {
-      const response = await fetch(`/api/v1/runs/${runId}/refinements`);
-      if (response.ok) {
-        const data = await response.json();
-        setRefinements(data.refinements || []);
-      }
+      const data = await PipelineAPI.getRefinements(runId);
+      setRefinements(data.refinements || []);
     } catch (error) {
       console.error('Failed to load refinements:', error);
     }
