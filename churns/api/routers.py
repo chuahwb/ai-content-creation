@@ -1,9 +1,10 @@
 from typing import List, Optional
 import os
+import json
 from pathlib import Path
 import mimetypes
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -18,7 +19,8 @@ from churns.api.schemas import (
     PipelineRunRequest, PipelineRunResponse, PipelineRunDetail, 
     RunListResponse, RunListItem, PipelineResults,
     ImageReferenceInput, MarketingGoalsInput, GeneratedImageResult,
-    RefinementResponse, RefinementListResponse, RefinementResult
+    RefinementResponse, RefinementListResponse, RefinementResult,
+    CaptionRequest, CaptionResponse, CaptionRegenerateRequest, CaptionSettings
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
@@ -368,7 +370,7 @@ async def cancel_refinement(
         # If not cancelled but status is RUNNING, it means the job is stalled
         if refinement.status == RunStatus.RUNNING:
             refinement.status = RunStatus.CANCELLED
-            refinement.completed_at = datetime.utcnow()
+            refinement.completed_at = datetime.now(timezone.utc)
             refinement.error_message = "Refinement execution was cancelled (stalled job)"
             session.add(refinement)
             session.commit()
@@ -549,7 +551,7 @@ async def get_run_status(
         # Update the database
         run.status = RunStatus.FAILED
         run.error_message = "Pipeline execution was interrupted unexpectedly"
-        run.completed_at = datetime.utcnow()
+        run.completed_at = datetime.now(timezone.utc)
         if run.started_at:
             run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
         session.add(run)
@@ -593,7 +595,7 @@ async def cancel_pipeline_run(
         # If not cancelled but status is RUNNING, it means the run is stalled
         if run.status == RunStatus.RUNNING:
             run.status = RunStatus.CANCELLED
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(timezone.utc)
             run.error_message = "Pipeline execution was cancelled (stalled run)"
             if run.started_at:
                 run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
@@ -791,6 +793,192 @@ async def get_api_status():
 async def websocket_run_updates(websocket: WebSocket, run_id: str):
     """WebSocket endpoint for real-time pipeline updates"""
     await websocket_endpoint(websocket, run_id)
+
+
+# === CAPTION ENDPOINTS ===
+
+def _get_next_caption_version(run_id: str, image_id: str) -> int:
+    """Calculate the next version number for a caption by checking existing files"""
+    caption_dir = Path(f"./data/runs/{run_id}/captions/{image_id}")
+    next_version = 0  # Default for first caption
+    
+    if caption_dir.exists():
+        # Find existing version files and get the highest version number
+        existing_files = list(caption_dir.glob("v*_result.json"))
+        if existing_files:
+            versions = []
+            for file in existing_files:
+                try:
+                    # Extract version number from filename (e.g., "v2_result.json" -> 2)
+                    version_str = file.stem.split('_')[0][1:]  # Remove 'v' prefix
+                    versions.append(int(version_str))
+                except (ValueError, IndexError):
+                    continue
+            
+            if versions:
+                next_version = max(versions) + 1
+    
+    return next_version
+@runs_router.post("/{run_id}/images/{image_id}/caption", response_model=CaptionResponse)
+async def generate_caption(
+    run_id: str,
+    image_id: str,
+    request: CaptionRequest,
+    session: Session = Depends(get_session)
+):
+    """Generate a caption for a specific image"""
+    
+    # Validate parent run exists and is completed
+    run = session.get(PipelineRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    
+    if run.status != RunStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
+    
+    # Validate image exists in run results
+    # This would normally check against generated images, but for now we'll trust the image_id
+    
+    # Generate unique caption ID
+    import uuid
+    caption_id = str(uuid.uuid4())
+    
+    # Calculate the next version by checking existing files
+    next_version = _get_next_caption_version(run_id, image_id)
+    
+    # Prepare caption generation data
+    caption_data = {
+        "run_id": run_id,
+        "image_id": image_id,
+        "caption_id": caption_id,
+        "settings": request.settings.model_dump() if request.settings else {},
+        "version": next_version
+    }
+    
+    # Start background caption generation
+    await task_processor.start_caption_generation(caption_id, caption_data)
+    
+    # Return immediate response (actual generation happens in background)
+    return CaptionResponse(
+        caption_id=caption_id,
+        image_id=image_id,
+        text="Caption generation in progress...",
+        version=next_version,
+        settings_used=request.settings or CaptionSettings(),
+        created_at=datetime.now(timezone.utc),
+        status="PENDING"
+    )
+
+
+@runs_router.post("/{run_id}/images/{image_id}/caption/{caption_version}/regenerate", response_model=CaptionResponse)
+async def regenerate_caption(
+    run_id: str,
+    image_id: str,
+    caption_version: int,
+    request: CaptionRegenerateRequest,
+    session: Session = Depends(get_session)
+):
+    """Regenerate a caption with new settings or just new creativity"""
+    
+    # Validate parent run exists and is completed
+    run = session.get(PipelineRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    
+    if run.status != RunStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
+    
+    # Generate new caption ID and calculate next version
+    import uuid
+    new_caption_id = str(uuid.uuid4())
+    
+    # Calculate the next version by checking existing files
+    new_version = _get_next_caption_version(run_id, image_id)
+    
+    # Prepare caption regeneration data
+    caption_data = {
+        "run_id": run_id,
+        "image_id": image_id,
+        "caption_id": new_caption_id,
+        "settings": request.settings.model_dump() if request.settings else {},
+        "version": new_version,
+        "writer_only": request.writer_only and not request.settings,  # Only writer if no new settings
+        "previous_version": caption_version
+    }
+    
+    # Start background caption regeneration
+    await task_processor.start_caption_generation(new_caption_id, caption_data)
+    
+    # Return immediate response
+    return CaptionResponse(
+        caption_id=new_caption_id,
+        image_id=image_id,
+        text="Caption regeneration in progress...",
+        version=new_version,
+        settings_used=request.settings or CaptionSettings(),
+        created_at=datetime.now(timezone.utc),
+        status="PENDING"
+    )
+
+
+@runs_router.get("/{run_id}/images/{image_id}/captions")
+async def list_captions(
+    run_id: str,
+    image_id: str,
+    session: Session = Depends(get_session)
+):
+    """List all caption versions for a specific image"""
+    
+    # Validate parent run exists
+    run = session.get(PipelineRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    
+    # Load captions from file system
+    captions = []
+    try:
+        caption_dir = Path(f"./data/runs/{run_id}/captions/{image_id}")
+        if caption_dir.exists():
+            # Find all caption result files and sort by version number
+            result_files = list(caption_dir.glob("v*_result.json"))
+            
+            # Sort files by version number for consistent ordering
+            def get_version_from_filename(file_path):
+                try:
+                    version_str = file_path.stem.split('_')[0][1:]  # Remove 'v' prefix
+                    return int(version_str)
+                except (ValueError, IndexError):
+                    return 0
+            
+            result_files.sort(key=get_version_from_filename)
+            
+            for result_file in result_files:
+                try:
+                    with open(result_file, 'r', encoding='utf-8') as f:
+                        caption_data = json.load(f)
+                    
+                    # Convert to frontend format
+                    captions.append({
+                        "version": caption_data.get("version", 0),
+                        "text": caption_data.get("text", ""),
+                        "settings_used": caption_data.get("settings_used", {}),
+                        "brief_used": caption_data.get("brief_used", {}),
+                        "created_at": caption_data.get("created_at", ""),
+                        "llm_usage": caption_data.get("llm_usage", {})
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to load caption from {result_file}: {e}")
+                    continue
+    
+    except Exception as e:
+        logger.error(f"Failed to load captions for {run_id}/{image_id}: {e}")
+    
+    return {
+        "run_id": run_id,
+        "image_id": image_id,
+        "captions": captions,
+        "total_versions": len(captions)
+    }
 
 
 # Include routers in main API router

@@ -27,7 +27,9 @@ from churns.core.constants import (
     STRATEGY_MODEL_ID, 
     STYLE_GUIDER_MODEL_ID,
     CREATIVE_EXPERT_MODEL_ID,
-    IMAGE_GENERATION_MODEL_ID
+    IMAGE_GENERATION_MODEL_ID,
+    CAPTION_MODEL_ID,
+    CAPTION_MODEL_PROVIDER
 )
 from churns.core.token_cost_manager import get_token_cost_manager, calculate_stage_cost_from_usage
 
@@ -1219,6 +1221,7 @@ class PipelineTaskProcessor:
                 ("style_guide", ["style_guider"], STYLE_GUIDER_MODEL_ID),
                 ("creative_expert", [key for key in llm_usage.keys() if key.startswith("creative_expert_strategy_")], CREATIVE_EXPERT_MODEL_ID),
                 ("image_assessment", ["image_assessment"], IMAGE_ASSESSMENT_MODEL_ID),
+                ("caption", ["caption_analyst", "caption_writer"], CAPTION_MODEL_ID),
             ]
             
             logger.info(f"🔧 Processing {len(stage_mappings)} stage mappings")
@@ -1347,6 +1350,161 @@ class PipelineTaskProcessor:
             logger.warning(f"Failed to retrieve stage durations from database: {e}")
         
         return durations
+
+    async def start_caption_generation(self, caption_id: str, caption_data: Dict[str, Any]):
+        """Start caption generation in the background"""
+        # Create and start the background task
+        task = asyncio.create_task(self._execute_caption_generation(caption_id, caption_data))
+        self.active_tasks[caption_id] = task
+        
+        # Clean up completed tasks
+        def cleanup_tasks(t):
+            self.active_tasks.pop(caption_id, None)
+        
+        task.add_done_callback(cleanup_tasks)
+        
+        logger.info(f"Started background caption generation task for {caption_id}")
+
+    async def _execute_caption_generation(self, caption_id: str, caption_data: Dict[str, Any]):
+        """Execute caption generation with real-time updates"""
+        try:
+            run_id = caption_data["run_id"]
+            image_id = caption_data["image_id"]
+            settings = caption_data.get("settings", {})
+            version = caption_data.get("version", 0)
+            writer_only = caption_data.get("writer_only", False)
+            
+            logger.info(f"Starting caption generation for image {image_id} in run {run_id}")
+            
+            # Load the original pipeline context to get metadata
+            with Session(engine) as session:
+                run = session.get(PipelineRun, run_id)
+                if not run:
+                    raise Exception(f"Pipeline run {run_id} not found")
+                
+                if not run.output_directory:
+                    raise Exception(f"No output directory found for run {run_id}")
+            
+            # Load metadata from the original run
+            metadata_path = Path(run.output_directory) / "pipeline_metadata.json"
+            if not metadata_path.exists():
+                raise Exception(f"Metadata file not found: {metadata_path}")
+            
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            
+            # Create a pipeline context from the metadata for caption generation
+            context = PipelineContext.from_dict(metadata)
+            
+            # Add caption-specific settings to context
+            context.caption_settings = settings
+            context.caption_version = version
+            context.regenerate_writer_only = writer_only
+            
+            # Send progress update
+            from churns.api.websocket import WebSocketMessage, WSMessageType
+            message = WebSocketMessage(
+                type=WSMessageType.CAPTION_UPDATE,
+                run_id=run_id,
+                data={
+                    "caption_id": caption_id,
+                    "image_id": image_id,
+                    "status": "RUNNING",
+                    "message": "Generating caption..."
+                }
+            )
+            await connection_manager.send_message_to_run(run_id, message)
+            
+            # Import and run the caption stage
+            from churns.stages.caption import run as run_caption_stage
+            
+            # Set up global variables for caption stage (same pattern as other stages)
+            import churns.stages.caption as caption_module
+            from churns.core.client_config import get_configured_clients
+            
+            # Get configured clients
+            clients = get_configured_clients()
+            
+            # Configure caption stage globals using centralized configuration
+            caption_module.instructor_client_caption = clients.get('instructor_client_caption')
+            caption_module.base_llm_client_caption = clients.get('base_llm_client_caption')
+            caption_module.CAPTION_MODEL_ID = CAPTION_MODEL_ID
+            caption_module.CAPTION_MODEL_PROVIDER = CAPTION_MODEL_PROVIDER
+            caption_module.FORCE_MANUAL_JSON_PARSE = clients.get('force_manual_json_parse', False)
+            caption_module.INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = clients.get('instructor_tool_mode_problem_models', [])
+            
+            # Run the caption stage
+            await run_caption_stage(context)
+            
+            # Extract the generated caption
+            if hasattr(context, 'generated_captions') and context.generated_captions:
+                caption_result = context.generated_captions[0]
+                caption_text = caption_result["text"]
+                
+                # Save caption to file (following data/runs/{run_id}/ structure)
+                caption_dir = Path(run.output_directory) / "captions" / image_id
+                caption_dir.mkdir(parents=True, exist_ok=True)
+                
+                caption_file = caption_dir / f"v{version}.txt"
+                with open(caption_file, 'w', encoding='utf-8') as f:
+                    f.write(caption_text)
+                
+                brief_file = caption_dir / f"v{version}_brief.json"
+                with open(brief_file, 'w', encoding='utf-8') as f:
+                    json.dump(caption_result["brief_used"], f, indent=2)
+                
+                # Also save caption result with metadata to match pipeline pattern
+                result_file = caption_dir / f"v{version}_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "text": caption_text,
+                        "version": version,
+                        "settings_used": caption_result.get("settings_used", {}),
+                        "brief_used": caption_result["brief_used"],
+                        "created_at": caption_result.get("created_at"),
+                        "llm_usage": {
+                            "caption_analyst": context.llm_usage.get("caption_analyst", {}),
+                            "caption_writer": context.llm_usage.get("caption_writer", {})
+                        }
+                    }, f, indent=2)
+                
+                # Send success update
+                success_message = WebSocketMessage(
+                    type=WSMessageType.CAPTION_COMPLETE,
+                    run_id=run_id,
+                    data={
+                        "caption_id": caption_id,
+                        "image_id": image_id,
+                        "status": "COMPLETED",
+                        "text": caption_text,
+                        "version": version,
+                        "file_path": str(caption_file)
+                    }
+                )
+                await connection_manager.send_message_to_run(run_id, success_message)
+                
+                logger.info(f"Caption generation completed for {caption_id}")
+                
+            else:
+                raise Exception("Caption generation failed - no caption produced")
+                
+        except Exception as e:
+            error_message = f"Caption generation failed: {str(e)}"
+            error_traceback = traceback.format_exc()
+            logger.error(f"Caption generation {caption_id} failed: {error_message}\n{error_traceback}")
+            
+            # Send error notification
+            error_message_obj = WebSocketMessage(
+                type=WSMessageType.CAPTION_ERROR,
+                run_id=run_id,
+                data={
+                    "caption_id": caption_id,
+                    "image_id": image_id,
+                    "status": "FAILED",
+                    "error_message": error_message
+                }
+            )
+            await connection_manager.send_message_to_run(run_id, error_message_obj)
 
 
 # Global task processor instance

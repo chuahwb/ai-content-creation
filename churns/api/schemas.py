@@ -217,4 +217,34 @@ class WebSocketMessage(BaseModel):
     type: str
     run_id: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    data: Dict[str, Any] = Field(default_factory=dict) 
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+# Caption-related schemas
+class CaptionSettings(BaseModel):
+    """User settings for caption generation"""
+    tone: Optional[str] = Field(None, description="Caption tone (e.g., 'Professional & Polished', 'Friendly & Casual')")
+    call_to_action: Optional[str] = Field(None, description="User-defined call to action text")
+    include_emojis: Optional[bool] = Field(True, description="Whether to include emojis in the caption")
+    hashtag_strategy: Optional[str] = Field(None, description="Hashtag strategy ('None', 'Niche & Specific', 'Broad & Trending', 'Balanced Mix')")
+
+
+class CaptionRequest(BaseModel):
+    """Request model for caption generation"""
+    settings: Optional[CaptionSettings] = Field(default=None, description="Caption generation settings")
+
+
+class CaptionRegenerateRequest(BaseModel):
+    """Request model for caption regeneration"""
+    settings: Optional[CaptionSettings] = Field(default=None, description="New caption settings (if provided, runs full pipeline)")
+    writer_only: bool = Field(default=True, description="If true and no new settings, only regenerates writer step")
+
+
+class CaptionResponse(BaseModel):
+    """Response model for caption generation"""
+    caption_id: str = Field(description="Unique ID for this caption")
+    image_id: str = Field(description="ID of the associated image")
+    text: str = Field(description="The generated caption text")
+    version: int = Field(description="Version number of this caption")
+    settings_used: CaptionSettings = Field(description="Settings that were used to generate this caption")
+    created_at: datetime = Field(description="When the caption was created")
+    status: str = Field(description="Status of caption generation") 
