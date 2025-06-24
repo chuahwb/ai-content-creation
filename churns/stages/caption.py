@@ -24,6 +24,7 @@ from ..models import CaptionBrief, CaptionSettings, CaptionResult
 from ..core.json_parser import (
     RobustJSONParser, 
     JSONExtractionError,
+    TruncatedResponseError,
     should_use_manual_parsing
 )
 
@@ -51,7 +52,7 @@ def _get_analyst_system_prompt() -> str:
 
 **Instructions:**
 - Carefully analyze all the provided CONTEXT_DATA.
-- **Language Consistency:** The `CONTEXT_DATA` may be in a language other than English. You MUST detect the primary language of the input context and generate ALL fields in the `CaptionBrief` JSON object (including `core_message`, `key_themes_to_include`, `seo_keywords`, `target_emotion`, `primary_call_to_action`, and `hashtags`) in that same language. Do not mix languages.
+- **Language Consistency:** Generate ALL fields in the `CaptionBrief` JSON object (including `core_message`, `key_themes_to_include`, `seo_keywords`, `target_emotion`, `primary_call_to_action`, and `hashtags`) in English as the primary language. However, preserve authentic cultural or aesthetic terms (e.g., "Japandi", "wabi-sabi", "matcha") when they add value and authenticity to the content. Only switch to a non-English primary language if the user's input data (marketing goals, task description, or explicit instructions) clearly indicates a different target language.
 - Follow the USER_SETTINGS if they are provided. If a user setting conflicts with the context data (e.g., user-selected tone vs. target_voice), the user's choice MUST be prioritized.
 - If a setting is not provided by the user, you must infer the optimal choice from the context data as per the AUTO_MODE_LOGIC.
 - Generate a single, valid JSON object based on the CaptionBrief schema.
@@ -266,6 +267,8 @@ def _get_analyst_user_prompt(
     
     prompt_parts.extend([
         "",
+        "**Important:** This content should be generated primarily in English. Preserve authentic cultural/aesthetic terms (like 'Japandi', 'matcha', 'wabi-sabi') that add authenticity, but ensure the primary language is English unless the user has explicitly requested a different target language.",
+        "",
         "Based on this context, generate a CaptionBrief JSON object that will guide the caption writer.",
         "Focus on strategic analysis and provide clear, actionable guidance for the creative execution."
     ])
@@ -285,7 +288,7 @@ def _get_writer_system_prompt() -> str:
 
 **Instructions:**
 - Your task is to write a compelling social media caption based on the provided Caption Brief.
-- **Language Adherence:** The provided `CaptionBrief` will be in a specific language. Your final caption MUST be written entirely in that same language. Do not introduce English words or phrases unless they are part of the original brief (e.g., a brand name).
+- **Language Adherence:** Write your final caption primarily in English, but preserve authentic cultural, aesthetic, or brand terms from the brief that add authenticity and value (e.g., "Japandi", "matcha", "wabi-sabi", brand names). Only write in a non-English language if the `CaptionBrief` explicitly indicates the target audience expects content in that language.
 - Read the entire brief carefully to understand the strategic goals.
 - **CRITICAL:** You MUST strictly adhere to the `caption_structure` and `style_notes` provided in the `platform_optimizations` section of the brief. This structure is non-negotiable and is the key to the caption's success on that specific platform.
 - Write a caption that feels authentic and human, not like it was written by an AI.
@@ -297,12 +300,27 @@ def _get_writer_system_prompt() -> str:
 - Use natural, conversational language.
 - Vary sentence lengths for readability.
 - Include line breaks where appropriate for platform readability.
-- Integrate emojis naturally if suggested.
+- **CRITICAL:** Strictly follow the emoji usage instructions provided. If told not to use emojis, do NOT include any emojis whatsoever.
+- **CRITICAL:** Strictly follow the hashtag usage instructions provided. If told not to use hashtags, do NOT include any hashtags whatsoever.
+- When hashtags are provided, make them feel organic and naturally integrated at the end of the caption.
 - Make hashtags feel organic, not forced."""
 
 
 def _get_writer_user_prompt(brief: CaptionBrief) -> str:
     """Constructs the user prompt for the Writer LLM."""
+    
+    # Handle emoji instructions explicitly
+    if brief.emoji_suggestions:
+        emoji_instruction = f"**Emoji Suggestions:** {' '.join(brief.emoji_suggestions)}\n**Emoji Usage:** Use the suggested emojis naturally and sparingly throughout the caption."
+    else:
+        emoji_instruction = "**Emoji Usage:** DO NOT use any emojis in this caption. The user has disabled emoji usage."
+    
+    # Handle hashtag instructions explicitly
+    if brief.hashtags:
+        hashtag_instruction = f"**Hashtags:** {' '.join(brief.hashtags)}\n**Hashtag Usage:** Include the provided hashtags at the end of the caption."
+    else:
+        hashtag_instruction = "**Hashtag Usage:** DO NOT include any hashtags in this caption. The user has disabled hashtag usage."
+    
     return f"""Write a social media caption based on this strategic brief:
 
 **Core Message:** {brief.core_message}
@@ -317,9 +335,9 @@ def _get_writer_user_prompt(brief: CaptionBrief) -> str:
 
 **Call to Action:** {brief.primary_call_to_action}
 
-**Hashtags:** {' '.join(brief.hashtags)}
+{hashtag_instruction}
 
-**Emoji Suggestions:** {' '.join(brief.emoji_suggestions)}
+{emoji_instruction}
 
 Create an engaging, authentic caption that incorporates these elements naturally."""
 
@@ -373,6 +391,12 @@ async def _run_analyst(
                     raw_content,
                     expected_schema=CaptionBrief
                 )
+            except TruncatedResponseError as truncate_err:
+                current_max_tokens = llm_args.get("max_tokens", 1500)
+                ctx.log(f"ERROR: Caption Analyst response was truncated: {truncate_err}")
+                ctx.log(f"Current max_tokens: {current_max_tokens}. Consider increasing max_tokens.")
+                ctx.log(f"Raw Analyst content preview: {raw_content[:300]}...")
+                return None
             except JSONExtractionError as extract_err:
                 ctx.log(f"ERROR: JSON extraction/parsing failed for Analyst response: {extract_err}")
                 ctx.log(f"Raw Analyst content: {raw_content}")
@@ -460,9 +484,25 @@ async def run(ctx: PipelineContext) -> None:
     # Get platform info
     platform_name = ctx.target_platform.get("name", "Social Media") if ctx.target_platform else "Social Media"
     
-    # Process each generated image
+    # Check if we're processing a specific image (API mode) or all images (pipeline mode)
+    target_image_index = getattr(ctx, 'target_image_index', None)
+    
+    if target_image_index is not None:
+        # API mode: process only the specific image
+        if target_image_index < 0 or target_image_index >= len(ctx.generated_image_prompts):
+            ctx.log(f"ERROR: Invalid target image index {target_image_index}. Available: 0-{len(ctx.generated_image_prompts)-1}")
+            return
+        
+        prompts_to_process = [(target_image_index, ctx.generated_image_prompts[target_image_index])]
+        ctx.log(f"Processing single image at index {target_image_index}")
+    else:
+        # Pipeline mode: process all images
+        prompts_to_process = list(enumerate(ctx.generated_image_prompts))
+        ctx.log(f"Processing all {len(prompts_to_process)} images")
+    
+    # Process the selected images
     captions_generated = 0
-    for i, prompt_data in enumerate(ctx.generated_image_prompts):
+    for i, prompt_data in prompts_to_process:
         strategy_index = prompt_data.get('source_strategy_index', 0)
         strategy = ctx.suggested_marketing_strategies[strategy_index] if strategy_index < len(ctx.suggested_marketing_strategies) else ctx.suggested_marketing_strategies[0]
         

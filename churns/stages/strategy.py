@@ -23,7 +23,12 @@ INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 
 # Import task group pools from constants
 from churns.core.constants import TASK_GROUP_POOLS
-from churns.core.json_parser import RobustJSONParser, JSONExtractionError
+from churns.core.json_parser import (
+    RobustJSONParser,
+    JSONExtractionError,
+    TruncatedResponseError,
+    should_use_manual_parsing
+)
 from churns.models import (
     RelevantNicheList,
     MarketingGoalSetStage2,
@@ -192,6 +197,10 @@ def run(ctx: PipelineContext) -> None:
                         from pydantic import ValidationError
                         raise ValidationError(f"Parsed JSON for Niche ID is not a list or dict: {type(parsed_data_niche)}")
                     identified_niches = validated_niche_list.relevant_niches
+                except TruncatedResponseError as truncate_err_niche:
+                    ctx.log(f"    ERROR: Niche ID response was truncated: {truncate_err_niche}")
+                    ctx.log(f"    Raw Niche ID content preview: {raw_content_niche[:300]}...")
+                    raise Exception(f"Niche ID response truncated - consider increasing max_tokens: {truncate_err_niche}")
                 except JSONExtractionError as parse_err_niche:
                     ctx.log(f"    ERROR: JSON extraction failed for Niche ID: {parse_err_niche}")
                     ctx.log(f"    Raw Niche ID content: {raw_content_niche}")
@@ -316,6 +325,10 @@ def run(ctx: PipelineContext) -> None:
                     validated_goals_output = MarketingStrategyOutputStage2(**data_for_pydantic_validation)
                     temp_strategies_stage2 = [s.model_dump() for s in validated_goals_output.strategies]
 
+                except TruncatedResponseError as truncate_err_goals:
+                    ctx.log(f"    ERROR: Goal Gen response was truncated: {truncate_err_goals}")
+                    ctx.log(f"    Raw Goal Gen content preview: {raw_content_goals[:300]}...")
+                    raise Exception(f"Goal Gen response truncated - consider increasing max_tokens: {truncate_err_goals}")
                 except JSONExtractionError as parse_err_goals:
                     ctx.log(f"    ERROR: JSON extraction failed for Goal Gen: {parse_err_goals}")
                     ctx.log(f"    Raw Goal Gen content: {raw_content_goals}")

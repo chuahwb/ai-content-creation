@@ -23,6 +23,7 @@ from churns.pipeline.context import PipelineContext
 from churns.core.json_parser import (
     RobustJSONParser, 
     JSONExtractionError,
+    TruncatedResponseError,
     should_use_manual_parsing
 )
 
@@ -559,6 +560,16 @@ async def _generate_visual_concept_for_strategy(
                     fallback_validation=fallback_validation
                 )
                 
+            except TruncatedResponseError as truncate_err_ce:
+                current_max_tokens = llm_args_ce.get("max_tokens", 5000)
+                error_details_ce = (
+                    f"Creative Expert response was truncated mid-generation. "
+                    f"Current max_tokens: {current_max_tokens}. "
+                    f"Consider increasing max_tokens or trying a different model. "
+                    f"Truncation details: {truncate_err_ce}\n"
+                    f"Raw response preview: {raw_response_content_ce[:500]}..."
+                )
+                raise Exception(error_details_ce)
             except JSONExtractionError as extract_err_ce:
                 error_details_ce = f"Creative Expert JSON extraction/parsing failed: {extract_err_ce}\nRaw: {raw_response_content_ce}"
                 raise Exception(error_details_ce)

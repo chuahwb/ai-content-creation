@@ -39,10 +39,10 @@ STRATEGY_MODEL_ID = "openai/gpt-4.1-mini"  # E.g., "openai/gpt-4-turbo", "google
 
 # Phase 2 Models
 STYLE_GUIDER_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
-STYLE_GUIDER_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
+STYLE_GUIDER_MODEL_ID = "google/gemini-2.5-pro"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
 
 CREATIVE_EXPERT_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
-CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
+CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
 
 # Image Assessment Model (dedicated for image quality evaluation)
 IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenRouter"  # Direct OpenAI for reliable multi-image processing
@@ -55,7 +55,7 @@ CAPTION_MODEL_ID = "openai/gpt-4.1-mini"  # Cost-effective model for caption gen
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 
 # Models known to have issues with instructor's default TOOLS mode via OpenRouter
-INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = ["openai/o4-mini", "google/gemini-2.5-pro-preview", "openai/o4-mini-high"]
+INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = ["openai/o4-mini", "google/gemini-2.5-pro", "openai/o4-mini-high"]
 
 # --- Image Token Calculation Parameters ---
 # Two different calculation methods based on model family
@@ -139,7 +139,7 @@ MODEL_PRICING = {
         "currency": "USD",
         "notes": "Pricing for qwen/qwen3-235b-a22b via OpenRouter."
     },
-    "google/gemini-2.5-pro-preview": {  # Added pricing for this model
+    "google/gemini-2.5-pro": {  # Added pricing for this model
         "provider": "OpenRouter",  # Assuming OpenRouter access
         "input_cost_per_mtok": 1.25,  # Example: Gemini 1.5 Pro on OpenRouter
         "output_cost_per_mtok": 10.00,  # Example: Gemini 1.5 Pro on OpenRouter

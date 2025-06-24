@@ -18,6 +18,7 @@ from churns.pipeline.context import PipelineContext
 from churns.core.json_parser import (
     RobustJSONParser, 
     JSONExtractionError,
+    TruncatedResponseError,
     should_use_manual_parsing
 )
 
@@ -310,6 +311,16 @@ def run(ctx: PipelineContext) -> None:
                 
                 style_guidance_list_data = result_data.get("style_guidance_sets", [])
                 
+            except TruncatedResponseError as truncate_err_sg:
+                current_max_tokens = llm_args_sg.get("max_tokens", 1500 * num_strategies)
+                error_details_sg = (
+                    f"Style Guider response was truncated mid-generation. "
+                    f"Current max_tokens: {current_max_tokens} for {num_strategies} strategies. "
+                    f"Consider increasing max_tokens or trying a different model. "
+                    f"Truncation details: {truncate_err_sg}\n"
+                    f"Raw response preview: {raw_content_sg[:500]}..."
+                )
+                raise Exception(error_details_sg)
             except JSONExtractionError as extract_err_sg:
                 error_details_sg = f"Style Guider JSON extraction/parsing failed: {extract_err_sg}\nRaw: {raw_content_sg}"
                 raise Exception(error_details_sg)

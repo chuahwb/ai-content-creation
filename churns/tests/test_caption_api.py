@@ -184,7 +184,9 @@ class TestCaptionAPI:
         # Override dependencies
         app.dependency_overrides[get_session] = lambda: mock_session
         
-        with patch('churns.api.routers.task_processor', mock_task_processor):
+        # Mock the version calculation to simulate existing caption file
+        with patch('churns.api.routers.task_processor', mock_task_processor), \
+             patch('churns.api.routers._get_next_caption_version', return_value=1):
             client = TestClient(app)
             
             # Test regeneration request
@@ -238,7 +240,9 @@ class TestCaptionAPI:
         # Override dependencies
         app.dependency_overrides[get_session] = lambda: mock_session
         
-        with patch('churns.api.routers.task_processor', mock_task_processor):
+        # Mock the version calculation to simulate existing caption file
+        with patch('churns.api.routers.task_processor', mock_task_processor), \
+             patch('churns.api.routers._get_next_caption_version', return_value=1):
             client = TestClient(app)
             
             # Test regeneration request with writer_only=True and no new settings

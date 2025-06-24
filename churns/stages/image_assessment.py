@@ -27,6 +27,7 @@ from ..core.token_cost_manager import get_token_cost_manager
 from ..core.json_parser import (
     RobustJSONParser, 
     JSONExtractionError,
+    TruncatedResponseError,
     should_use_manual_parsing
 )
 
@@ -624,6 +625,13 @@ Begin your assessment now."""
             
             return result_data
             
+        except TruncatedResponseError as truncate_err:
+            # Handle truncated responses specifically
+            raise ImageAssessmentError(
+                f"Image assessment response was truncated mid-generation. "
+                f"Consider increasing max_tokens or trying a different model. "
+                f"Truncation details: {truncate_err}"
+            )
         except JSONExtractionError as e:
             # Fallback: try manual parsing and validation
             try:

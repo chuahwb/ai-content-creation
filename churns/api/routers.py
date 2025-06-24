@@ -391,7 +391,7 @@ def _generate_refinement_summary(refinement_type: RefinementType, prompt: Option
         return "Unknown refinement"
 
 
-@runs_router.get("/", response_model=RunListResponse)
+@runs_router.get("", response_model=RunListResponse)
 async def list_pipeline_runs(
     page: int = 1,
     page_size: int = 20,
@@ -819,6 +819,24 @@ def _get_next_caption_version(run_id: str, image_id: str) -> int:
                 next_version = max(versions) + 1
     
     return next_version
+
+def _is_settings_empty(settings):
+    """Check if a settings object is effectively empty (all values are defaults)"""
+    if settings is None:
+        return True
+    
+    # Create a default CaptionSettings object to compare against
+    defaults = CaptionSettings()
+    settings_dict = settings.model_dump()
+    defaults_dict = defaults.model_dump()
+    
+    # Compare each field - if any field differs from default, settings are not empty
+    for key, value in settings_dict.items():
+        if value != defaults_dict.get(key):
+            return False
+    
+    return True
+
 @runs_router.post("/{run_id}/images/{image_id}/caption", response_model=CaptionResponse)
 async def generate_caption(
     run_id: str,
@@ -895,6 +913,15 @@ async def regenerate_caption(
     # Calculate the next version by checking existing files
     new_version = _get_next_caption_version(run_id, image_id)
     
+    # DEBUG: Log the request parameters
+    logger.info(f"DEBUG: Regenerate request - writer_only={request.writer_only}, settings={request.settings}")
+    if request.settings:
+        logger.info(f"DEBUG: Settings dump: {request.settings.model_dump()}")
+    is_empty = _is_settings_empty(request.settings)
+    logger.info(f"DEBUG: _is_settings_empty result: {is_empty}")
+    writer_only_result = request.writer_only and is_empty
+    logger.info(f"DEBUG: Final writer_only logic: {request.writer_only} and {is_empty} = {writer_only_result}")
+    
     # Prepare caption regeneration data
     caption_data = {
         "run_id": run_id,
@@ -902,9 +929,11 @@ async def regenerate_caption(
         "caption_id": new_caption_id,
         "settings": request.settings.model_dump() if request.settings else {},
         "version": new_version,
-        "writer_only": request.writer_only and not request.settings,  # Only writer if no new settings
+        "writer_only": writer_only_result,  # Only writer if no new settings
         "previous_version": caption_version
     }
+    
+    logger.info(f"DEBUG: Caption data being sent: {caption_data}")
     
     # Start background caption regeneration
     await task_processor.start_caption_generation(new_caption_id, caption_data)

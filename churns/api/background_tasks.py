@@ -1401,6 +1401,38 @@ class PipelineTaskProcessor:
             context.caption_version = version
             context.regenerate_writer_only = writer_only
             
+            # Load cached brief for writer-only regeneration
+            if writer_only and "previous_version" in caption_data:
+                previous_version = caption_data["previous_version"]
+                brief_file = Path(run.output_directory) / "captions" / image_id / f"v{previous_version}_brief.json"
+                if brief_file.exists():
+                    try:
+                        with open(brief_file, 'r', encoding='utf-8') as f:
+                            brief_data = json.load(f)
+                        
+                        # Import CaptionBrief model to recreate the object
+                        from churns.models import CaptionBrief
+                        context.cached_caption_brief = CaptionBrief(**brief_data)
+                        logger.info(f"Loaded cached brief from {brief_file} for writer-only regeneration")
+                    except Exception as e:
+                        logger.warning(f"Failed to load cached brief from {brief_file}: {e}")
+                        logger.warning("Will proceed with full pipeline regeneration")
+                else:
+                    logger.warning(f"Brief file {brief_file} not found for writer-only regeneration")
+                    logger.warning("Will proceed with full pipeline regeneration")
+            
+            # Set target image index for single-image processing
+            # Extract image index from image_id (e.g., "image_0" -> 0, "image_1" -> 1)
+            try:
+                if image_id.startswith("image_"):
+                    target_index = int(image_id.split("_")[1])
+                    context.target_image_index = target_index
+                    logger.info(f"Set target image index to {target_index} for image {image_id}")
+                else:
+                    logger.warning(f"Could not parse image index from {image_id}, will process all images")
+            except (IndexError, ValueError) as e:
+                logger.warning(f"Could not parse image index from {image_id}: {e}, will process all images")
+            
             # Send progress update
             from churns.api.websocket import WebSocketMessage, WSMessageType
             message = WebSocketMessage(
@@ -1438,8 +1470,15 @@ class PipelineTaskProcessor:
             
             # Extract the generated caption
             if hasattr(context, 'generated_captions') and context.generated_captions:
-                caption_result = context.generated_captions[0]
-                caption_text = caption_result["text"]
+                # For single-image processing, there should be exactly one caption
+                if len(context.generated_captions) == 1:
+                    caption_result = context.generated_captions[0]
+                    caption_text = caption_result["text"]
+                else:
+                    # This shouldn't happen with single-image processing, but handle gracefully
+                    logger.warning(f"Expected 1 caption, got {len(context.generated_captions)}. Using first one.")
+                    caption_result = context.generated_captions[0]
+                    caption_text = caption_result["text"]
                 
                 # Save caption to file (following data/runs/{run_id}/ structure)
                 caption_dir = Path(run.output_directory) / "captions" / image_id

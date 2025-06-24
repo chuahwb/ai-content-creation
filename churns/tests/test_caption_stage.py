@@ -33,7 +33,7 @@ class TestCaptionStage:
             }
         }]
         
-        self.mock_ctx.marketing_strategies = [{
+        self.mock_ctx.suggested_marketing_strategies = [{
             'target_audience': 'Coffee enthusiasts aged 25-40',
             'target_objective': 'Increase brand awareness',
             'target_voice': 'Friendly and approachable',
@@ -70,7 +70,7 @@ class TestCaptionStage:
     @patch('churns.stages.caption.should_use_manual_parsing')
     @patch('churns.stages.caption._run_analyst')
     @patch('churns.stages.caption._run_writer')
-    def test_run_success_flow(self, mock_writer, mock_analyst, mock_parsing):
+    async def test_run_success_flow(self, mock_writer, mock_analyst, mock_parsing):
         """Test successful caption generation flow."""
         # Setup mocks
         mock_parsing.return_value = False
@@ -89,7 +89,7 @@ class TestCaptionStage:
         mock_writer.return_value = "Start your morning right ☕\n\nOur artisan coffee is crafted with care for the perfect specialty brew. Every cup tells a story of quality and craftsmanship.\n\nTry our signature blend today!\n\n#artisancoffee #specialtybrew #morningcoffee"
         
         # Run the stage
-        run(self.mock_ctx)
+        await run(self.mock_ctx)
         
         # Verify calls
         assert mock_analyst.called
@@ -109,23 +109,23 @@ class TestCaptionStage:
         self.mock_ctx.log.assert_any_call("Starting caption generation stage")
         self.mock_ctx.log.assert_any_call("Caption generation stage completed. Generated 1 captions")
     
-    def test_run_missing_image_prompts(self):
+    async def test_run_missing_image_prompts(self):
         """Test handling when no image prompts are available."""
         self.mock_ctx.generated_image_prompts = None
         
-        run(self.mock_ctx)
+        await run(self.mock_ctx)
         
         self.mock_ctx.log.assert_any_call("ERROR: No generated image prompts available for caption generation")
     
-    def test_run_missing_marketing_strategies(self):
+    async def test_run_missing_marketing_strategies(self):
         """Test handling when no marketing strategies are available."""
-        self.mock_ctx.marketing_strategies = None
+        self.mock_ctx.suggested_marketing_strategies = None
         
-        run(self.mock_ctx)
+        await run(self.mock_ctx)
         
         self.mock_ctx.log.assert_any_call("ERROR: No marketing strategies available for caption generation")
     
-    def test_caption_settings_parsing(self):
+    async def test_caption_settings_parsing(self):
         """Test that caption settings are properly parsed."""
         # Test with custom settings
         self.mock_ctx.caption_settings = {
@@ -150,7 +150,7 @@ class TestCaptionStage:
             )
             mock_writer.return_value = "Test caption"
             
-            run(self.mock_ctx)
+            await run(self.mock_ctx)
             
             # Verify analyst was called with the correct settings
             assert mock_analyst.called
@@ -235,10 +235,10 @@ class TestCaptionStage:
         with pytest.raises(ValueError, match="Missing required target_objective"):
             _validate_required_data(strategy_data, visual_data, "Coffee Cup")
             
-    def test_caption_generation_with_incomplete_data(self):
+    async def test_caption_generation_with_incomplete_data(self):
         """Test caption generation fails gracefully with incomplete data."""
         # Create incomplete strategy data
-        self.mock_ctx.marketing_strategies = [{
+        self.mock_ctx.suggested_marketing_strategies = [{
             "target_audience": "Food lovers"
             # Missing target_objective
         }]
@@ -258,7 +258,7 @@ class TestCaptionStage:
         from churns.stages.caption import run
         
         # Should handle the error gracefully and not generate captions
-        run(self.mock_ctx)
+        await run(self.mock_ctx)
         
         # Verify no captions were generated due to missing data
         assert not hasattr(self.mock_ctx, 'generated_captions') or len(self.mock_ctx.generated_captions) == 0
