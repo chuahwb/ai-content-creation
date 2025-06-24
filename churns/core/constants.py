@@ -50,7 +50,7 @@ IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision 
 
 # Caption Generation Model (for social media caption creation)
 CAPTION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"
-CAPTION_MODEL_ID = "openai/gpt-4.1-mini"  # Cost-effective model for caption generation
+CAPTION_MODEL_ID = "google/gemini-2.5-pro"  # Cost-effective model for caption generation
 
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 

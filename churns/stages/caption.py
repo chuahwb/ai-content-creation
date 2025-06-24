@@ -302,8 +302,7 @@ def _get_writer_system_prompt() -> str:
 - Include line breaks where appropriate for platform readability.
 - **CRITICAL:** Strictly follow the emoji usage instructions provided. If told not to use emojis, do NOT include any emojis whatsoever.
 - **CRITICAL:** Strictly follow the hashtag usage instructions provided. If told not to use hashtags, do NOT include any hashtags whatsoever.
-- When hashtags are provided, make them feel organic and naturally integrated at the end of the caption.
-- Make hashtags feel organic, not forced."""
+- When hashtags are provided, make them feel organic and naturally integrated at the end of the caption."""
 
 
 def _get_writer_user_prompt(brief: CaptionBrief) -> str:
@@ -371,7 +370,7 @@ async def _run_analyst(
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.3,
-        "max_tokens": 1500,
+        "max_tokens": 3000,
     }
     
     if use_instructor_for_call:
@@ -439,14 +438,43 @@ async def _run_writer(ctx: PipelineContext, brief: CaptionBrief) -> Optional[str
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.7,
-        "max_tokens": 800,
+        "max_tokens": 3000,
     }
     
     try:
         ctx.log("Running Writer LLM for final caption")
         
         completion = client_to_use.chat.completions.create(**llm_args)
-        caption_text = completion.choices[0].message.content.strip()
+        raw_content = completion.choices[0].message.content
+        
+        # Check for truncated responses and retry if needed
+        if hasattr(completion, 'choices') and completion.choices:
+            finish_reason = getattr(completion.choices[0], 'finish_reason', None)
+            if finish_reason == 'length':
+                ctx.log("⚠️ Response truncated, retrying with higher token limit...")
+                
+                # Retry with higher token limit
+                retry_args = llm_args.copy()
+                retry_args['max_tokens'] = 3500
+                
+                try:
+                    retry_completion = client_to_use.chat.completions.create(**retry_args)
+                    retry_content = retry_completion.choices[0].message.content
+                    retry_finish_reason = getattr(retry_completion.choices[0], 'finish_reason', None)
+                    
+                    if retry_finish_reason != 'length' and retry_content:
+                        ctx.log(f"✅ Retry successful, got complete response ({len(retry_content)} chars)")
+                        raw_content = retry_content
+                        completion = retry_completion  # Update for usage tracking
+                    else:
+                        ctx.log("⚠️ Retry still truncated, using original response")
+                        
+                except Exception as retry_error:
+                    ctx.log(f"❌ Retry failed: {retry_error}")
+                    # Continue with original truncated response
+        
+        # Use the raw response as the caption (models generate clean captions directly)
+        caption_text = raw_content.strip() if raw_content else ""
         
         # Track usage
         raw_response_obj = getattr(completion, '_raw_response', completion)
@@ -577,3 +605,6 @@ async def run(ctx: PipelineContext) -> None:
         ctx.log(f"Successfully generated caption for image {i+1}")
     
     ctx.log(f"Caption generation stage completed. Generated {captions_generated} captions")
+
+
+

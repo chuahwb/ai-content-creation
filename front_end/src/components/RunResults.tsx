@@ -578,6 +578,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [captionGenerating, setCaptionGenerating] = useState<Record<number, boolean>>({});
   const [imageCaptions, setImageCaptions] = useState<Record<number, CaptionResult[]>>({});
   
+  // Add caption error state management
+  const [captionErrors, setCaptionErrors] = useState<Record<number, string>>({});
+  
   const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
 
   // Initialize developer mode from localStorage
@@ -739,8 +742,10 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           addLog('success', `Caption generated for Option ${imageIndex + 1}`);
           // Load the updated captions for this image
           loadCaptions(imageIndex);
-          // Stop the loading spinner
+          // Stop the loading spinner and clear any error
           setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+          setCaptionErrors(prev => ({ ...prev, [imageIndex]: '' }));
+          toast.success(`Caption generated for Option ${imageIndex + 1}!`);
         }
         break;
         
@@ -754,8 +759,12 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       case 'caption_error':
         if (message.data?.image_id) {
           const imageIndex = parseInt(message.data.image_id.split('_')[1]);
-          addLog('error', `Caption generation failed for Option ${imageIndex + 1}: ${message.data.error_message}`);
+          const errorMessage = message.data.error_message || 'Caption generation failed';
+          addLog('error', `Caption generation failed for Option ${imageIndex + 1}: ${errorMessage}`);
+          // Stop the loading spinner and show error
           setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+          setCaptionErrors(prev => ({ ...prev, [imageIndex]: errorMessage }));
+          toast.error(`Caption generation failed for Option ${imageIndex + 1}: ${errorMessage}`);
         }
         break;
     }
@@ -954,6 +963,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     
     try {
       setCaptionGenerating(prev => ({ ...prev, [captionImageIndex]: true }));
+      setCaptionErrors(prev => ({ ...prev, [captionImageIndex]: '' })); // Clear any previous error
       closeCaptionDialog();
       
       const response = await PipelineAPI.generateCaption(runId, imageId, settings);
@@ -966,8 +976,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       const errorMsg = `Failed to generate caption: ${error.message}`;
       addLog('error', errorMsg);
       toast.error(errorMsg);
-      // Only clear loading state on error
+      // Only clear loading state on error and set error message
       setCaptionGenerating(prev => ({ ...prev, [captionImageIndex]: false }));
+      setCaptionErrors(prev => ({ ...prev, [captionImageIndex]: errorMsg }));
     }
   };
 
@@ -976,6 +987,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     
     try {
       setCaptionGenerating(prev => ({ ...prev, [imageIndex]: true }));
+      setCaptionErrors(prev => ({ ...prev, [imageIndex]: '' })); // Clear any previous error
       
       let response;
       // Get the current highest version number for proper versioning
@@ -999,8 +1011,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       const errorMsg = `Failed to regenerate caption: ${error.message}`;
       addLog('error', errorMsg);
       toast.error(errorMsg);
-      // Only clear loading state on error
+      // Only clear loading state on error and set error message
       setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+      setCaptionErrors(prev => ({ ...prev, [imageIndex]: errorMsg }));
     }
   };
 
@@ -1021,7 +1034,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     }
   };
 
-
+  // Helper function to retry caption generation
+  const retryCaptionGeneration = (imageIndex: number) => {
+    setCaptionErrors(prev => ({ ...prev, [imageIndex]: '' })); // Clear error
+    openCaptionDialog(imageIndex);
+  };
 
   const getStatusIcon = (status: RunStatus | StageStatus) => {
     switch (status) {
@@ -1353,6 +1370,34 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 </Box>
                               )}
 
+                              {/* Caption Error Display */}
+                              {captionErrors[result.strategy_index] && !captionGenerating[result.strategy_index] && (
+                                <Alert 
+                                  severity="error" 
+                                  sx={{ mt: 2 }}
+                                  action={
+                                    <Button 
+                                      color="inherit" 
+                                      size="small" 
+                                      onClick={() => {
+                                        setCaptionErrors(prev => ({ ...prev, [result.strategy_index]: '' }));
+                                        retryCaptionGeneration(result.strategy_index);
+                                      }}
+                                      startIcon={<AutoAwesomeIcon />}
+                                    >
+                                      Retry
+                                    </Button>
+                                  }
+                                >
+                                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                    Caption Generation Failed
+                                  </Typography>
+                                  <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
+                                    {captionErrors[result.strategy_index]}
+                                  </Typography>
+                                </Alert>
+                              )}
+
                               {/* Caption Display */}
                               {imageCaptions[result.strategy_index] && imageCaptions[result.strategy_index].length > 0 && (
                                 <CaptionDisplay
@@ -1394,7 +1439,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 
                                  {/* Visual Pipeline Stages Grid */}
                  <Grid container spacing={2} sx={{ mb: 3 }}>
-                   {PIPELINE_STAGES.map((pipelineStage, index) => {
+                   {PIPELINE_STAGES.map((pipelineStage) => {
                      const stageData = getStageData(pipelineStage.name);
                      const status = getStageStatus(pipelineStage.name);
                      const isActive = status === 'RUNNING';
@@ -2094,9 +2139,10 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       open={captionDialogOpen}
       onClose={closeCaptionDialog}
       onGenerate={handleCaptionGenerate}
-      isGenerating={captionGenerating[captionImageIndex]}
+      isGenerating={captionGenerating[captionImageIndex] || false}
       imageIndex={captionImageIndex}
       initialSettings={captionInitialSettings}
+      error={captionErrors[captionImageIndex]} // Pass error for display
     />
   </motion.div>
 );

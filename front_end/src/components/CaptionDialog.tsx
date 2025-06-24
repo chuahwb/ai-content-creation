@@ -22,6 +22,7 @@ import {
   Divider,
   IconButton,
   Chip,
+  Alert,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -38,6 +39,7 @@ interface CaptionDialogProps {
   isGenerating?: boolean;
   imageIndex: number;
   initialSettings?: CaptionSettings;
+  error?: string;
 }
 
 export default function CaptionDialog({
@@ -47,6 +49,7 @@ export default function CaptionDialog({
   isGenerating = false,
   imageIndex,
   initialSettings,
+  error,
 }: CaptionDialogProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [settings, setSettings] = useState<CaptionSettings>({
@@ -138,6 +141,18 @@ export default function CaptionDialog({
       </DialogTitle>
 
       <DialogContent sx={{ pt: 3, pb: 2 }}>
+        {/* Error Display */}
+        {error && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+              Caption Generation Error
+            </Typography>
+            <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
+              {error}
+            </Typography>
+          </Alert>
+        )}
+
         {/* Auto Mode Description */}
         <Box sx={{ mb: 3, p: 2, backgroundColor: 'primary.50', borderRadius: 2, border: 1, borderColor: 'primary.100' }}>
           <Typography variant="body2" sx={{ fontWeight: 500, color: 'primary.main', mb: 1 }}>
