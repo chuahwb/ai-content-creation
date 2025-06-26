@@ -372,7 +372,7 @@ def remove_failed_results(results: List[Dict[str, Any]], failed_models: set) -> 
 
 # 0.4  Environment validation
 print("🔑 Checking environment...")
-OPENROUTER_API_KEY = "REDACTED_API_KEY"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not OPENROUTER_API_KEY:
     print("❌ OPENROUTER_API_KEY environment variable is required")
     print("💡 Set it with: export OPENROUTER_API_KEY='your_key_here'")
