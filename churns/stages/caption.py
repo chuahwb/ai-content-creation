@@ -40,6 +40,112 @@ INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 _json_parser = RobustJSONParser(debug_mode=False)
 
 
+# Task Type Caption Guidance Mapping
+TASK_TYPE_CAPTION_GUIDANCE = {
+    "1. Product Photography": {
+        "captionObjective": "Showcase product features & craftsmanship to spark desire and perceived quality.",
+        "toneHints": ["aspirational", "sensory", "detail-oriented"],
+        "hookTemplate": "Up close with {product} —",
+        "structuralHints": "Hook → Sensory description → Benefit → CTA"
+    },
+    "2. Promotional Graphics & Announcements": {
+        "captionObjective": "Drive immediate awareness and action for time-sensitive offers or news.",
+        "toneHints": ["urgent", "excited", "inclusive"],
+        "hookTemplate": "Heads up! {promo_title} drops {date} —",
+        "structuralHints": "Headline → Key offer → Scarcity line → CTA"
+    },
+    "3. Store Atmosphere & Decor": {
+        "captionObjective": "Transport the audience into the ambience and evoke an in-store experience.",
+        "toneHints": ["immersive", "inviting", "storytelling"],
+        "hookTemplate": "Step into our space —",
+        "structuralHints": "Hook → Atmosphere description → Feeling → CTA"
+    },
+    "4. Menu Spotlights": {
+        "captionObjective": "Highlight a specific menu item with appetite appeal and encourage orders.",
+        "toneHints": ["mouth-watering", "friendly", "tempting"],
+        "hookTemplate": "Craving something {flavour}? Meet our {menu_item} —",
+        "structuralHints": "Hook → Taste/ingredient details → Benefit → CTA"
+    },
+    "5. Cultural & Community Content": {
+        "captionObjective": "Celebrate cultural roots or community stories to foster connection and authenticity.",
+        "toneHints": ["warm", "respectful", "celebratory"],
+        "hookTemplate": "From our community to yours —",
+        "structuralHints": "Hook → Cultural story → Value → CTA"
+    },
+    "6. Recipes & Food Tips": {
+        "captionObjective": "Educate followers with practical recipes or tips featuring the product.",
+        "toneHints": ["educational", "encouraging", "practical"],
+        "hookTemplate": "Save this recipe: {dish_name} —",
+        "structuralHints": "Hook → Key step or tip → Benefit → CTA"
+    },
+    "7. Brand Story & Milestones": {
+        "captionObjective": "Share brand journey or achievements to build emotional connection and trust.",
+        "toneHints": ["inspirational", "authentic", "grateful"],
+        "hookTemplate": "Our journey began with {origin} —",
+        "structuralHints": "Hook → Narrative snippet → Milestone → CTA"
+    },
+    "8. Behind the Scenes Imagery": {
+        "captionObjective": "Reveal the people and process behind the brand to humanise and build transparency.",
+        "toneHints": ["candid", "relatable", "transparent"],
+        "hookTemplate": "Behind the scenes at {brand} —",
+        "structuralHints": "Hook → Process insight → Team mention → CTA"
+    }
+}
+
+
+def _get_task_type_guidance(task_type: str) -> Optional[Dict[str, Any]]:
+    """
+    Safely retrieve task type guidance for caption generation.
+    
+    Args:
+        task_type: The task type string from pipeline context
+        
+    Returns:
+        Task type guidance dict or None if not found
+    """
+    return TASK_TYPE_CAPTION_GUIDANCE.get(task_type)
+
+
+def _extract_style_context(ctx: PipelineContext, prompt_index: int) -> Dict[str, Any]:
+    """
+    Extract critical style context signals from pipeline data.
+    
+    Args:
+        ctx: Pipeline context
+        prompt_index: Index of the current image prompt being processed
+        
+    Returns:
+        Dictionary containing style keywords, creative reasoning, and target niche
+    """
+    style_context = {
+        "style_keywords": [],
+        "creative_reasoning": None,
+        "target_niche": None
+    }
+    
+    # Extract style keywords from style guidance sets
+    if ctx.style_guidance_sets and prompt_index < len(ctx.style_guidance_sets):
+        style_guidance = ctx.style_guidance_sets[prompt_index]
+        style_context["style_keywords"] = style_guidance.get("style_keywords", [])
+    
+    # Extract creative reasoning from visual concept
+    if ctx.generated_image_prompts and prompt_index < len(ctx.generated_image_prompts):
+        visual_concept = ctx.generated_image_prompts[prompt_index].get("visual_concept", {})
+        style_context["creative_reasoning"] = visual_concept.get("creative_reasoning")
+    
+    # Extract target niche from corresponding strategy
+    if ctx.suggested_marketing_strategies:
+        strategy_index = 0
+        if ctx.generated_image_prompts and prompt_index < len(ctx.generated_image_prompts):
+            strategy_index = ctx.generated_image_prompts[prompt_index].get("source_strategy_index", 0)
+        
+        if strategy_index < len(ctx.suggested_marketing_strategies):
+            strategy = ctx.suggested_marketing_strategies[strategy_index]
+            style_context["target_niche"] = strategy.get("target_niche")
+    
+    return style_context
+
+
 def _get_analyst_system_prompt() -> str:
     """Returns the system prompt for the Analyst LLM."""
     # ============================
@@ -85,7 +191,8 @@ def _get_analyst_system_prompt() -> str:
   },
   "primary_call_to_action": "The final call to action string",
   "hashtags": ["Array of hashtag strings with # symbol"],
-  "emoji_suggestions": ["Array of 2-3 relevant emoji characters"]
+  "emoji_suggestions": ["Array of 2-3 relevant emoji characters"],
+  "task_type_notes": "Optional concise note about task-type optimization (e.g., 'Optimize for Product Photography: showcase features & craftsmanship'). Set to null if no task type guidance was provided."
 }
 
 **CRITICAL:** The platform_optimizations object must contain exactly one key matching the target platform name provided in the context."""
@@ -186,7 +293,8 @@ def _get_analyst_user_prompt(
     platform_name: str,
     strategy: Dict[str, Any],
     visual_concept: Dict[str, Any],
-    alt_text: str
+    alt_text: str,
+    prompt_index: int = 0
 ) -> str:
     """Constructs the user prompt for the Analyst LLM."""
     
@@ -234,6 +342,37 @@ def _get_analyst_user_prompt(
         prompt_parts.append(f"- Alt Text (for SEO context): {alt_text}")
     if visual_data['promotional_text']:
         prompt_parts.append(f"- Text on Image: {visual_data['promotional_text']}")
+    
+    # Add Task Type Context if available and feature enabled
+    enable_task_type_optimization = getattr(ctx, 'enable_task_type_caption_optimization', True)
+    if enable_task_type_optimization and ctx.task_type:
+        task_guidance = _get_task_type_guidance(ctx.task_type)
+        task_type = ctx.task_type.split('.', 1)[-1].strip() if '.' in ctx.task_type else ctx.task_type
+        if task_guidance:
+            prompt_parts.extend([
+                "",
+                "**Task Type Context:**",
+                f"You are crafting a caption for a **{task_type}** social-media asset. The goal is to {task_guidance['captionObjective']}. Adopt a tone that feels {', '.join(task_guidance['toneHints'])}. Use this guidance as inspiration, not a script.",
+                "",
+                "**Important Guidance Notes:**",
+                "- Treat structural hints as inspiration. If the platform optimization already prescribes a structure, merge or defer to it. Do not duplicate or contradict.",
+                f"- Example hook template: \"{task_guidance['hookTemplate']}\" - Use as a creative starting point only. Feel free to remix or craft a better hook that suits the overall context.",
+                f"- Suggested structure: {task_guidance['structuralHints']} - Adapt as needed for platform requirements."
+            ])
+    
+    # Add Style Context for critical signals
+    style_context = _extract_style_context(ctx, prompt_index)
+    if style_context['style_keywords'] or style_context['creative_reasoning']:
+        prompt_parts.extend([
+            "",
+            "**Style Context:**"
+        ])
+        
+        if style_context['style_keywords']:
+            prompt_parts.append(f"The accompanying image was designed with these style cues: {', '.join(style_context['style_keywords'])}. Channel this aesthetic subtly in the copy.")
+        
+        if style_context['creative_reasoning']:
+            prompt_parts.append(f"The creative reasoning emphasizes: \"{style_context['creative_reasoning']}\"")
     
     prompt_parts.append("")
     prompt_parts.append("**User Settings:**")
@@ -320,25 +459,31 @@ def _get_writer_user_prompt(brief: CaptionBrief) -> str:
     else:
         hashtag_instruction = "**Hashtag Usage:** DO NOT include any hashtags in this caption. The user has disabled hashtag usage."
     
-    return f"""Write a social media caption based on this strategic brief:
-
-**Core Message:** {brief.core_message}
-
-**Key Themes to Include:** {', '.join(brief.key_themes_to_include)}
-
-**SEO Keywords:** {', '.join(brief.seo_keywords)}
-
-**Target Emotion:** {brief.target_emotion}
-
-**Platform Optimizations:** {json.dumps(brief.platform_optimizations, indent=2)}
-
-**Call to Action:** {brief.primary_call_to_action}
-
-{hashtag_instruction}
-
-{emoji_instruction}
-
-Create an engaging, authentic caption that incorporates these elements naturally."""
+    prompt_parts = [
+        "Write a social media caption based on this strategic brief:",
+        "",
+        f"**Core Message:** {brief.core_message}"
+    ]
+    
+    # Add task type notes if available
+    if getattr(brief, 'task_type_notes', None):
+        prompt_parts.append(f"**Task Note:** {brief.task_type_notes}")
+    
+    prompt_parts.extend([
+        f"**Key Themes to Include:** {', '.join(brief.key_themes_to_include)}",
+        f"**SEO Keywords:** {', '.join(brief.seo_keywords)}",
+        f"**Target Emotion:** {brief.target_emotion}",
+        f"**Platform Optimizations:** {json.dumps(brief.platform_optimizations, indent=2)}",
+        f"**Call to Action:** {brief.primary_call_to_action}",
+        "",
+        hashtag_instruction,
+        "",
+        emoji_instruction,
+        "",
+        "Create an engaging, authentic caption that incorporates these elements naturally."
+    ])
+    
+    return "\n".join(prompt_parts)
 
 
 async def _run_analyst(
@@ -361,7 +506,9 @@ async def _run_analyst(
         return None
     
     system_prompt = _get_analyst_system_prompt()
-    user_prompt = _get_analyst_user_prompt(ctx, settings, platform_name, strategy, visual_concept, alt_text)
+    # Get the prompt index for style context extraction
+    prompt_index = getattr(ctx, 'current_prompt_index', 0)
+    user_prompt = _get_analyst_user_prompt(ctx, settings, platform_name, strategy, visual_concept, alt_text, prompt_index)
     
     llm_args = {
         "model": CAPTION_MODEL_ID,
@@ -559,6 +706,9 @@ async def run(ctx: PipelineContext) -> None:
             ctx.log("Using cached caption brief for regeneration")
             brief = cached_brief
         else:
+            # Set current prompt index for style context extraction
+            ctx.current_prompt_index = i
+            
             # Run Analyst LLM
             brief = None
             try:

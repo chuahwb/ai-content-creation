@@ -119,6 +119,7 @@ class CaptionBrief(BaseModel):
     primary_call_to_action: str = Field(..., description="The final call to action string.")
     hashtags: List[str] = Field(..., description="An array of generated hashtag strings, including the # symbol.")
     emoji_suggestions: List[str] = Field(..., description="An array of 2-3 relevant emoji characters to consider.")
+    task_type_notes: Optional[str] = Field(None, description="Optional task-type specific guidance notes for the writer.")
 
 class CaptionSettings(BaseModel):
     """User settings for caption generation."""
