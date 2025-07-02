@@ -86,7 +86,7 @@ def assemble_final_prompt(structured_prompt_data: Dict[str, Any], user_inputs: D
     return final_prompt_str
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """
     Stage 5: Prompt Assembly
     

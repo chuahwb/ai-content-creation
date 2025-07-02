@@ -305,6 +305,50 @@ Let me know if you need any adjustments to these styles.
         
         assert result["general_score"] == 4.2
         assert "assessment_scores" in result
+    
+    def test_truncated_response_detection(self):
+        """Test detection of truncated responses."""
+        from churns.core.json_parser import TruncatedResponseError
+        
+        # Test truncated JSON string value
+        truncated_response1 = '''```json\n{\n  "style_guidance_sets": [\n    {\n      "style_keywords": ["modern", "clean"],\n      "style_description": "A modern, clean aesthetic with monochromatic color scheme ('''
+        with pytest.raises(TruncatedResponseError) as exc_info:
+            self.parser.extract_and_parse(truncated_response1)
+        assert "truncated mid-generation" in str(exc_info.value)
+        
+        # Test truncated in middle of key-value pair
+        truncated_response2 = '''{\n  "assessment_scores": {\n    "concept_adherence": 4,\n    "technical_quality":'''
+        with pytest.raises(TruncatedResponseError) as exc_info:
+            self.parser.extract_and_parse(truncated_response2)
+        assert "truncated" in str(exc_info.value).lower()
+        
+        # Test incomplete markdown block
+        truncated_response3 = '''Here is the assessment:\n\n```json\n{\n  "assessment_scores": {\n    "concept_adherence": 4\n  },\n  "general_score": 4.2'''
+        with pytest.raises(TruncatedResponseError) as exc_info:
+            self.parser.extract_and_parse(truncated_response3)
+        
+        # Test response that looks complete (should not raise TruncatedResponseError)
+        complete_response = '''{\n  "assessment_scores": {\n    "concept_adherence": 4\n  },\n  "general_score": 4.2\n}'''
+        try:
+            # This should raise JSONExtractionError (missing fields) but NOT TruncatedResponseError
+            self.parser.extract_and_parse(complete_response)
+        except Exception as e:
+            assert not isinstance(e, TruncatedResponseError), f"Should not be TruncatedResponseError, got: {type(e)}"
+    
+    def test_truncation_patterns(self):
+        """Test specific truncation patterns in isolation."""
+        # Test the pattern matching directly
+        parser = RobustJSONParser()
+        
+        # Should detect truncation
+        assert parser._is_likely_truncated_response('"description": "This is truncated')
+        assert parser._is_likely_truncated_response('{"key": "value",')
+        assert parser._is_likely_truncated_response('[{"item": ')
+        
+        # Should NOT detect truncation
+        assert not parser._is_likely_truncated_response('{"complete": "json"}')
+        assert not parser._is_likely_truncated_response('["complete", "array"]')
+        assert not parser._is_likely_truncated_response('```json\n{"complete": "json"}\n```')
 
 
 class TestConvenienceFunctions:

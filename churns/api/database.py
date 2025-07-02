@@ -60,6 +60,7 @@ class PipelineRun(SQLModel, table=True):
     marketing_objective: Optional[str] = Field(default=None)
     marketing_voice: Optional[str] = Field(default=None)
     marketing_niche: Optional[str] = Field(default=None)
+    language: Optional[str] = Field(default='en', description="ISO-639-1 language code for output")
     
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), server_default=func.now()))

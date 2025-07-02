@@ -27,7 +27,9 @@ from churns.core.constants import (
     STRATEGY_MODEL_ID, 
     STYLE_GUIDER_MODEL_ID,
     CREATIVE_EXPERT_MODEL_ID,
-    IMAGE_GENERATION_MODEL_ID
+    IMAGE_GENERATION_MODEL_ID,
+    CAPTION_MODEL_ID,
+    CAPTION_MODEL_PROVIDER
 )
 from churns.core.token_cost_manager import get_token_cost_manager, calculate_stage_cost_from_usage
 
@@ -564,25 +566,38 @@ class PipelineTaskProcessor:
             
             # Set up directories
             parent_run_dir = Path(f"./data/runs/{job.parent_run_id}")
-            originals_dir = parent_run_dir / "originals"
             refinements_dir = parent_run_dir / "refinements"
             refinements_dir.mkdir(exist_ok=True)
             
-            # Create pipeline context for refinement
+            # Create pipeline context
             context = PipelineContext()
-            context.run_id = job_id
+            context.run_id = job_id  # Set the current refinement job ID
             context.parent_run_id = job.parent_run_id
             context.parent_image_id = job.parent_image_id
             context.parent_image_type = job.parent_image_type
             context.generation_index = job.generation_index
             context.refinement_type = job.refinement_type
-    
+            context.pipeline_mode = "refinement"  # Set pipeline mode for executor
+
             context.base_run_dir = str(parent_run_dir)
             
             # Set refinement-specific inputs
             if job.refinement_type == "subject":
                 context.instructions = refinement_data.get("instructions")
-                context.reference_image_path = refinement_data.get("reference_image_path")
+                # Handle reference image path (already absolute with new API structure)
+                reference_image_path = refinement_data.get("reference_image_path")
+                if reference_image_path:
+                    # Check if path is already absolute or relative
+                    if os.path.isabs(reference_image_path):
+                        context.reference_image_path = reference_image_path
+                        logger.info(f"Using absolute reference image path: {reference_image_path}")
+                    else:
+                        # Legacy relative path handling
+                        context.reference_image_path = str(parent_run_dir / reference_image_path)
+                        logger.info(f"Converted relative reference image path: {reference_image_path} -> {context.reference_image_path}")
+                else:
+                    context.reference_image_path = None
+                    logger.warning(f"No reference image path found in refinement data: {refinement_data}")
             elif job.refinement_type == "text":
                 context.instructions = refinement_data.get("instructions")
             elif job.refinement_type == "prompt":
@@ -594,6 +609,9 @@ class PipelineTaskProcessor:
             if metadata_path.exists():
                 with open(metadata_path, 'r') as f:
                     context.original_pipeline_data = json.load(f)
+            else:
+                logger.warning(f"No pipeline metadata found at {metadata_path}")
+                context.original_pipeline_data = {"processing_context": {}, "user_inputs": {}}
             
             # Initialize cost tracking
             total_cost = 0.0
@@ -610,22 +628,25 @@ class PipelineTaskProcessor:
                 if status == StageStatus.COMPLETED and duration_seconds:
                     stage_cost = 0.0
                     
-                    # Calculate refinement-specific costs
+                    # Get actual cost from context if calculated by stage
                     if stage_name in ["subject_repair", "text_repair", "prompt_refine"]:
-                        # Get cost from context if calculated by stage
+                        # Check if stage calculated its own cost
                         stage_cost = getattr(context, 'refinement_cost', 0.0)
                         if stage_cost == 0.0:
-                            # Fallback estimation
-                            stage_cost = 0.040  # Typical DALL-E edit cost
+                            # Use more accurate estimation based on OpenAI pricing
+                            stage_cost = 0.042  # Current gpt-image-1 model pricing for 1024x1024
+                    elif stage_name in ["load_base_image", "save_outputs"]:
+                        stage_cost = 0.0  # No external API costs for utility stages
                     else:
-                        stage_cost = 0.001  # Minimal cost for utility stages
+                        stage_cost = 0.001  # Minimal cost for other utility stages
                     
                     if stage_cost > 0:
                         total_cost += stage_cost
                         stage_costs.append({
                             "stage_name": stage_name,
                             "cost_usd": stage_cost,
-                            "duration_seconds": duration_seconds
+                            "duration_seconds": duration_seconds,
+                            "model_used": "gpt-image-1" if stage_name in ["subject_repair", "text_repair", "prompt_refine"] else "local"
                         })
                         logger.info(f"Refinement stage {stage_name} cost: ${stage_cost:.6f}")
                 
@@ -639,41 +660,73 @@ class PipelineTaskProcessor:
             executor = PipelineExecutor(mode="refinement")
             await executor.run_async(context, refinement_progress_callback)
             
-            # Update job with results
+            # Update job with results using database_updates from save_outputs stage
             with Session(engine) as session:
                 job = session.get(RefinementJob, job_id)
                 if job:
-                    job.status = RunStatus.COMPLETED
-                    job.completed_at = datetime.utcnow()
-                    job.cost_usd = total_cost
-                    
-                    # Set result path from context
-                    if hasattr(context, 'refinement_result') and context.refinement_result:
-                        job.image_path = context.refinement_result.get("output_path")
-                        job.refinement_summary = context.refinement_result.get("summary", f"{job.refinement_type} refinement")
+                    # Use database_updates prepared by save_outputs stage if available
+                    if hasattr(context, 'database_updates') and context.database_updates:
+                        db_updates = context.database_updates
+                        
+                        # Set status based on save_outputs analysis
+                        if db_updates["status"] == "completed":
+                            job.status = RunStatus.COMPLETED
+                        else:
+                            job.status = RunStatus.FAILED
+                        
+                        job.completed_at = datetime.utcnow()
+                        job.cost_usd = total_cost
+                        job.image_path = db_updates.get("image_path")
+                        job.refinement_summary = db_updates.get("refinement_summary", "Refinement processed")
+                        job.error_message = db_updates.get("error_message")
+                        
+                        logger.info(f"Updated job {job_id} with save_outputs database_updates: status={job.status}, summary={job.refinement_summary}")
+                    else:
+                        # Fallback to old logic if database_updates not available
+                        logger.warning(f"No database_updates found in context for job {job_id}, using fallback logic")
+                        job.status = RunStatus.COMPLETED
+                        job.completed_at = datetime.utcnow()
+                        job.cost_usd = total_cost
+                        
+                        # Check if refinement actually succeeded
+                        if hasattr(context, 'refinement_result') and context.refinement_result:
+                            output_path = context.refinement_result.get("output_path")
+                            if output_path and os.path.exists(output_path):
+                                # Convert to relative path for database storage
+                                try:
+                                    job.image_path = str(Path(output_path).relative_to(parent_run_dir))
+                                except ValueError:
+                                    job.image_path = f"refinements/{os.path.basename(output_path)}"
+                                job.refinement_summary = f"{job.refinement_type.title()} enhancement: Successful"
+                            else:
+                                job.refinement_summary = f"{job.refinement_type.title()} enhancement: No changes made"
+                        else:
+                            job.refinement_summary = f"{job.refinement_type.title()} enhancement: No changes made"
                     
                     session.add(job)
                     session.commit()
             
-            # Update refinements.json index
-            await self._update_refinements_index(job.parent_run_id, job_id, job)
-            
-            # Send completion notification with refinement-specific data
-            refinement_result = {
-                "job_id": job_id,
-                "type": job.refinement_type,
-                "status": "completed",
-                "parent_image_id": job.parent_image_id,
-                "parent_image_type": job.parent_image_type,
-                "generation_index": job.generation_index,
-                "image_path": job.image_path,
-                "cost_usd": job.cost_usd,
-                "summary": job.refinement_summary,
-                "created_at": job.created_at.isoformat() if job.created_at else None
-            }
-            
-            await connection_manager.send_run_complete(job_id, refinement_result)
-            logger.info(f"Refinement job {job_id} completed successfully")
+                
+                # Send completion notification with refinement-specific data
+                refinement_result = {
+                    "job_id": job_id,
+                    "type": job.refinement_type,
+                    "parent_run_id": job.parent_run_id,
+                    "parent_image_type": job.parent_image_type,
+                    "parent_image_path": self._get_parent_image_path(job),
+                    "reference_image_path": context.reference_image_path, 
+                    "image_path": job.image_path,
+                    "cost_usd": job.cost_usd,
+                    "summary": job.refinement_summary,
+                    "created_at": job.created_at.isoformat() if job.created_at else None
+                }
+                
+                # Update refinements.json index
+                await self._update_refinements_index(refinement_result)
+                
+                # Send completion notification to the parent run (not the job ID)
+                await connection_manager.send_run_complete(job.parent_run_id, refinement_result)
+                logger.info(f"Refinement job {job_id} completed successfully")
             
         except Exception as e:
             error_message = f"Refinement execution failed: {str(e)}"
@@ -691,12 +744,12 @@ class PipelineTaskProcessor:
                     session.commit()
             
             # Send error notification
-            await connection_manager.send_run_error(job_id, error_message, {"traceback": error_traceback})
+            await connection_manager.send_run_error(job.parent_run_id, error_message, {"traceback": error_traceback, "job_id": job_id})
 
-    async def _update_refinements_index(self, parent_run_id: str, job_id: str, job: RefinementJob):
+    async def _update_refinements_index(self, refinement_result):
         """Update the refinements.json index file"""
         try:
-            parent_run_dir = Path(f"./data/runs/{parent_run_id}")
+            parent_run_dir = Path(f"./data/runs/{refinement_result['parent_run_id']}")
             refinements_file = parent_run_dir / "refinements.json"
             
             # Load existing refinements or create new structure
@@ -704,42 +757,49 @@ class PipelineTaskProcessor:
                 with open(refinements_file, 'r') as f:
                     refinements_data = json.load(f)
             else:
+                logger.info(f"Refinements file {refinements_file} does not exist, creating new")
                 refinements_data = {
                     "refinements": [],
                     "total_cost": 0.0,
                     "total_refinements": 0
                 }
             
-            # Add new refinement
-            new_refinement = {
-                "job_id": job_id,
-                "parent_image_id": job.parent_image_id,
-                "parent_image_type": job.parent_image_type,
-                "parent_image_path": self._get_parent_image_path(parent_run_id, job),
-                "image_path": job.image_path,
-                "type": job.refinement_type,
-                "summary": job.refinement_summary or f"{job.refinement_type} refinement",
-                "cost": job.cost_usd or 0.0,
-                "created_at": job.created_at.isoformat() if job.created_at else datetime.utcnow().isoformat()
-            }
-            
-            refinements_data["refinements"].append(new_refinement)
-            refinements_data["total_cost"] += job.cost_usd or 0.0
+            refinements_data["refinements"].append(refinement_result)
+            refinements_data["total_cost"] += refinement_result["cost_usd"]
             refinements_data["total_refinements"] = len(refinements_data["refinements"])
             
             # Save updated index
             with open(refinements_file, 'w') as f:
                 json.dump(refinements_data, f, indent=2)
             
-            logger.info(f"Updated refinements index for run {parent_run_id}")
+            logger.info(f"Updated refinements index for run {refinement_result['job_id']}")
             
         except Exception as e:
             logger.error(f"Failed to update refinements index: {e}")
 
-    def _get_parent_image_path(self, parent_run_id: str, job: RefinementJob) -> str:
-        """Get the relative path to the parent image"""
+    def _get_parent_image_path(self, job: RefinementJob) -> str:
+        """Get the relative path to the parent image"""        
         if job.parent_image_type == "original":
-            return f"originals/image_{job.generation_index}.png"
+            # Directory where originals are stored
+            originals_dir = Path(f"./data/runs/{job.parent_run_id}")
+            if not os.path.exists(originals_dir):
+                raise FileNotFoundError(f"Originals directory does not exist: {originals_dir}")
+            # Patterns: with and without timestamp
+            patterns = [
+                f"edited_image_strategy_{job.generation_index}.png",
+                f"edited_image_strategy_{job.generation_index}_*.png"
+            ]
+            matches = []
+            for pattern in patterns:
+                matches.extend(originals_dir.glob(pattern))
+            matches = list(set(matches))  # Remove duplicates if any
+
+            logger.info(f"Searching for parent image with patterns {patterns} in {originals_dir}")
+            if not matches:
+                raise FileNotFoundError(f"No image found for patterns: {patterns} in {originals_dir}")
+            matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            logger.info(f"Found parent image: {matches[0]}")
+            return str(matches[0].relative_to(originals_dir))
         else:
             # It's a refinement, need to look up the path
             return f"refinements/{job.parent_image_id}_from_{job.generation_index}.png"
@@ -832,7 +892,8 @@ class PipelineTaskProcessor:
                 "target_platform": {
                     "name": request.platform_name,
                     "resolution_details": self._get_platform_resolution(request.platform_name)
-                }
+                },
+                "language": request.language or 'en'
             },
             "user_inputs": {
                 "prompt": request.prompt,
@@ -1219,6 +1280,7 @@ class PipelineTaskProcessor:
                 ("style_guide", ["style_guider"], STYLE_GUIDER_MODEL_ID),
                 ("creative_expert", [key for key in llm_usage.keys() if key.startswith("creative_expert_strategy_")], CREATIVE_EXPERT_MODEL_ID),
                 ("image_assessment", ["image_assessment"], IMAGE_ASSESSMENT_MODEL_ID),
+                ("caption", ["caption_analyst", "caption_writer"], CAPTION_MODEL_ID),
             ]
             
             logger.info(f"🔧 Processing {len(stage_mappings)} stage mappings")
@@ -1347,6 +1409,249 @@ class PipelineTaskProcessor:
             logger.warning(f"Failed to retrieve stage durations from database: {e}")
         
         return durations
+
+    async def start_caption_generation(self, caption_id: str, caption_data: Dict[str, Any]):
+        """Start caption generation in the background"""
+        # Create and start the background task
+        task = asyncio.create_task(self._execute_caption_generation(caption_id, caption_data))
+        self.active_tasks[caption_id] = task
+        
+        # Clean up completed tasks
+        def cleanup_tasks(t):
+            self.active_tasks.pop(caption_id, None)
+        
+        task.add_done_callback(cleanup_tasks)
+        
+        logger.info(f"Started background caption generation task for {caption_id}")
+
+    async def _execute_caption_generation(self, caption_id: str, caption_data: Dict[str, Any]):
+        """Execute caption generation with real-time updates"""
+        try:
+            run_id = caption_data["run_id"]
+            image_id = caption_data["image_id"]
+            settings = caption_data.get("settings", {})
+            version = caption_data.get("version", 0)
+            writer_only = caption_data.get("writer_only", False)
+            model_id = caption_data.get("model_id", CAPTION_MODEL_ID)
+            
+            logger.info(f"Starting caption generation for image {image_id} in run {run_id} using model {model_id}")
+            
+            # Load the original pipeline context to get metadata
+            with Session(engine) as session:
+                run = session.get(PipelineRun, run_id)
+                if not run:
+                    raise Exception(f"Pipeline run {run_id} not found")
+                
+                if not run.output_directory:
+                    raise Exception(f"No output directory found for run {run_id}")
+            
+            # Load metadata from the original run
+            metadata_path = Path(run.output_directory) / "pipeline_metadata.json"
+            if not metadata_path.exists():
+                raise Exception(f"Metadata file not found: {metadata_path}")
+            
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            
+            # Create a pipeline context from the metadata for caption generation
+            context = PipelineContext.from_dict(metadata)
+            
+            # Add caption-specific settings to context
+            context.caption_settings = settings
+            context.caption_version = version
+            context.regenerate_writer_only = writer_only
+            
+            # Load cached brief for writer-only regeneration
+            if writer_only and "previous_version" in caption_data:
+                previous_version = caption_data["previous_version"]
+                brief_file = Path(run.output_directory) / "captions" / image_id / f"v{previous_version}_brief.json"
+                if brief_file.exists():
+                    try:
+                        with open(brief_file, 'r', encoding='utf-8') as f:
+                            brief_data = json.load(f)
+                        
+                        # Import CaptionBrief model to recreate the object
+                        from churns.models import CaptionBrief
+                        context.cached_caption_brief = CaptionBrief(**brief_data)
+                        logger.info(f"Loaded cached brief from {brief_file} for writer-only regeneration")
+                    except Exception as e:
+                        logger.warning(f"Failed to load cached brief from {brief_file}: {e}")
+                        logger.warning("Will proceed with full pipeline regeneration")
+                else:
+                    logger.warning(f"Brief file {brief_file} not found for writer-only regeneration")
+                    logger.warning("Will proceed with full pipeline regeneration")
+            
+            # Set target image index for single-image processing
+            # Extract image index from image_id (e.g., "image_0" -> 0, "image_1" -> 1)
+            try:
+                if image_id.startswith("image_"):
+                    target_index = int(image_id.split("_")[1])
+                    context.target_image_index = target_index
+                    logger.info(f"Set target image index to {target_index} for image {image_id}")
+                else:
+                    logger.warning(f"Could not parse image index from {image_id}, will process all images")
+            except (IndexError, ValueError) as e:
+                logger.warning(f"Could not parse image index from {image_id}: {e}, will process all images")
+            
+            # Send progress update
+            from churns.api.websocket import WebSocketMessage, WSMessageType
+            message = WebSocketMessage(
+                type=WSMessageType.CAPTION_UPDATE,
+                run_id=run_id,
+                data={
+                    "caption_id": caption_id,
+                    "image_id": image_id,
+                    "status": "RUNNING",
+                    "message": f"Generating caption using {model_id}..."
+                }
+            )
+            await connection_manager.send_message_to_run(run_id, message)
+            
+            # Import and run the caption stage
+            from churns.stages.caption import run as run_caption_stage
+            
+            # Set up global variables for caption stage (same pattern as other stages)
+            import churns.stages.caption as caption_module
+            from churns.core.client_config import get_configured_clients
+            
+            # Get configured clients
+            clients = get_configured_clients()
+            
+            # Configure caption stage globals using the selected model
+            caption_module.instructor_client_caption = clients.get('instructor_client_caption')
+            caption_module.base_llm_client_caption = clients.get('base_llm_client_caption')
+            caption_module.CAPTION_MODEL_ID = model_id  # Use the selected model
+            caption_module.CAPTION_MODEL_PROVIDER = CAPTION_MODEL_PROVIDER
+            caption_module.FORCE_MANUAL_JSON_PARSE = clients.get('force_manual_json_parse', False)
+            caption_module.INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = clients.get('instructor_tool_mode_problem_models', [])
+            
+            # Run the caption stage
+            await run_caption_stage(context)
+            
+            # Extract the generated caption
+            if hasattr(context, 'generated_captions') and context.generated_captions:
+                # For single-image processing, there should be exactly one caption
+                if len(context.generated_captions) == 1:
+                    caption_result = context.generated_captions[0]
+                    caption_text = caption_result["text"]
+                else:
+                    # This shouldn't happen with single-image processing, but handle gracefully
+                    logger.warning(f"Expected 1 caption, got {len(context.generated_captions)}. Using first one.")
+                    caption_result = context.generated_captions[0]
+                    caption_text = caption_result["text"]
+                
+                # Save caption to file (following data/runs/{run_id}/ structure)
+                caption_dir = Path(run.output_directory) / "captions" / image_id
+                caption_dir.mkdir(parents=True, exist_ok=True)
+                
+                caption_file = caption_dir / f"v{version}.txt"
+                with open(caption_file, 'w', encoding='utf-8') as f:
+                    f.write(caption_text)
+                
+                brief_file = caption_dir / f"v{version}_brief.json"
+                with open(brief_file, 'w', encoding='utf-8') as f:
+                    json.dump(caption_result["brief_used"], f, indent=2)
+                
+                # Create streamlined usage summary
+                analyst_usage = context.llm_usage.get("caption_analyst", {})
+                writer_usage = context.llm_usage.get("caption_writer", {})
+                
+                # Calculate totals
+                total_cost = 0.0
+                total_latency = 0.0
+                
+                analyst_cost = 0.0
+                writer_cost = 0.0
+                analyst_latency = 0.0
+                writer_latency = 0.0
+                
+                if analyst_usage.get("cost_breakdown"):
+                    analyst_cost = analyst_usage["cost_breakdown"]["total_cost"]
+                    total_cost += analyst_cost
+                    analyst_latency = analyst_usage.get("latency_seconds", 0)
+                    total_latency += analyst_latency
+                
+                if writer_usage.get("cost_breakdown"):
+                    writer_cost = writer_usage["cost_breakdown"]["total_cost"]
+                    total_cost += writer_cost
+                    writer_latency = writer_usage.get("latency_seconds", 0)
+                    total_latency += writer_latency
+                
+                usage_summary = {
+                    "total_cost_usd": round(total_cost, 6),
+                    "total_latency_seconds": round(total_latency, 3),
+                    "model_id": model_id,
+                    "analyst": {
+                        "tokens": {
+                            "prompt": analyst_usage.get("prompt_tokens", 0),
+                            "completion": analyst_usage.get("completion_tokens", 0),
+                            "cached": analyst_usage.get("cached_tokens", 0)
+                        },
+                        "cost": round(analyst_cost, 6),
+                        "latency": round(analyst_latency, 3)
+                    } if analyst_usage else {},
+                    "writer": {
+                        "tokens": {
+                            "prompt": writer_usage.get("prompt_tokens", 0),
+                            "completion": writer_usage.get("completion_tokens", 0),
+                            "cached": writer_usage.get("cached_tokens", 0)
+                        },
+                        "cost": round(writer_cost, 6),
+                        "latency": round(writer_latency, 3)
+                    } if writer_usage else {}
+                }
+
+                # Also save caption result with metadata to match pipeline pattern
+                result_file = caption_dir / f"v{version}_result.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "text": caption_text,
+                        "version": version,
+                        "settings_used": caption_result.get("settings_used", {}),
+                        "brief_used": caption_result["brief_used"],
+                        "created_at": caption_result.get("created_at"),
+                        "model_id": model_id,  # Save the model used
+                        "usage_summary": usage_summary
+                    }, f, indent=2)
+                
+                # Send success update
+                success_message = WebSocketMessage(
+                    type=WSMessageType.CAPTION_COMPLETE,
+                    run_id=run_id,
+                    data={
+                        "caption_id": caption_id,
+                        "image_id": image_id,
+                        "status": "COMPLETED",
+                        "text": caption_text,
+                        "version": version,
+                        "model_id": model_id,
+                        "file_path": str(caption_file)
+                    }
+                )
+                await connection_manager.send_message_to_run(run_id, success_message)
+                
+                logger.info(f"Caption generation completed for {caption_id} using model {model_id}")
+                
+            else:
+                raise Exception("Caption generation failed - no caption produced")
+                
+        except Exception as e:
+            error_message = f"Caption generation failed: {str(e)}"
+            error_traceback = traceback.format_exc()
+            logger.error(f"Caption generation {caption_id} failed: {error_message}\n{error_traceback}")
+            
+            # Send error notification
+            error_message_obj = WebSocketMessage(
+                type=WSMessageType.CAPTION_ERROR,
+                run_id=run_id,
+                data={
+                    "caption_id": caption_id,
+                    "image_id": image_id,
+                    "status": "FAILED",
+                    "error_message": error_message
+                }
+            )
+            await connection_manager.send_message_to_run(run_id, error_message_obj)
 
 
 # Global task processor instance

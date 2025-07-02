@@ -1,0 +1,653 @@
+[
+  {
+    "model_id": "openai/gpt-4.1",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:15:54.290089+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 7.121,
+    "analyst_usage": {
+      "completion_tokens": 409,
+      "prompt_tokens": 1933,
+      "total_tokens": 2342,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "brief": {
+      "core_message": "高蛋白豆奶，健康活力新选择，助你轻松补充营养，焕发每日能量。",
+      "key_themes_to_include": [
+        "高蛋白营养",
+        "健康生活方式",
+        "活力与能量",
+        "无乳健康替代",
+        "现代感产品设计"
+      ],
+      "seo_keywords": [
+        "高蛋白豆奶",
+        "健康饮品",
+        "健身营养",
+        "植物蛋白",
+        "乳制品替代"
+      ],
+      "target_emotion": "Aspirational",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Start with an energetic hook highlighting the product's health benefits, follow with a vivid sensory description of the soy milk and its nutritional value, then elaborate on how it fits an active, healthy lifestyle. End with a motivating CTA that encourages product trial and engagement.",
+          "style_notes": "Adopt a motivational and trustworthy tone. Use longer-form, value-driven content that educates and inspires. Encourage users to share their healthy habits or tag friends. Structure content for easy reading and sharing; include a question to spark conversation. Outbound links to Instagram or purchase page are welcome if relevant."
+        }
+      },
+      "primary_call_to_action": "立即体验高蛋白豆奶，开启你的健康活力生活！快来评论分享你的健康饮品选择吧～",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#健康饮品",
+        "#健身营养",
+        "#植物蛋白",
+        "#健康生活"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🌱",
+        "✨"
+      ],
+      "task_type_notes": "Optimize for Product Photography: showcase features & craftsmanship，突出产品细节与品质感，强化健康与活力形象。"
+    },
+    "writer_latency": 4.095,
+    "writer_usage": {
+      "completion_tokens": 214,
+      "prompt_tokens": 749,
+      "total_tokens": 963,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "caption": "想要轻松补充营养、焕发每日能量吗？💪 高蛋白豆奶为你的健康生活方式带来全新选择！这款健康饮品采用现代感十足的设计，精选优质植物蛋白，入口丝滑细腻，散发自然豆香，每一口都蕴含满满的健身营养与活力✨。作为乳制品替代的理想之选，无论你是健身爱好者还是追求健康饮食的都市人，都能随时随地享受健康与美味的融合🌱。\n\n你平时还有哪些无乳健康替代品？欢迎在评论区分享你的健康饮品选择，或@朋友一起探索更多健康生活方式吧！\n\n立即体验高蛋白豆奶，开启你的健康活力生活！快来评论分享你的健康饮品选择吧～\n\n#高蛋白豆奶 #健康饮品 #健身营养 #植物蛋白 #健康生活",
+    "total_latency": 11.217,
+    "total_tokens": 3305
+  },
+  {
+    "model_id": "openai/gpt-4.1-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:16:07.511045+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 9.493,
+    "analyst_usage": {
+      "completion_tokens": 388,
+      "prompt_tokens": 1933,
+      "total_tokens": 2321,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "brief": {
+      "core_message": "这款高蛋白豆奶为健康生活注入活力，是健身和营养的理想选择。",
+      "key_themes_to_include": [
+        "高蛋白营养",
+        "健康生活方式",
+        "活力与能量",
+        "纯净自然成分",
+        "专业品质保障"
+      ],
+      "seo_keywords": [
+        "高蛋白豆奶",
+        "健康饮品",
+        "营养代餐",
+        "健身营养",
+        "植物蛋白"
+      ],
+      "target_emotion": "Aspirational",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Start with an engaging introduction highlighting the product’s health benefits, followed by detailed information about its high protein content and natural ingredients, then close with a motivational call to action encouraging product trial and Instagram purchase.",
+          "style_notes": "Use a motivational and trustworthy tone with energetic language that resonates with health-conscious consumers. Write in a clear, informative style that encourages sharing and discussion. Include subtle sensory details to complement the crisp, bright visual style. Make the content easy to read and inviting for engagement."
+        }
+      },
+      "primary_call_to_action": "立即体验高蛋白豆奶，开启健康活力新生活！关注我们的Instagram，获取更多营养资讯与优惠。",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#健康饮品",
+        "#健身营养",
+        "#植物蛋白",
+        "#活力生活"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🥛",
+        "🌿"
+      ],
+      "task_type_notes": "Optimize for Product Photography: showcase features & craftsmanship with a focus on clarity, nutritional benefits, and energetic lifestyle appeal."
+    },
+    "writer_latency": 6.951,
+    "writer_usage": {
+      "completion_tokens": 183,
+      "prompt_tokens": 731,
+      "total_tokens": 914,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "caption": "想要为健康生活注入满满活力吗？这款高蛋白豆奶💪，专为追求健身营养和纯净自然成分的你而设计。每一口都富含植物蛋白和丰富营养，是理想的营养代餐选择，让你轻松补充能量，保持充沛活力。\n\n精选优质原料，专业品质保障，带来纯净自然的健康饮品体验🥛🌿。无论是锻炼前后，还是日常代餐，都让你从内而外焕发健康光彩。\n\n立即体验高蛋白豆奶，开启健康活力新生活！关注我们的Instagram，获取更多营养资讯与优惠。\n\n#高蛋白豆奶 #健康饮品 #健身营养 #植物蛋白 #活力生活",
+    "total_latency": 16.444,
+    "total_tokens": 3235
+  },
+  {
+    "model_id": "openai/o4-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:16:25.957680+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 28.39,
+    "analyst_usage": {
+      "completion_tokens": 2735,
+      "prompt_tokens": 1932,
+      "total_tokens": 4667,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "高蛋白豆奶为你提供纯净营养，助力每日活力满分。",
+      "key_themes_to_include": [
+        "High Protein",
+        "Energy & Vitality",
+        "Clean Nutrition",
+        "Dynamic Visuals",
+        "Trustworthy Quality"
+      ],
+      "seo_keywords": [
+        "高蛋白豆奶",
+        "健康植物奶",
+        "活力饮品",
+        "低脂营养",
+        "健身伴侣"
+      ],
+      "target_emotion": "Aspirational",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Value-driven opening → Sensory detail → Health benefit → Question prompt → CTA",
+          "style_notes": "Use a motivational, energetic, and trustworthy tone; encourage comments and shares; highlight high protein content and clean, dynamic imagery."
+        }
+      },
+      "primary_call_to_action": "立即点击链接，在Instagram尝鲜豆奶，开启健康活力之旅！",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#健康植物奶",
+        "#活力饮品",
+        "#产品摄影",
+        "#健康生活",
+        "#健身"
+      ],
+      "emoji_suggestions": [
+        "🥛",
+        "⚡",
+        "💪"
+      ],
+      "task_type_notes": "Optimize for Product Photography: highlight product clarity, nutritional info legibility, and dynamic composition."
+    },
+    "writer_latency": 19.536,
+    "writer_usage": {
+      "completion_tokens": 1435,
+      "prompt_tokens": 655,
+      "total_tokens": 2090,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "高蛋白豆奶，一口纯净力量，助你活力满分⚡\n\n冰凉顺滑的豆奶🥛，在动感光影下，瓶身每一次晃动都散发着清新奶香\n\n低脂营养，18g蛋白，为你提供全天候健身伴侣和健康植物奶的双重保障💪\n\n你准备好和健身伙伴一起畅享这杯活力饮品，开启一天的能量充电了吗？\n\n立即点击链接，在Instagram尝鲜豆奶，开启健康活力之旅！\n\n#高蛋白豆奶 #健康植物奶 #活力饮品 #产品摄影 #健康生活 #健身",
+    "total_latency": 47.926,
+    "total_tokens": 6757
+  },
+  {
+    "model_id": "x-ai/grok-3-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:17:15.886670+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 12.074,
+    "analyst_usage": {
+      "completion_tokens": 1996,
+      "prompt_tokens": 1888,
+      "total_tokens": 3884,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 1734,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 826
+      }
+    },
+    "brief": {
+      "core_message": "这款高蛋白豆奶是健康生活不可或缺的活力来源，提供丰富的营养和能量。",
+      "key_themes_to_include": [
+        "高蛋白含量",
+        "健康益处",
+        "能量提升",
+        "可信赖品质",
+        "感官细节"
+      ],
+      "seo_keywords": [
+        "豆奶",
+        "高蛋白",
+        "健康饮品",
+        "营养补充",
+        "健身食品"
+      ],
+      "target_emotion": "Aspirational",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Hook + Value-Driven Description + CTA, focusing on longer-form content to spark meaningful conversations about health benefits.",
+          "style_notes": "Emphasize trustworthiness and energy in a conversational style to encourage shares and discussions among health-conscious users."
+        }
+      },
+      "primary_call_to_action": "立即试用这款豆奶，并关注我们的Instagram获取更多健康提示！",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#健康生活",
+        "#豆奶推荐",
+        "#健身能量",
+        "#营养饮品"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🥛",
+        "🔥"
+      ],
+      "task_type_notes": "Optimize for Product Photography: showcase features & craftsmanship to spark desire and perceived quality."
+    },
+    "writer_latency": 6.886,
+    "writer_usage": {
+      "completion_tokens": 1123,
+      "prompt_tokens": 625,
+      "total_tokens": 1748,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 965,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 6
+      }
+    },
+    "caption": "你是否在寻找一种能让你整天精力充沛的健康饮品？🥛 试试这款高蛋白豆奶💪吧！它不仅仅是普通的豆奶，而是你的营养补充和健身食品，富含高蛋白，能提供强大的能量提升，帮助你保持健康生活。它的可信赖品质源于精湛的制作工艺，口感丝滑顺口，每一口都带来满满的健康益处。无论是忙碌的上班族还是健身达人，都能从中感受到活力四射的美好。🔥 分享你的使用心得，一起讨论健康秘诀吧！\n\n立即试用这款豆奶，并关注我们的Instagram获取更多健康提示！\n\n#高蛋白豆奶 #健康生活 #豆奶推荐 #健身能量 #营养饮品",
+    "total_latency": 18.96,
+    "total_tokens": 5632
+  },
+  {
+    "model_id": "x-ai/grok-3",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:17:36.850340+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 7.437,
+    "analyst_usage": {
+      "completion_tokens": 325,
+      "prompt_tokens": 1887,
+      "total_tokens": 2212,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 5
+      }
+    },
+    "brief": {
+      "core_message": "这款豆奶是健康生活方式的理想选择，富含高蛋白，激发活力。",
+      "key_themes_to_include": [
+        "健康与活力",
+        "高蛋白营养",
+        "适合健身爱好者",
+        "值得信赖的品质",
+        "现代生活方式"
+      ],
+      "seo_keywords": [
+        "豆奶",
+        "高蛋白饮品",
+        "健康饮品",
+        "健身营养",
+        "乳制品替代品"
+      ],
+      "target_emotion": "Aspirational",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Start with a motivational hook, followed by a detailed sensory description of the product, highlight key health benefits, and end with a strong CTA to encourage trial and engagement.",
+          "style_notes": "Adopt a friendly, conversational tone that invites discussion. Focus on value by elaborating on health benefits and product quality to spark meaningful shares and comments. Use vivid, sensory language to mirror the crisp, dynamic visual style."
+        }
+      },
+      "primary_call_to_action": "尝试这款高蛋白豆奶，开启你的健康之旅！点击链接了解更多，或在评论区分享你的健康秘诀！",
+      "hashtags": [
+        "#豆奶",
+        "#高蛋白",
+        "#健康饮品",
+        "#健身生活",
+        "#健康生活方式"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🥛",
+        "✨"
+      ],
+      "task_type_notes": "Optimize for Product Photography: showcase features & craftsmanship by emphasizing the high-protein benefit, clean design, and professional quality of the soy milk bottle."
+    },
+    "writer_latency": 4.873,
+    "writer_usage": {
+      "completion_tokens": 181,
+      "prompt_tokens": 688,
+      "total_tokens": 869,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 5
+      }
+    },
+    "caption": "想要活力满满地迎接每一天吗？💪 试试这款豆奶吧！它不仅有着简约现代的设计，瓶身散发着专业品质的光泽✨，更重要的是，它是一款高蛋白饮品，完美适合健身爱好者和追求健康生活方式的你。每一口都带来纯净的口感，仿佛在为你补充能量，助力你成为更好的自己。作为乳制品替代品，它是你健康饮品清单上的必备之选，品质值得信赖，营养满分，专为现代快节奏生活打造。无论是健身后的补充，还是日常的健康选择，这款豆奶都能成为你的最佳拍档🥛。\n\n尝试这款高蛋白豆奶，开启你的健康之旅！点击链接了解更多，或在评论区分享你的健康秘诀！#豆奶 #高蛋白 #健康饮品 #健身生活 #健康生活方式",
+    "total_latency": 12.31,
+    "total_tokens": 3081
+  },
+  {
+    "model_id": "google/gemini-2.5-pro",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:17:51.164627+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 20.429,
+    "analyst_usage": {
+      "completion_tokens": 1811,
+      "prompt_tokens": 1985,
+      "total_tokens": 3796,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "这款高蛋白豆奶是您开启活力一天的健康选择，能为您的积极生活方式提供纯净能量。",
+      "key_themes_to_include": [
+        "High protein content for muscle support and energy",
+        "Clean, trustworthy, and pure ingredients",
+        "The perfect fuel for a fitness-focused or active lifestyle",
+        "A delicious and smooth dairy alternative",
+        "The connection between nutrition and vitality"
+      ],
+      "seo_keywords": [
+        "高蛋白豆奶",
+        "健康饮品",
+        "活力源泉",
+        "健身营养",
+        "植物奶"
+      ],
+      "target_emotion": "Aspirational",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Hook (ask a question about daily energy or nutrition) -> Value (detail the high-protein benefits and clean ingredients) -> Connection (relate it to the audience's health goals) -> CTA.",
+          "style_notes": "Use a motivational, energetic, and trustworthy tone. Craft slightly longer, value-driven paragraphs to encourage meaningful conversation and shares. End with a question to boost engagement."
+        }
+      },
+      "primary_call_to_action": "点击链接，即刻体验这份纯净能量，为您的健康生活加分！",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#活力源泉",
+        "#健身饮食",
+        "#植物蛋白",
+        "#健康生活"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "⚡",
+        "🌱"
+      ],
+      "task_type_notes": "Optimize for Product Photography: Emphasize the clean, crisp visual by using sensory language that describes the product's purity and smooth texture. Highlight the 'high protein' feature mentioned on the label to connect the visual details with tangible health benefits."
+    },
+    "writer_latency": 15.94,
+    "writer_usage": {
+      "completion_tokens": 1290,
+      "prompt_tokens": 735,
+      "total_tokens": 2025,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "每天早上是不是都在寻找一种能让你精力充沛的方式？\n\n想象一下，每一口都是丝滑纯净的享受，为你的身体注入满满的优质植物蛋白。我们的高蛋白豆奶，就是你一直在寻找的健康饮品。它不仅仅是美味的植物奶，更是你肌肉修复和能量补充的强大后盾。💪\n\n无论你是在为下一次健身挑战做准备，还是只想以最佳状态迎接新的一天，这款豆奶都能成为你的活力源泉，为你积极的生活方式提供最纯净的能量。⚡ 我们相信，真正的活力来自于纯粹的营养。\n\n点击链接，即刻体验这份纯净能量，为您的健康生活加分！你准备好用更健康的方式开启每一天了吗？🌱\n\n#高蛋白豆奶 #活力源泉 #健身饮食 #植物蛋白 #健康生活",
+    "total_latency": 36.369,
+    "total_tokens": 5821
+  },
+  {
+    "model_id": "google/gemini-2.5-flash",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:18:29.537639+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 13.283,
+    "analyst_usage": {
+      "completion_tokens": 1690,
+      "prompt_tokens": 1985,
+      "total_tokens": 3675,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "这款高蛋白豆奶是您健康活力的理想选择，助您轻松开启充满能量的每一天。",
+      "key_themes_to_include": [
+        "High Protein",
+        "Energy Boost",
+        "Healthy Lifestyle",
+        "Clean Nutrition",
+        "Product Trial"
+      ],
+      "seo_keywords": [
+        "高蛋白豆奶",
+        "健康饮品",
+        "植物蛋白",
+        "活力源泉",
+        "营养代餐"
+      ],
+      "target_emotion": "Energetic, Aspirational, Trustworthy",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Start with a compelling hook that addresses a need (e.g., 'Feeling sluggish?'). Follow with a detailed value proposition highlighting benefits and product features. Encourage personal connection or sharing of experiences. Conclude with an engaging question to spark conversation and a clear call to action. Aim for a longer, informative post.",
+          "style_notes": "Maintain a motivational, energetic, and trustworthy tone. Emphasize clarity and crispness in language, mirroring the visual's high-key, clean aesthetic. Use language that conveys vitality and a modern, professional feel. Encourage shares and comments to maximize reach."
+        }
+      },
+      "primary_call_to_action": "点击链接了解更多，即刻开启您的健康活力之旅！",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#植物基饮品",
+        "#健康生活",
+        "#健身营养",
+        "#活力饮品",
+        "#营养补充"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "✨",
+        "🌱"
+      ],
+      "task_type_notes": "Optimize for Product Photography: showcase the high protein content, clean ingredients, and energizing benefits to spark desire and highlight the product's premium quality and craftsmanship."
+    },
+    "writer_latency": 11.76,
+    "writer_usage": {
+      "completion_tokens": 1433,
+      "prompt_tokens": 736,
+      "total_tokens": 2169,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "早上总是提不起精神，或者午后总觉得能量不足？💪 我们的全新**高蛋白豆奶**就是您的理想选择！\n\n这款**健康饮品**不仅仅是您的**营养代餐**，它富含优质**植物蛋白**，为您提供持久的**活力源泉**，更是您开启健康生活方式的秘密武器。我们坚持使用最纯净的原料，确保每一口都是**清洁营养**的体验，让您轻松告别疲惫感，焕发自然活力。✨\n\n我们相信，健康不应该是一种负担，而是一种享受。🌱 您平时会如何为自己补充能量呢？在评论区和我们分享您的健康秘诀吧！\n\n点击链接了解更多，即刻开启您的健康活力之旅！\n\n#高蛋白豆奶 #植物基饮品 #健康生活 #健身营养 #活力饮品 #营养补充",
+    "total_latency": 25.043,
+    "total_tokens": 5844
+  },
+  {
+    "model_id": "google/gemini-2.5-flash-preview-05-20",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:18:56.584027+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 4.616,
+    "analyst_usage": {
+      "completion_tokens": 413,
+      "prompt_tokens": 1985,
+      "total_tokens": 2398,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "探索我们高蛋白豆奶的卓越品质，为您的健康生活注入活力。",
+      "key_themes_to_include": [
+        "高蛋白益处",
+        "健康生活方式",
+        "活力与能量",
+        "产品纯净与品质",
+        "营养补充"
+      ],
+      "seo_keywords": [
+        "高蛋白豆奶",
+        "健康饮品",
+        "植物蛋白",
+        "营养补充",
+        "活力生活"
+      ],
+      "target_emotion": "Energetic",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Hook (engaging question/statement) → Value Proposition (benefits, health focus) → Product Details (quality, features) → Call to Action (drive trial/sales) → Engagement Question.",
+          "style_notes": "Focus on value-driven, longer-form content that sparks meaningful conversation and shares. Emphasize the health benefits and high protein content. Maintain a motivational, energetic, and trustworthy tone. Use clear, crisp language to reflect the visual clarity."
+        }
+      },
+      "primary_call_to_action": "立即尝试我们的高蛋白豆奶，开启您的活力之旅！点击链接了解更多并购买。",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#健康生活",
+        "#植物基",
+        "#活力饮品",
+        "#营养补充"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "✨",
+        "🌱"
+      ],
+      "task_type_notes": "Optimize for Product Photography: showcase features & craftsmanship, highlighting the clean lines, legible label, and dynamic presentation. Emphasize the 'high protein, vitality source' message from the image text."
+    },
+    "writer_latency": 3.88,
+    "writer_usage": {
+      "completion_tokens": 206,
+      "prompt_tokens": 733,
+      "total_tokens": 939,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "您是否在寻找一种既美味又能为您的健康生活注入活力的饮品？💪\n\n探索我们卓越的**高蛋白豆奶**，它不仅仅是一种饮品，更是您日常所需的**营养补充**！我们深知您对健康与活力的追求，因此特别为您打造了这款纯净高品质的**健康饮品**。每一滴都蕴含丰富的**植物蛋白**，为您提供持久的能量，助您轻松应对日常挑战，开启充满活力的每一天。✨\n\n我们的高蛋白豆奶，从源头到生产，都坚持最高标准，确保产品纯净无暇。清晰的标签和简洁的设计，体现了我们对品质的自信与承诺。选择它，就是选择一种更健康、更有能量的**活力生活**方式。🌱\n\n立即尝试我们的高蛋白豆奶，开启您的活力之旅！点击链接了解更多并购买。\n\n#高蛋白豆奶 #健康生活 #植物基 #活力饮品 #营养补充",
+    "total_latency": 8.496,
+    "total_tokens": 3337
+  },
+  {
+    "model_id": "qwen/qwen3-235b-a22b",
+    "provider": "OpenRouter",
+    "timestamp": "2025-07-01T12:19:07.084034+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 13.175,
+    "analyst_usage": {
+      "completion_tokens": 761,
+      "prompt_tokens": 1929,
+      "total_tokens": 2690,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "高蛋白植物基活力源泉，为健康生活注入能量",
+      "key_themes_to_include": [
+        "健康益处可视化",
+        "高蛋白含量认证",
+        "现代生活方式适配",
+        "产品品质透明化",
+        "营养信息可读性"
+      ],
+      "seo_keywords": [
+        "高蛋白豆奶",
+        "健康饮品",
+        "植物基蛋白",
+        "健身营养",
+        "低糖豆奶"
+      ],
+      "target_emotion": "Aspirational & Trustworthy",
+      "platform_optimizations": {
+        "Facebook": {
+          "caption_structure": "Hook → Sensory description → Benefit → CTA",
+          "style_notes": "采用价值驱动型叙事，结合产品细节特写与生活方式场景，使用短段落和项目符号提升可读性，鼓励用户分享健康体验"
+        }
+      },
+      "primary_call_to_action": "立即尝试，解锁你的每日高蛋白能量！",
+      "hashtags": [
+        "#高蛋白豆奶",
+        "#健康生活选择",
+        "#植物基营养",
+        "#健身饮品",
+        "#营养透明化"
+      ],
+      "emoji_suggestions": [
+        "🌱",
+        "💪",
+        "🌟"
+      ],
+      "task_type_notes": "Optimize for Product Photography: Showcase high protein content through crisp visuals and highlight nutritional transparency"
+    },
+    "writer_latency": 33.525,
+    "writer_usage": {
+      "completion_tokens": 602,
+      "prompt_tokens": 888,
+      "total_tokens": 1490,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "🌱每一口都蕴含自然能量，你的高蛋白活力密码已解锁！  \n顺滑豆乳包裹着醇厚植物香，阳光洒在瓶身折射出营养光谱——15g认证植物蛋白清晰标注在瓶身，低糖配方专为健身达人的高效代谢设计💪  \n从晨间瑜伽到加班午后，透明化生产链确保每滴营养可追溯。扫描二维码即刻查看国际认证报告，让健康饮品选择不再迷茫🌟  \n\n立即尝试，解锁你的每日高蛋白能量！  \n\n#高蛋白豆奶 #健康生活选择 #植物基营养 #健身饮品 #营养透明化",
+    "total_latency": 46.7,
+    "total_tokens": 4180
+  }
+]

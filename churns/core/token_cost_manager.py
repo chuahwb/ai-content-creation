@@ -82,6 +82,9 @@ class TokenUsage:
     image_tokens: int = 0
     text_tokens: int = 0
     
+    # Cached tokens (for cost optimization)
+    cached_tokens: int = 0
+    
     # Model and provider info
     model: str = ""
     provider: str = ""
@@ -99,6 +102,7 @@ class TokenUsage:
             "total_tokens": self.total_tokens,
             "image_tokens": self.image_tokens,
             "text_tokens": self.text_tokens,
+            "cached_tokens": self.cached_tokens,
             "model": self.model,
             "provider": self.provider,
             "detail_level": self.detail_level,
@@ -229,12 +233,11 @@ class TokenCostManager:
                 usage.completion_tokens = getattr(response.usage, 'completion_tokens', 0)
                 usage.total_tokens = getattr(response.usage, 'total_tokens', 0)
                 
-                # Handle image token details if available (some OpenAI responses include this)
+                # Handle cached tokens if available
                 if hasattr(response.usage, 'prompt_tokens_details'):
                     details = response.usage.prompt_tokens_details
                     if hasattr(details, 'cached_tokens'):
-                        # Handle cached tokens if needed
-                        pass
+                        usage.cached_tokens = getattr(details, 'cached_tokens', 0)
                 
             else:
                 logger.warning(f"No usage information in OpenAI response for {model_id}")
@@ -592,8 +595,13 @@ class TokenCostManager:
         )
         
         try:
-            # Get pricing information
+            # Get pricing information - try exact match first, then without provider prefix
             pricing = MODEL_PRICING.get(usage.model)
+            if not pricing:
+                # Try without provider prefix (e.g., "openai/gpt-4.1" -> "gpt-4.1")
+                model_without_prefix = usage.model.split("/")[-1] if "/" in usage.model else usage.model
+                pricing = MODEL_PRICING.get(model_without_prefix)
+                
             if not pricing:
                 cost.notes = f"No pricing found for model {usage.model}"
                 logger.warning(cost.notes)
@@ -604,11 +612,22 @@ class TokenCostManager:
                 cost.input_rate = pricing["input_cost_per_mtok"]
                 cost.output_rate = pricing["output_cost_per_mtok"]
                 
-                cost.input_cost = (usage.prompt_tokens / 1_000_000) * cost.input_rate
+                # Handle cached tokens if available (50% discount)
+                cached_tokens = getattr(usage, 'cached_tokens', 0)
+                if cached_tokens > 0 and cached_tokens <= usage.prompt_tokens:
+                    # Split input tokens into cached and non-cached
+                    non_cached_tokens = usage.prompt_tokens - cached_tokens
+                    cached_discount_rate = cost.input_rate * 0.5  # 50% discount for cached tokens
+                    
+                    cost.input_cost = (non_cached_tokens / 1_000_000) * cost.input_rate + (cached_tokens / 1_000_000) * cached_discount_rate
+                    cost.notes = f"Text model: {non_cached_tokens:,} input + {cached_tokens:,} cached (50% off) + {usage.completion_tokens:,} output tokens"
+                else:
+                    # Standard calculation for all input tokens
+                    cost.input_cost = (usage.prompt_tokens / 1_000_000) * cost.input_rate
+                    cost.notes = f"Text model: {usage.prompt_tokens:,} input + {usage.completion_tokens:,} output tokens"
+                
                 cost.output_cost = (usage.completion_tokens / 1_000_000) * cost.output_rate
                 cost.total_cost = cost.input_cost + cost.output_cost
-                
-                cost.notes = f"Text model: {usage.prompt_tokens:,} input + {usage.completion_tokens:,} output tokens"
             
             # Image generation model cost calculation (gpt-image-1 style)
             elif usage.model == "gpt-image-1" and image_details:

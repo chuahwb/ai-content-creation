@@ -20,6 +20,10 @@ class WSMessageType(str, Enum):
     RUN_ERROR = "run_error"
     STATUS_UPDATE = "status_update"
     PING = "ping"
+    # Caption generation events
+    CAPTION_UPDATE = "caption_update"
+    CAPTION_COMPLETE = "caption_complete"
+    CAPTION_ERROR = "caption_error"
 
 
 class WebSocketMessage(BaseModel):

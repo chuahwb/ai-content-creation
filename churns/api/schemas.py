@@ -43,6 +43,9 @@ class PipelineRunRequest(BaseModel):
     
     # Marketing goals (for custom/task_specific modes)
     marketing_goals: Optional[MarketingGoalsInput] = Field(default=None, description="Marketing strategy goals")
+    
+    # Language control
+    language: Optional[str] = Field(default='en', description="ISO-639-1 code of desired output language")
 
 
 class RefinementRequest(BaseModel):
@@ -143,6 +146,7 @@ class PipelineRunDetail(PipelineRunResponse):
     marketing_objective: Optional[str] = None
     marketing_voice: Optional[str] = None
     marketing_niche: Optional[str] = None
+    language: Optional[str] = None
 
 
 class GeneratedImageResult(BaseModel):
@@ -217,4 +221,63 @@ class WebSocketMessage(BaseModel):
     type: str
     run_id: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    data: Dict[str, Any] = Field(default_factory=dict) 
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageAnalysisResult(BaseModel):  
+    """Image analysis result from text repair stage"""
+    main_text: str
+    secondary_texts: List[str]
+    object_description: str
+    brand_name: str
+    corrections: Dict
+
+
+# Caption-related schemas
+class CaptionSettings(BaseModel):
+    """User settings for caption generation"""
+    tone: Optional[str] = Field(None, description="Caption tone (e.g., 'Professional & Polished', 'Friendly & Casual')")
+    call_to_action: Optional[str] = Field(None, description="User-defined call to action text")
+    include_emojis: Optional[bool] = Field(True, description="Whether to include emojis in the caption")
+    hashtag_strategy: Optional[str] = Field(None, description="Hashtag strategy ('None', 'Niche & Specific', 'Broad & Trending', 'Balanced Mix')")
+
+
+class CaptionModelOption(BaseModel):
+    """Available caption model option"""
+    id: str = Field(description="Model ID")
+    name: str = Field(description="User-friendly model name")
+    description: str = Field(description="Model description")
+    strengths: List[str] = Field(description="Model strengths")
+    best_for: str = Field(description="Best use cases")
+    latency: str = Field(description="Latency level")
+    creativity: str = Field(description="Creativity level")
+
+
+class CaptionModelsResponse(BaseModel):
+    """Response model for available caption models"""
+    models: List[CaptionModelOption] = Field(description="Available caption models")
+    default_model_id: str = Field(description="Default model ID")
+
+
+class CaptionRequest(BaseModel):
+    """Request model for caption generation"""
+    settings: Optional[CaptionSettings] = Field(default=None, description="Caption generation settings")
+    model_id: Optional[str] = Field(default=None, description="Selected model ID (uses default if not provided)")
+
+
+class CaptionRegenerateRequest(BaseModel):
+    """Request model for caption regeneration"""
+    settings: Optional[CaptionSettings] = Field(default=None, description="New caption settings (if provided, runs full pipeline)")
+    writer_only: bool = Field(default=True, description="If true and no new settings, only regenerates writer step")
+    model_id: Optional[str] = Field(default=None, description="Selected model ID (uses previous model if not provided)")
+
+
+class CaptionResponse(BaseModel):
+    """Response model for caption generation"""
+    caption_id: str = Field(description="Unique ID for this caption")
+    image_id: str = Field(description="ID of the associated image")
+    text: str = Field(description="The generated caption text")
+    version: int = Field(description="Version number of this caption")
+    settings_used: CaptionSettings = Field(description="Settings that were used to generate this caption")
+    created_at: datetime = Field(description="When the caption was created")
+    status: str = Field(description="Status of caption generation")

@@ -1,0 +1,129 @@
+Captioning Feature: Project PlanMissionTo seamlessly extend the "Churns" pipeline by generating context-aware, on-brand, and platform-optimized social media captions that are ready for immediate use. This feature will transform the final generated image and its rich metadata into a complete, post-ready package, saving users time and ensuring brand consistency.1. User-Controllable Caption Settings (Frontend)To give users the right amount of creative control without causing overload, the following attributes should be added to the user input form. These options are designed to be intuitive and directly influence the final output.Note: The feature will operate in "Auto" mode by default, where the system intelligently determines the optimal settings. The controls below serve as optional overrides for users who want finer-grained control.SettingTypeOptionsPurposeCaption ToneDropdown- Professional & Polished- Friendly & Casual- Witty & Playful- Inspirational & Aspirational- Direct & Sales-focusedAllows users to align the caption's voice with their specific campaign goals and brand personality.Call to Action (CTA)Optional Text InputUser-defined text (e.g., "Shop Now," "Learn More," "Link in Bio")Enables the direct inclusion of a specific, action-oriented phrase at the end of the caption.Include EmojisToggleOn / OffA simple switch to control the inclusion of relevant emojis, which can significantly impact platform engagement.Hashtag StrategyDropdown- None (No hashtags)- Niche & Specific (Low-volume, highly relevant)- Broad & Trending (High-volume, discovery-focused)- Balanced MixProvides strategic control over hashtag selection to match different social media growth strategies.2. Context Extraction from metadata.jsonTo generate a caption that is deeply cohesive with the generated image, we need to provide the LLM with the right context. The following fields from your metadata.json are essential for this task.Key Fields to Extract:user_inputs:branding_elements: Crucial for mentioning the brand name ("eesoy") or brand colors naturally.task_description / marketing_goals: The original high-level goal from the user.processing_context:suggested_marketing_strategies: This is the most critical input. We should use the specific strategy that corresponds to the selected image variant.target_audience: (e.g., "Young adults," "Health-conscious consumers")target_objective: (e.g., "Increase brand awareness," "Drive product trial")target_voice: Provides a strong directional hint for the caption's tone.style_guidance_sets: The chosen style set gives us powerful keywords.style_keywords: (e.g., "Biophilic Minimalism," "Dramatic Still Life")marketing_impact: Explains why the style was chosen, which can be rephrased in the caption.generated_image_prompts: We'll use the specific visual_concept for the selected image.main_subject: Confirms what the image is about.lighting_and_mood: (e.g., "optimistic, serene, clean," "sophisticated, contemplative")promotional_text_visuals: The text rendered on the image (e.g., 'SIMPLY PURE.') must be referenced.suggested_alt_text: A concise, descriptive summary of the final image.By combining these elements, the LLM will have a rich, multi-faceted understanding of the product, the target audience, the marketing goal, the visual aesthetic, and the final image content.3. Recommended Design Approach: The Two-Stage "Caption Architect" ModelA single LLM call can work, but to achieve consistently superior results, a two-stage approach is recommended. This method separates strategic thinking from creative writing, often yielding more focused and higher-quality output.Stage 1: The "Analyst" LLMInput: The extracted fields from metadata.json, the user's caption settings (or lack thereof, for "Auto" mode), and the target platform.Task: This LLM doesn't write the final caption. Instead, it synthesizes all the inputs and generates a structured "Caption Brief." This brief acts as a set of precise instructions for the next stage, now enhanced with SEO and platform-specific intelligence.Output (JSON Object):{
+  "core_message": "Highlight the natural, handcrafted purity of our soy milk.",
+  "key_themes_to_include": ["minimalism", "sustainability", "morning light", "wellness"],
+  "seo_keywords": ["handcrafted soy milk", "plant-based goodness", "sustainable living", "biophilic design"],
+  "target_emotion": "Serene and inspirational",
+  "platform_optimizations": {
+    "instagram": {
+        "caption_structure": "Start with a strong hook, use line breaks for readability, place 3-5 relevant hashtags in the first comment or at the end.",
+        "mentionable_elements": ["geotag_suggestion: 'local cafe'", "user_tag_suggestion: '@partner_brand'"]
+    }
+  },
+  "primary_call_to_action": "Discover more at the link in our bio.",
+  "hashtags": ["#eesoy", "#plantbased", "#soymilk", "#minimalist"],
+  "emoji_suggestions": ["🌱", "✨", "☀️"]
+}
+Stage 2: The "Writer" LLMInput: The "Caption Brief" generated by the Analyst.Task: This LLM's sole focus is creative execution. It takes the structured brief and crafts the final, polished caption, ensuring natural integration of SEO keywords and adherence to platform-specific instructions.Output (Final Caption String):"Embrace the quiet moments. ✨ Our handcrafted soy milk, captured in the soft morning light, is a simple reminder of pure, plant-based goodness. Simply pure, simply eesoy. 🌱 Discover more at the link in our bio. #eesoy #plantbased #soymilk #minimalist #wellness"Visualized Workflow:graph TD
+    A[metadata.json] --> B{Extract Key Context};
+    C[User Caption Settings] --> B;
+    B --> D[Stage 1: Analyst LLM];
+    D -- "Generates" --> E(Caption Brief JSON);
+    E --> F[Stage 2: Writer LLM];
+    F -- "Crafts" --> G((Final Post-Ready Caption));
+This two-stage approach ensures that the caption is not only creative but also strategically aligned with the entire generation pipeline that produced the image. It makes the process more robust, debuggable, and ultimately, more effective.4. Advanced SEO & Platform-Specific CaptioningTo elevate the captioning feature from good to great, we will incorporate the following SEO principles derived from the guide. This logic will be primarily handled by the "Analyst" LLM when it constructs the "Caption Brief".A. Universal Caption SEO Principles:Natural Keyword Integration: The "Analyst" will identify primary and long-tail keywords from the processing_context (e.g., from style_keywords, target_objective) and instruct the "Writer" to weave them seamlessly into the caption, avoiding awkward stuffing.Structured for Readability: The brief will recommend a structure: a strong opening hook, value-driven body text (using line breaks and emojis where appropriate), and a clear Call-to-Action. This enhances user experience and engagement signals.Storytelling Element: When the context allows (e.g., based on creative_reasoning), the brief will suggest a storytelling angle to foster a deeper connection with the audience.Alt Text Reinforcement: The suggested_alt_text will be used as a foundational, keyword-rich description to inform the core subject of the caption, ensuring consistency between the visual description and the narrative.B. Platform-Specific Optimizations:The "Analyst" LLM will tailor its "Caption Brief" based on the target_platform specified in the request_details.For Instagram:Keywords in Bio & Name: While the captioner doesn't edit the bio, it can suggest in its reasoning that the brand name in the caption (eesoy) aligns with a keyword-optimized profile name.Hashtag Placement: The brief will instruct the "Writer" on best practices, such as placing 3-5 highly relevant hashtags discreetly at the end of the caption or suggesting they be added to the first comment.Engagement Prompts: The caption will be designed to encourage interaction (e.g., asking a question) and saves (e.g., "Save this post for later!").For Facebook:Value-Driven Content: Captions will be crafted to be more informative, aligning with Facebook's preference for content that sparks meaningful interaction.Link Handling: The caption can be designed to frame an external link, encouraging clicks without being penalized by the algorithm.For Pinterest:Title-like Opening: The first sentence of the caption will be treated like a Pin title—clear, compelling, and keyword-rich.Action-Oriented Language: The caption will be more direct, capitalizing on Pinterest's high-purchase-intent user base with clear CTAs like "Shop the look" or "Get the recipe."For XiaoHongShu (XHS):Multi-Category Keywords: The "Analyst" will identify keywords across different categories (Pain-Point, Scenario, Demographic) based on the marketing strategy.UGC Tone: The brief will explicitly request a relatable, authentic, user-generated content (UGC) style, using emojis for structure and readability.Title and Content Separation: The brief will differentiate between a short, hook-driven title (for the top of the note) and the main body content, a key convention on XHS.DM as CTA: The primary CTA will be tailored for XHS, encouraging users to send a private message (私信) for inquiries, which is the platform's main lead-nurturing channel.5. "Auto" Mode & Default ScenariosThis section details the logic for the default "Auto" mode, ensuring the system produces a high-quality, compelling, and SEO-compliant caption even with zero user configuration. This logic is handled by the "Analyst" LLM.A. "Auto" Mode Logic:Auto-Tone Selection: The Analyst will infer the optimal tone by synthesizing the target_voice from the marketing strategy and the lighting_and_mood from the visual concept.Example: A target_voice of "Trustworthy" combined with a lighting_and_mood of "Dramatic Still Life" will default to a "Professional & Polished" tone.Example: A target_voice of "Friendly" combined with a lighting_and_mood of "Bright, optimistic" will default to a "Friendly & Casual" tone.Auto-CTA Generation: If the user provides no CTA, the Analyst will generate a soft, context-aware CTA based on the target_objective.If objective is "Increase brand awareness": The CTA will focus on engagement (e.g., "Share your thoughts below!" or "What does your morning ritual look like?").If objective is "Drive product trial": The CTA will be a gentle nudge towards discovery (e.g., "Discover the difference" or "Find out more via the link in our bio.").Auto-Emoji Usage: Emojis will be enabled by default. The Analyst will instruct the Writer to use them sparingly and in a way that matches the auto-selected tone, enhancing readability without feeling unprofessional.Auto-Hashtag Strategy: The default will be a "Balanced Mix." The Analyst will extract keywords from the style_keywords and main_subject to create a set of niche, brand-relevant hashtags, supplemented with 1-2 broader terms for discovery.B. Handling Edge Cases and Scenarios:Scenario: Minimal User Input (e.g., only an image is provided):The system will rely heavily on the image_analysis_result.The caption will default to a descriptive and evocative style, focusing on the visual elements, mood, and potential use-cases of the subject. The tone will be generally positive and aspirational.Scenario: Conflicting User Input:If a user's chosen setting (e.g., "Witty & Playful" tone) conflicts with the generated marketing strategy's target_voice (e.g., "Trustworthy, Professional"), the user's explicit choice will always take precedence.The Analyst's brief will acknowledge this override and instruct the Writer to skillfully blend the elements (e.g., "Craft a witty caption that still feels trustworthy").Scenario: Vague or Missing target_objective:If the marketing objective is unclear, "Auto" mode will default to a brand awareness goal.The resulting caption will focus on telling a story, highlighting the quality of the visual, and building an emotional connection rather than driving a specific action.6. System & User Prompt DesignThis section provides the detailed prompt structures for the "Analyst" and "Writer" LLMs. Placeholders like {{variable_name}} indicate where dynamic data will be injected.A. Stage 1: "Analyst" LLM Prompt StructureRole: You are a master social media strategist and SEO expert. Your task is to analyze a comprehensive set of marketing and visual data and distill it into a structured JSON "Caption Brief" for a creative copywriter. You do not write the final caption yourself.Instructions:Carefully analyze all the provided CONTEXT_DATA.Follow the USER_SETTINGS if they are provided. If a user setting conflicts with the context data (e.g., user-selected tone vs. target_voice), the user's choice MUST be prioritized.If a setting is not provided by the user, you must infer the optimal choice from the context data as per the AUTO_MODE_LOGIC.Generate a single, valid JSON object based on the OUTPUT_FORMAT specified below. The entire output must be only the JSON object, with no other text or explanation.[SYSTEM PROMPT]# CONTEXT DATA
+
+## Target Platform
+- **platform_name**: {{target_platform.name}}
+
+## Marketing Strategy
+- **target_audience**: {{marketing_strategy.target_audience}}
+- **target_objective**: {{marketing_strategy.target_objective}}
+- **target_voice**: {{marketing_strategy.target_voice}}
+
+## Visual Style
+- **style_keywords**: {{style_guidance.style_keywords}}
+- **marketing_impact**: {{style_guidance.marketing_impact}}
+
+## Final Image Details
+- **visual_concept**: {{visual_concept.creative_reasoning}}
+- **lighting_and_mood**: {{visual_concept.lighting_and_mood}}
+- **text_on_image**: {{visual_concept.promotional_text_visuals}}
+- **alt_text**: {{visual_concept.suggested_alt_text}}
+
+---
+
+# USER SETTINGS & AUTO MODE LOGIC
+
+{{#if user_settings.tone}}
+- **caption_tone_directive**: Use the user-specified tone: "{{user_settings.tone}}". This is a strict instruction.
+{{#else}}
+- **caption_tone_directive**: No user tone provided. Infer the best tone by analyzing the `target_voice` and `lighting_and_mood`. Default to "Friendly & Casual" if context is insufficient.
+{{/if}}
+
+{{#if user_settings.cta}}
+- **cta_directive**: Use the user-specified Call to Action: "{{user_settings.cta}}".
+{{#else}}
+- **cta_directive**: No user CTA provided. Generate a soft CTA based on the `target_objective`. For brand awareness, prompt engagement. For product trial, prompt discovery.
+{{/if}}
+
+{{#if user_settings.emojis == 'Off'}}
+- **emoji_directive**: Do not use any emojis.
+{{#else}}
+- **emoji_directive**: Use emojis where appropriate to enhance readability and match the tone.
+{{/if}}
+
+{{#if user_settings.hashtag_strategy}}
+- **hashtag_directive**: Use the following strategy: "{{user_settings.hashtag_strategy}}".
+{{#else}}
+- **hashtag_directive**: Default to a "Balanced Mix" strategy. Create a set of relevant hashtags from the context data.
+{{/if}}
+
+---
+
+# OUTPUT FORMAT
+
+Generate a single, valid JSON object matching this structure. The `platform_optimizations` object must ONLY contain the key for the specified `target_platform`.
+
+{
+  "core_message": "A concise, one-sentence summary of the main message.",
+  "key_themes_to_include": ["An array of 3-5 key themes or concepts to weave into the caption."],
+  "seo_keywords": ["An array of 3-5 important SEO keywords to integrate naturally."],
+  "target_emotion": "The primary emotion the caption should evoke in the reader (e.g., 'Aspirational', 'Trustworthy', 'Excited').",
+  "platform_optimizations": {
+    "{{target_platform.name}}": {
+      "caption_structure": "A brief instruction on how to structure the caption for this platform (e.g., 'Hook, value, CTA').",
+      // ... other platform-specific fields like 'title_hook' or 'content_style' for XHS
+    }
+  },
+  "primary_call_to_action": "The final call to action string.",
+  "hashtags": ["An array of generated hashtag strings, including the # symbol."],
+  "emoji_suggestions": ["An array of 2-3 relevant emoji characters to consider."]
+}
+B. Stage 2: "Writer" LLM Prompt StructureRole: You are an expert social media copywriter with a flair for creative, authentic, and engaging storytelling. Your brand voice is natural and human-like.Instructions:Your task is to write a compelling social media caption based on the following creative "Caption Brief".Read the entire brief carefully to understand the strategic goals.Write a caption that feels authentic and human, not like it was written by an AI.Seamlessly integrate the seo_keywords into the text without making it sound forced.Follow all platform_optimizations instructions for structure and style.End with the primary_call_to_action and the provided hashtags.Your output should be ONLY the final caption text. Do not include the brief or any other commentary.[SYSTEM PROMPT]// The entire JSON object generated by the "Analyst" LLM is injected here.
+{{caption_brief_json}}
+7. Example End-to-End Run-ThroughThis example demonstrates the full workflow in "Auto" mode for the first "eesoy" visual concept on Instagram.1. Input to "Analyst" LLM:Target Platform: Instagram Post (1:1 Square)Context Data: (Selected fields from the metadata.json for strategy 0)target_objective: "Increase brand awareness and engagement..."target_voice: "Friendly, informative, and inspiring..."style_keywords: ["Biophilic Minimalism", "Natural Light Photography", ...]lighting_and_mood: "...optimistic, serene, clean, and incredibly fresh."text_on_image: SIMPLY PURE.User Settings: None (Auto mode)2. Output from "Analyst" LLM (The "Caption Brief" JSON):{
+  "core_message": "Showcase our pure, handcrafted soy milk as part of a serene, minimalist morning ritual.",
+  "key_themes_to_include": ["natural light", "biophilic design", "sustainability", "mindful mornings", "plant-based"],
+  "seo_keywords": ["handcrafted soy milk", "minimalist aesthetic", "natural ingredients", "eco-friendly"],
+  "target_emotion": "Calm, inspired, and refreshed",
+  "platform_optimizations": {
+    "Instagram Post (1:1 Square)": {
+      "caption_structure": "Start with an evocative hook. Use line breaks to create space. Ask an engaging question before the CTA.",
+      "mentionable_elements": ["Reference the 'SIMPLY PURE.' text on the image."]
+    }
+  },
+  "primary_call_to_action": "What's one thing that makes your morning better? Let us know below!",
+  "hashtags": ["#eesoy", "#simplypure", "#soymilk", "#biophilicdesign", "#plantbasedliving", "#minimalmood"],
+  "emoji_suggestions": ["🌱", "☀️", "✨"]
+}
+3. Input to "Writer" LLM:The JSON object above.4. Final Output from "Writer" LLM (The Caption):That first ray of morning light. ☀️We believe in starting the day with intention and purity. Our handcrafted soy milk is all about embracing the simple things—natural ingredients and a moment of calm in a busy world. It's what "SIMPLY PURE." really means to us. 🌱What's one thing that makes your morning better? Let us know below!#eesoy #simplypure #soymilk #biophilicdesign #plantbasedliving #minimalmood
+
+8. Caption Regeneration FunctionalityTo provide users with maximum creative flexibility, a "Regenerate" button will be available for every generated caption. This feature supports two distinct modes of operation to ensure users can fine-tune the output until it meets their exact needs.A. Default Regeneration (Same Settings)When the user wants a different creative take without changing any parameters, they can use the standard "Regenerate" button.Goal: To get a new creative interpretation of the same strategic brief.Implementation:The Caption Brief (JSON) generated by the "Analyst" LLM in the initial run is cached.Instead of re-running the entire pipeline, the system only re-invokes Stage 2 (The "Writer" LLM).The exact same cached Caption Brief is used as input. The inherent creativity of the LLM (due to its temperature setting) will produce a different variation of the caption that still adheres to the same strategic goals.Benefit: This approach is fast, cost-effective (only one small LLM call), and ensures the new caption remains strategically consistent while offering a fresh creative angle.B. Regeneration with New SettingsIf a user is unsatisfied with the tone, CTA, or other aspects, they can adjust the settings in the UI and then regenerate.Goal: To generate a new caption based on updated user preferences.Implementation:The frontend captures the modified user settings (e.g., a new "Caption Tone").The system re-runs the entire two-stage pipeline from the beginning.Stage 1 (The "Analyst" LLM) is called with the original CONTEXT_DATA but the new USER_SETTINGS. This produces a fundamentally different Caption Brief.Stage 2 (The "Writer" LLM) then receives this new brief to craft a caption that aligns with the updated settings.Benefit: This provides full control to the user, allowing them to pivot the creative direction completely.Regeneration Workflow Diagramgraph TD
+    subgraph Initial Generation
+        A[Context Data + User Settings] --> B(Analyst LLM);
+        B --> C{Caption Brief 1};
+        C --> D(Writer LLM);
+        D --> E[Caption v1];
+    end
+
+    E --> F{User Action};
+    F -- "Regenerate (Default)" --> G[Re-use Cached Brief 1];
+    G --> H(Writer LLM);
+    H --> I[Caption v2];
+
+    F -- "Change Settings & Regenerate" --> J[Context Data + New User Settings];
+    J --> K(Analyst LLM);
+    K --> L{Caption Brief 2};
+    L --> M(Writer LLM);
+    M --> N[Caption v3];
+9. ConclusionThis proposal outlines a robust, two-stage, AI-driven captioning feature for the "Churns" project. By integrating deep contextual understanding from the existing pipeline with advanced SEO principles, user-centric controls, and flexible regeneration options, this feature is designed to produce strategically sound, platform-optimized, and creatively compelling captions. The inclusion of an intelligent "Auto" mode ensures ease of use, while the detailed prompt architecture provides a clear path for implementation. This addition will significantly enhance the value of "Churns" by delivering truly post-ready assets, saving users time and elevating their social media presence.

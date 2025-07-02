@@ -39,6 +39,7 @@ export interface PipelineRunRequest {
   render_text: boolean;
   apply_branding: boolean;
   marketing_goals?: MarketingGoalsInput;
+  language?: string;
 }
 
 export interface StageProgressUpdate {
@@ -89,6 +90,7 @@ export interface PipelineRunDetail extends PipelineRunResponse {
   marketing_objective?: string;
   marketing_voice?: string;
   marketing_niche?: string;
+  language?: string;
 }
 
 // NEW: Assessment data structure
@@ -144,6 +146,74 @@ export interface PipelineResults {
   stage_costs?: Record<string, any>[];
 }
 
+// Caption-related interfaces
+export interface CaptionSettings {
+  tone?: string;
+  call_to_action?: string;
+  include_emojis?: boolean;
+  hashtag_strategy?: string;
+}
+
+export interface CaptionModelOption {
+  id: string;
+  name: string;
+  description: string;
+  strengths: string[];
+  best_for: string;
+  latency: string;
+  creativity: string;
+}
+
+export interface CaptionModelsResponse {
+  models: CaptionModelOption[];
+  default_model_id: string;
+}
+
+export interface CaptionRequest {
+  settings?: CaptionSettings;
+  model_id?: string;
+}
+
+export interface CaptionRegenerateRequest {
+  settings?: CaptionSettings;
+  writer_only?: boolean;
+  model_id?: string;
+}
+
+export interface CaptionUsageComponent {
+  tokens: {
+    prompt: number;
+    completion: number;
+    cached: number;
+  };
+  cost: number;
+  latency: number;
+}
+
+export interface CaptionUsage {
+  total_cost_usd?: number;
+  total_latency_seconds?: number;
+  model_id?: string;
+  analyst?: CaptionUsageComponent;
+  writer?: CaptionUsageComponent;
+}
+
+export interface CaptionResult {
+  version: number;
+  text: string;
+  settings_used: CaptionSettings;
+  brief_used?: Record<string, any>;
+  created_at: string;
+  model_id?: string;
+  usage_summary?: CaptionUsage;
+}
+
+export interface CaptionResponse {
+  message: string;
+  task_id: string;
+  status: string;
+}
+
 export interface RunListItem {
   id: string;
   status: RunStatus;
@@ -164,7 +234,7 @@ export interface RunListResponse {
 
 // WebSocket message types
 export interface WebSocketMessage {
-  type: 'stage_update' | 'run_complete' | 'run_error' | 'ping';
+  type: 'stage_update' | 'run_complete' | 'run_error' | 'ping' | 'caption_update' | 'caption_complete' | 'caption_error';
   run_id: string;
   timestamp: string;
   data: Record<string, any>;
@@ -188,6 +258,7 @@ export interface PipelineFormData {
   marketing_objective?: string;
   marketing_voice?: string;
   marketing_niche?: string;
+  language?: string;
 }
 
 // Configuration types

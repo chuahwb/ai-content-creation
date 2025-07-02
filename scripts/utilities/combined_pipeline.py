@@ -112,7 +112,7 @@ if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path=dotenv_path)
     print(f"✅ Loaded .env file from path: {dotenv_path}")
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY_1")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     GEMINI_API_KEY_IMG_EVAL = os.getenv("GEMINI_API_KEY_IMG_EVAL") # Example, adjust .env variable names
     GEMINI_API_KEY_STRATEGY = os.getenv("GEMINI_API_KEY_STRATEGY")

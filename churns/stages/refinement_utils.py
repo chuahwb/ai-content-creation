@@ -12,10 +12,11 @@ import datetime
 import traceback
 import asyncio
 import json
+import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from PIL import Image, ImageDraw
-
+from openai import OpenAI
 from ..pipeline.context import PipelineContext
 from ..core.constants import IMAGE_GENERATION_MODEL_ID, MODEL_PRICING
 from ..core.token_cost_manager import TokenCostManager, TokenUsage, CostBreakdown
@@ -23,17 +24,37 @@ from ..models import CostDetail
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 # These will be set by the pipeline executor before stage execution
-image_gen_client = None
 
+def get_image_ctx_and_main_object(ctx: PipelineContext):
+    processing_ctx = ctx.original_pipeline_data.get('processing_context')
+    
+    # Get Image Prompts Context
+    image_prompts = processing_ctx.get('generated_image_prompts')
+    
+    # For chain refinements, generation_index might be None
+    if ctx.generation_index is not None:
+        image_ctx_json = image_prompts[ctx.generation_index]
+    else:
+        # For chain refinements, use the first available prompt context as fallback
+        # or try to infer from the parent image context
+        image_ctx_json = image_prompts[0] if image_prompts else {}
+        ctx.log("Using fallback image context for chain refinement")
+    
+    # Get Main Object from Image Analysis Result
+    image_analysis_result = processing_ctx.get('image_analysis_result')
+    analysis_main_obj = image_analysis_result.get('main_subject')
+
+    main_obj = image_ctx_json.get('main_subject')
+    if not main_obj:
+        if analysis_main_obj:
+            ctx.log(f"Setting Main Object of Visual Context to Analysis Main Object - {analysis_main_obj}")
+            main_obj = analysis_main_obj
+    else:
+        ctx.log(f"Main Object of Visual Context - {main_obj}")
+    return image_ctx_json, main_obj
 
 def validate_refinement_inputs(ctx: PipelineContext, refinement_type: str) -> None:
     """Common input validation for all refinement stages."""
-    
-    # Import the client reference from image_generation stage for consistency
-    from . import image_generation
-    
-    if not image_generation.image_gen_client:
-        raise ValueError("Image generation client not configured")
     
     if not ctx.base_image_path or not os.path.exists(ctx.base_image_path):
         raise ValueError("Base image path is required and must exist")
@@ -42,12 +63,16 @@ def validate_refinement_inputs(ctx: PipelineContext, refinement_type: str) -> No
         raise ValueError(f"Invalid refinement type for {refinement_type} refinement: {ctx.refinement_type}")
 
 
-def load_and_prepare_image(ctx: PipelineContext) -> Image.Image:
+def load_and_prepare_image(ctx: PipelineContext, type: str) -> Image.Image:
     """Load and validate the base image for refinement processing."""
     
     try:
-        image = Image.open(ctx.base_image_path)
-        ctx.log(f"Loaded base image: {image.size} {image.mode}")
+        if type=='base':
+            image = Image.open(ctx.base_image_path)
+            ctx.log(f"Loaded base image: {image.size} {image.mode} from {ctx.base_image_path}")
+        elif type=='reference':
+            image = Image.open(ctx.reference_image_path)
+            ctx.log(f"Loaded reference image: {image.size} {image.mode} from {ctx.reference_image_path}")
         
         # Ensure RGB mode for processing
         if image.mode != 'RGB':
@@ -63,7 +88,7 @@ def load_and_prepare_image(ctx: PipelineContext) -> Image.Image:
 def determine_api_image_size(original_size: Tuple[int, int]) -> str:
     """
     Determine the appropriate OpenAI API size parameter based on original image dimensions.
-    Uses the same logic as image_generation.py for consistency.
+    OpenAI images.edit API supports: '1024x1024', '1024x1536', '1536x1024', and 'auto'.
     """
     
     width, height = original_size
@@ -72,33 +97,32 @@ def determine_api_image_size(original_size: Tuple[int, int]) -> str:
     if abs(aspect_ratio - 1.0) < 0.1:  # Square-ish
         return "1024x1024"
     elif aspect_ratio > 1.2:  # Landscape
-        return "1792x1024"
+        return "1536x1024"
     else:  # Portrait
-        return "1024x1792"
+        return "1024x1536"
 
 
-def create_openai_client():
-    """Create an OpenAI client using environment variable."""
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set")
-    image_client = OpenAI(api_key=api_key)
-    return image_client
+class RefinementError(Exception):
+    """Custom exception for refinement-specific errors with detailed context."""
+    def __init__(self, error_type: str, message: str, suggestion: str = None, is_retryable: bool = False):
+        self.error_type = error_type
+        self.message = message
+        self.suggestion = suggestion
+        self.is_retryable = is_retryable
+        super().__init__(message)
 
 
 async def call_openai_images_edit(
     ctx: PipelineContext,
     enhanced_prompt: str,
     image_size: str,
-    mask_path: Optional[str] = None
+    mask_path: Optional[str] = None,
+    image_gen_client: Optional[OpenAI] = None
 ) -> str:
     """
-    Common OpenAI images.edit API call with standardized error handling.
-    Returns the path to the saved result image.
-    """
-    
-    # Import the client reference for consistency with existing patterns
-    from . import image_generation
+    Common OpenAI images.edit API call with enhanced error handling and classification.
+    Returns the path to the saved result image or raises RefinementError with detailed context.
+    """    
     
     # Use global model ID (same pattern as image_generation.py)
     model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"
@@ -106,7 +130,7 @@ async def call_openai_images_edit(
     operation_type = "regional editing" if mask_path else "global editing"
     ctx.log(f"--- Calling OpenAI Images Edit API ({model_id}) ---")
     ctx.log(f"   Base Image: {ctx.base_image_path}")
-    ctx.log(f"   Enhanced Prompt: {enhanced_prompt}")
+    ctx.log(f"   Reference Image: {ctx.reference_image_path}")
     ctx.log(f"   Size: {image_size}")
     if mask_path:
         ctx.log(f"   Mask Image: {mask_path}")
@@ -118,100 +142,304 @@ async def call_openai_images_edit(
             "prompt": enhanced_prompt,
             "n": 1,
             "size": image_size,
-            "response_format": "b64_json"
         }
         
         # Call OpenAI images.edit API
         if mask_path:
             # Regional editing with mask
-            with open(ctx.base_image_path, "rb") as image_file, open(mask_path, "rb") as mask_file:
-                response = await asyncio.to_thread(
-                    image_generation.image_gen_client.images.edit,
-                    image=image_file,
-                    mask=mask_file,
-                    **api_params
-                )
+            ctx.log("Calling OpenAI Images Edit API for regional editing with mask")
+            response = await asyncio.to_thread(
+                image_gen_client.images.edit,
+                image=[
+                    open(ctx.base_image_path, "rb"),
+                    open(ctx.reference_image_path, "rb")
+                ] if ctx.reference_image_path else [
+                    open(ctx.base_image_path, "rb")
+                ],
+                mask=open(mask_path, "rb"),
+                **api_params
+            )
         else:
             # Global editing without mask
-            with open(ctx.base_image_path, "rb") as image_file:
-                response = await asyncio.to_thread(
-                    image_generation.image_gen_client.images.edit,
-                    image=image_file,
-                    **api_params
-                )
-        
-        # Process API response (same pattern as image_generation.py)
-        if response and response.data and len(response.data) > 0:
-            image_data = response.data[0]
-            
-            if image_data.b64_json:
-                ctx.log(f"✅ {operation_type.title()} successful (received base64 data)")
-                
-                # Decode and save the result image
-                image_bytes = base64.b64decode(image_data.b64_json)
-                output_path = save_refinement_result(ctx, image_bytes)
-                
-                return output_path
+            if ctx.reference_image_path:
+                image_list = [
+                    open(ctx.base_image_path, "rb"),
+                    open(ctx.reference_image_path, "rb")
+                ]
             else:
-                raise RuntimeError("API response missing base64 image data")
-        else:
-            raise RuntimeError("API response did not contain expected data structure")
+                image_list = [
+                    open(ctx.base_image_path, "rb")
+                ]
+            ctx.log("Calling OpenAI Images Edit API for global editing without mask")
+            response = await asyncio.to_thread(
+                image_gen_client.images.edit,
+                image=image_list,
+                **api_params
+            )
+        
+        # Process API response with enhanced error detection
+        if not response:
+            raise RefinementError(
+                "api_no_response", 
+                "OpenAI API returned empty response",
+                "This usually indicates a temporary service issue. Please try again.",
+                is_retryable=True
+            )
             
+        if not response.data or len(response.data) == 0:
+            raise RefinementError(
+                "api_empty_data", 
+                "OpenAI API returned no image data",
+                "The API processed the request but didn't generate any images. Try adjusting your prompt or reference image.",
+                is_retryable=True
+            )
+            
+        image_data = response.data[0]
+        
+        if not hasattr(image_data, 'b64_json') or not image_data.b64_json:
+            raise RefinementError(
+                "api_no_image_data", 
+                "OpenAI API response missing image data",
+                "The API responded but didn't include the generated image. This may indicate the request was filtered or rejected.",
+                is_retryable=True
+            )
+        
+        ctx.log(f"✅ {operation_type.title()} successful (received base64 data)")
+        
+        # Decode and save the result image
+        try:
+            image_bytes = base64.b64decode(image_data.b64_json)
+            if len(image_bytes) < 1000:  # Very small file, likely corrupt
+                raise RefinementError(
+                    "invalid_image_data", 
+                    "Generated image data appears to be corrupted",
+                    "The API returned image data but it appears invalid. Please try again.",
+                    is_retryable=True
+                )
+            output_path = save_refinement_result(ctx, image_bytes)
+            return output_path
+        except Exception as decode_error:
+            raise RefinementError(
+                "image_decode_error", 
+                f"Failed to decode generated image: {str(decode_error)}",
+                "The API returned image data but it couldn't be processed. Please try again.",
+                is_retryable=True
+            )
+            
+    except RefinementError:
+        # Re-raise our custom errors as-is
+        raise
     except Exception as e:
-        # Handle specific OpenAI exceptions (same pattern as image_generation.py)
+        # Handle specific OpenAI exceptions with enhanced error messages
         error_type = type(e).__name__
+        ctx.log(f"❌ ERROR: {error_type} during {operation_type}: {e}")
+        
         if "APIConnectionError" in error_type:
-            ctx.log(f"❌ ERROR: API connection error: {e}")
-            raise RuntimeError(f"Connection error: {e}")
+            raise RefinementError(
+                "connection_error", 
+                "Unable to connect to OpenAI API",
+                "Check your internet connection and try again. If the problem persists, OpenAI services may be temporarily unavailable.",
+                is_retryable=True
+            )
         elif "RateLimitError" in error_type:
-            ctx.log(f"❌ ERROR: API rate limit exceeded: {e}")
-            raise RuntimeError(f"Rate limit error: {e}")
+            raise RefinementError(
+                "rate_limit", 
+                "OpenAI API rate limit exceeded",
+                "You've made too many requests. Please wait a moment and try again.",
+                is_retryable=True
+            )
         elif "APIStatusError" in error_type:
-            ctx.log(f"❌ ERROR: API status error: {e}")
-            error_message = f"API status error"
+            status_code = getattr(e, 'status_code', 'unknown')
+            error_message = f"OpenAI API error (status {status_code})"
+            suggestion = "Please try again. If the problem persists, check your API usage or contact support."
+            
             try:
-                if hasattr(e, 'status_code') and hasattr(e, 'response'):
-                    error_message = f"API status error {e.status_code}"
+                if hasattr(e, 'response') and e.response:
                     error_details = e.response.json()
                     if 'error' in error_details and 'message' in error_details['error']:
-                        error_message += f": {error_details['error']['message']}"
+                        api_message = error_details['error']['message']
+                        error_message = f"OpenAI API error: {api_message}"
+                        
+                        # Provide specific suggestions based on common error messages
+                        if "content policy" in api_message.lower():
+                            suggestion = "Your image or prompt may violate OpenAI's content policy. Try using different instructions or a different reference image."
+                        elif "invalid" in api_message.lower() and "image" in api_message.lower():
+                            suggestion = "The image format may not be supported. Please try with a different image file."
+                        elif "too large" in api_message.lower():
+                            suggestion = "Your image file is too large. Please resize it and try again."
             except:
                 pass
-            raise RuntimeError(error_message)
+                
+            raise RefinementError(
+                "api_error", 
+                error_message,
+                suggestion,
+                is_retryable=status_code != 400  # Don't retry client errors
+            )
+        elif "AuthenticationError" in error_type:
+            raise RefinementError(
+                "auth_error", 
+                "OpenAI API authentication failed",
+                "There's an issue with the API credentials. Please contact support.",
+                is_retryable=False
+            )
         else:
-            ctx.log(f"❌ ERROR: Unexpected error during {operation_type}: {e}")
             ctx.log(traceback.format_exc())
-            raise RuntimeError(f"Unexpected error: {e}")
+            raise RefinementError(
+                "unexpected_error", 
+                f"Unexpected error during image processing: {str(e)}",
+                "An unexpected error occurred. Please try again, and if the problem persists, contact support.",
+                is_retryable=True
+            )
 
 
 def save_refinement_result(ctx: PipelineContext, image_bytes: bytes) -> str:
     """
-    Save refinement result image with consistent naming and organization.
-    Uses the same patterns as established in save_outputs.py.
+    Save refinement result using hybrid approach:
+    1. Create dedicated refinement directory with rich metadata
+    2. Save output image, reference image, and metadata.json
+    3. Return path for backward compatibility with centralized index
     """
     
-    # Create output directory (same pattern as established)
-    output_dir = Path(f"./data/runs/{ctx.parent_run_id}/refinements")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Create refinement-specific directory
+    refinement_dir = Path(f"./data/runs/{ctx.parent_run_id}/refinements/{ctx.run_id}")
+    refinement_dir.mkdir(parents=True, exist_ok=True)
     
-    # Generate filename with consistent pattern
+    # Save output image
+    output_path = refinement_dir / "output.png"
+    try:
+        with open(output_path, "wb") as f:
+            f.write(image_bytes)
+        ctx.log(f"Saved refinement output: {output_path}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to save refinement output: {e}")
+    
+    # Check if reference image already exists in job directory (hybrid structure)
+    # With the new API structure, reference images are already saved directly to job directories
+    if hasattr(ctx, 'reference_image_path') and ctx.reference_image_path and os.path.exists(ctx.reference_image_path):
+        reference_source = Path(ctx.reference_image_path)
+        # Check if the reference image is already in the correct job directory
+        if str(refinement_dir) in str(reference_source):
+            ctx.log(f"Reference image already in correct location: {reference_source}")
+        else:
+            # Copy reference image to preserve it (legacy behavior)
+            try:
+                # Preserve original file extension
+                original_extension = reference_source.suffix or ".png"
+                reference_dest = refinement_dir / f"reference{original_extension}"
+                shutil.copy2(ctx.reference_image_path, reference_dest)
+                ctx.log(f"Preserved reference image: {reference_dest}")
+            except Exception as e:
+                ctx.log(f"Warning: Could not preserve reference image: {e}")
+    
+    # Save rich metadata
+    _save_refinement_metadata(ctx, refinement_dir)
+    
+    # For backward compatibility, also save in old flat structure
+    # This ensures the centralized index still works
+    legacy_dir = Path(f"./data/runs/{ctx.parent_run_id}/refinements")
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    
     parent_id = ctx.parent_image_id
     if ctx.parent_image_type == "original":
         parent_id = f"{ctx.generation_index}"
     
     timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
-    filename = f"{ctx.run_id}_from_{parent_id}_{timestamp}.png"
-    output_path = output_dir / filename
+    legacy_filename = f"{ctx.run_id}_from_{parent_id}_{timestamp}.png"
+    legacy_path = legacy_dir / legacy_filename
     
-    # Save image
+    # Create symlink or copy for backward compatibility
     try:
-        with open(output_path, "wb") as f:
-            f.write(image_bytes)
-        ctx.log(f"Saved result image: {output_path}")
-        return str(output_path)
-        
+        if hasattr(os, 'symlink'):
+            # Use relative symlink if possible
+            relative_output = os.path.relpath(output_path, legacy_dir)
+            os.symlink(relative_output, legacy_path)
+            ctx.log(f"Created legacy symlink: {legacy_path} -> {relative_output}")
+        else:
+            # Fallback to copy on systems without symlink support
+            shutil.copy2(output_path, legacy_path)
+            ctx.log(f"Created legacy copy: {legacy_path}")
     except Exception as e:
-        raise RuntimeError(f"Failed to save result image: {e}")
+        ctx.log(f"Warning: Could not create legacy compatibility file: {e}")
+        # Return the new path if legacy creation fails
+        return str(output_path)
+    
+    # Return legacy path for backward compatibility with existing code
+    return str(legacy_path)
+
+
+def _check_reference_image_exists(refinement_dir: Path) -> bool:
+    """Check if any reference image exists in the refinement directory."""
+    reference_patterns = ["reference.*"]
+    for pattern in reference_patterns:
+        if list(refinement_dir.glob(pattern)):
+            return True
+    return False
+
+
+def _get_reference_image_filename(refinement_dir: Path) -> Optional[str]:
+    """Get the filename of the reference image in the refinement directory."""
+    reference_patterns = ["reference.*"]
+    for pattern in reference_patterns:
+        matches = list(refinement_dir.glob(pattern))
+        if matches:
+            return matches[0].name
+    return None
+
+
+def _save_refinement_metadata(ctx: PipelineContext, refinement_dir: Path) -> None:
+    """Save rich metadata for the refinement in JSON format."""
+    
+    metadata = {
+        "refinement_info": {
+            "job_id": ctx.run_id,
+            "parent_run_id": ctx.parent_run_id,
+            "parent_image_id": ctx.parent_image_id,
+            "parent_image_type": ctx.parent_image_type,
+            "generation_index": ctx.generation_index,
+            "refinement_type": ctx.refinement_type,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        },
+        "inputs": {
+            "instructions": getattr(ctx, 'instructions', None),
+            "prompt": getattr(ctx, 'prompt', None),
+            "mask_coordinates": getattr(ctx, 'mask_coordinates', None),
+            "creativity_level": getattr(ctx, 'creativity_level', None),
+        },
+        "processing": {
+            "model_used": IMAGE_GENERATION_MODEL_ID or "gpt-image-1",
+            "api_image_size": getattr(ctx, '_api_image_size', None),
+            "operation_type": "global_editing",  # Could be enhanced to track regional
+        },
+        "results": {
+            "status": (getattr(ctx, 'refinement_result', None) or {}).get('status', 'in_progress'),
+            "output_generated": os.path.exists(refinement_dir / "output.png"),
+            "reference_preserved": _check_reference_image_exists(refinement_dir),
+            "modifications": (getattr(ctx, 'refinement_result', None) or {}).get('modifications', {}),
+        },
+        "costs": {
+            "refinement_cost_usd": getattr(ctx, 'refinement_cost', 0.0),
+            "model_pricing_used": MODEL_PRICING.get(IMAGE_GENERATION_MODEL_ID or "gpt-image-1", {}),
+        },
+        "images": {
+            "base_image_metadata": getattr(ctx, 'base_image_metadata', {}),
+            "output_path": "output.png",
+            "reference_path": _get_reference_image_filename(refinement_dir),
+        },
+        "context": {
+            "original_pipeline_data": getattr(ctx, 'original_pipeline_data', {}),
+            "pipeline_mode": getattr(ctx, 'pipeline_mode', 'refinement'),
+        }
+    }
+    
+    # Save metadata
+    metadata_path = refinement_dir / "metadata.json"
+    try:
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2, default=str)
+        ctx.log(f"Saved refinement metadata: {metadata_path}")
+    except Exception as e:
+        ctx.log(f"Warning: Could not save refinement metadata: {e}")
 
 
 def save_temporary_mask(ctx: PipelineContext, mask: Image.Image) -> str:

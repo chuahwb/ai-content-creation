@@ -15,7 +15,6 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -23,9 +22,8 @@ import {
   IconButton,
   Skeleton,
   Tooltip,
-  Switch,
-  FormControlLabel,
   TextField,
+  CircularProgress,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -37,7 +35,6 @@ import {
   Error as ErrorIcon,
   AccessTime as AccessTimeIcon,
   Close as CloseIcon,
-  Fullscreen as FullscreenIcon,
   ContentCopy as ContentCopyIcon,
   ZoomIn as ZoomInIcon,
   Code as CodeIcon,
@@ -46,14 +43,12 @@ import {
   VisibilityOff as VisibilityOffIcon,
   Warning as WarningIcon,
   AutoFixHigh as AutoFixHighIcon,
-  Edit as EditIcon,
+  AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
-import { motion, AnimatePresence } from 'framer-motion';
+
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
 import Confetti from 'react-confetti';
-import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { 
   PipelineRunDetail, 
   StageProgressUpdate,
@@ -61,10 +56,13 @@ import {
   StageStatus,
   WebSocketMessage,
   GeneratedImageResult,
+  CaptionSettings,
+  CaptionResult,
 } from '@/types/api';
 import { PipelineAPI, WebSocketManager } from '@/lib/api';
-import { statusColors } from '@/lib/theme';
 import RefinementModal from './RefinementModal';
+import CaptionDialog from './CaptionDialog';
+import CaptionDisplay from './CaptionDisplay';
 
 interface RunResultsProps {
   runId: string;
@@ -95,15 +93,13 @@ interface PipelineStageBoxProps {
   status: StageStatus;
   message?: string;
   duration?: number;
-  isActive: boolean;
 }
 
 const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({ 
   stage, 
   status, 
   message, 
-  duration, 
-  isActive 
+  duration 
 }) => {
   const getStatusColor = (status: StageStatus) => {
     switch (status) {
@@ -132,13 +128,7 @@ const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({
   };
 
   return (
-    <motion.div
-      initial={{ scale: 0.95, opacity: 0.7 }}
-      animate={{ 
-        scale: isActive ? 1.02 : 1, 
-        opacity: 1
-      }}
-      transition={{ duration: 0.3 }}
+    <div
       style={{ 
         borderRadius: '12px', 
         overflow: 'hidden',
@@ -313,7 +303,7 @@ const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({
           )}
         </Box>
       </Paper>
-    </motion.div>
+    </div>
   );
 };
 
@@ -327,7 +317,6 @@ interface ImageAssessmentIndicatorsProps {
 
 const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
   assessmentData,
-  imageIndex,
   isExpanded,
   onToggleExpanded
 }) => {
@@ -349,7 +338,6 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
 
   const renderStatusIndicator = (needsAttention: boolean, label: string, description: string, score?: number) => {
     // Use backend flag as primary determination, score for visual enhancement only
-    let status: 'good' | 'evaluate' | 'fix' = 'good';
     let statusText = 'Good';
     let backgroundColor = '#e8f5e8';
     let borderColor = '#c8e6c8';
@@ -359,7 +347,6 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
 
     // Primary logic: Use backend flag
     if (needsAttention) {
-      status = 'fix';
       statusText = 'Needs Fix';
       backgroundColor = '#ffebee';
       borderColor = '#ffcdd2';
@@ -369,7 +356,6 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
     } else {
       // Not flagged for attention - check if score=4 for "evaluate" status
       if (score !== undefined && score === 4) {
-        status = 'evaluate';
         statusText = 'Evaluate';
         backgroundColor = '#fff8e1';
         borderColor = '#ffecb3';
@@ -378,7 +364,6 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
         icon = <WarningIcon sx={{ color: iconColor, fontSize: 18 }} />;
       } else {
         // Default good status (score 5 or no attention needed)
-        status = 'good';
         statusText = score === 5 ? 'Excellent' : 'Good';
       }
     }
@@ -524,7 +509,7 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
                 </Box>
                 {assessmentData.assessment_justification?.[key] && (
                   <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block', fontStyle: 'italic' }}>
-                    "{assessmentData.assessment_justification[key]}"
+                    &quot;{assessmentData.assessment_justification[key]}&quot;
                   </Typography>
                 )}
               </Grid>
@@ -547,7 +532,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
   const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
   const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string, visualConcept?: any} | null>(null);
-  // NEW: Assessment data state
+  // Assessment data state
   const [imageAssessments, setImageAssessments] = useState<any[]>([]);
   const [assessmentDropdownStates, setAssessmentDropdownStates] = useState<{[key: number]: boolean}>({});
   
@@ -557,13 +542,32 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [developerCode, setDeveloperCode] = useState('');
   
   // Refinement state
+  const [refinements, setRefinements] = useState<any[]>([]);
+  const [refinementsLoading, setRefinementsLoading] = useState(false);
   const [refinementModal, setRefinementModal] = useState<{
     open: boolean;
     imageIndex: number | null;
     imagePath: string | null;
+    parentRefinementJobId?: string;
   }>({ open: false, imageIndex: null, imagePath: null });
-  const [refinements, setRefinements] = useState<any[]>([]);
-  const [refinementProgress, setRefinementProgress] = useState<{ [key: string]: any }>({});
+  
+  // Refinement display controls
+  const [refinementGroupsExpanded, setRefinementGroupsExpanded] = useState<Record<string, boolean>>({});
+  const [showAllRefinementsInGroup, setShowAllRefinementsInGroup] = useState<Record<string, boolean>>({});
+  const INITIAL_REFINEMENTS_PER_GROUP = 3;
+
+  // Use the existing PIPELINE_STAGES from the top of the file
+  
+  // Caption state
+  const [captionDialogOpen, setCaptionDialogOpen] = useState(false);
+  const [captionImageIndex, setCaptionImageIndex] = useState<number>(0);
+  const [captionInitialSettings, setCaptionInitialSettings] = useState<CaptionSettings | undefined>(undefined);
+  const [captionGenerating, setCaptionGenerating] = useState<Record<number, boolean>>({});
+  const [imageCaptions, setImageCaptions] = useState<Record<number, CaptionResult[]>>({});
+  
+  // Add caption error state management
+  const [captionErrors, setCaptionErrors] = useState<Record<number, string>>({});
+  
   const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
 
   // Initialize developer mode from localStorage
@@ -632,9 +636,6 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             setGeneratedImages(mergedImages);
             addLog('info', `Loaded ${results.generated_images.length} generated images`);
           }
-          
-          // Load refinements for completed runs
-          await loadRefinements();
         } catch (resultsErr: any) {
           addLog('warning', `Could not load results: ${resultsErr.message}`);
           // Fallback to extracting from stage output data
@@ -649,9 +650,13 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           });
           setGeneratedImages(images);
         }
+        
+        // Always try to load refinements regardless of results status
+        await loadRefinements();
       } else {
-        // For non-completed runs, clear generated images
+        // For non-completed runs, still try to load refinements
         setGeneratedImages([]);
+        await loadRefinements();
       }
       
     } catch (err: any) {
@@ -703,15 +708,102 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         break;
         
       case 'run_complete':
-        addLog('success', 'Pipeline run completed successfully!');
-        setShowConfetti(true);
-        setTimeout(() => setShowConfetti(false), 5000);
-        fetchRunDetails(); // Refresh final details
+        // Check if this is a refinement completion (has job_id) or pipeline completion
+        if (message.data?.job_id) {
+          // This is a refinement completion
+          addLog('success', `Image refinement completed: ${message.data.summary || 'Refinement successful'}`);
+          toast.success('Image refinement completed! The refined image is now available.');
+          // Refresh refinements list immediately
+          setTimeout(() => {
+            (async () => {
+              try {
+                const data = await PipelineAPI.getRefinements(runId);
+                setRefinements(data.refinements || []);
+              } catch (error) {
+                console.error('Failed to refresh refinements after completion:', error);
+              }
+            })();
+          }, 500);
+        } else {
+          // This is a pipeline completion
+          addLog('success', 'Pipeline run completed successfully!');
+          setShowConfetti(true);
+          setTimeout(() => setShowConfetti(false), 5000);
+          fetchRunDetails(); // Refresh final details
+        }
         break;
         
       case 'run_error':
-        addLog('error', `Pipeline run failed: ${message.data.error_message}`);
-        fetchRunDetails(); // Refresh to get error details
+        // Check if this is a refinement error or pipeline error
+        if (message.data?.job_id) {
+          // This is a refinement error
+          const errorMessage = message.data.error_message || 'Refinement failed';
+          addLog('error', `Image refinement failed: ${errorMessage}`);
+          toast.error(`Image refinement failed: ${errorMessage}`);
+          // Refresh refinements list to update status
+          setTimeout(() => {
+            (async () => {
+              try {
+                const data = await PipelineAPI.getRefinements(runId);
+                setRefinements(data.refinements || []);
+              } catch (error) {
+                console.error('Failed to refresh refinements after error:', error);
+              }
+            })();
+          }, 500);
+        } else {
+          // This is a pipeline error
+          addLog('error', `Pipeline run failed: ${message.data.error_message}`);
+          fetchRunDetails(); // Refresh to get error details
+        }
+        break;
+        
+      case 'caption_complete':
+        if (message.data?.image_id) {
+          // Extract image index from image_id (format: "image_0", "image_1", etc.)
+          const imageIndex = parseInt(message.data.image_id.split('_')[1]);
+          addLog('success', `Caption generated for Option ${imageIndex + 1}`);
+          // Load the updated captions for this image
+          setTimeout(() => {
+            (async () => {
+              try {
+                const imageId = `image_${imageIndex}`;
+                const response = await PipelineAPI.getCaptions(runId, imageId);
+                if (response.captions && response.captions.length > 0) {
+                  setImageCaptions(prev => ({
+                    ...prev,
+                    [imageIndex]: response.captions
+                  }));
+                }
+              } catch (error) {
+                console.debug('No captions found for image', imageIndex);
+              }
+            })();
+          }, 500);
+          // Stop the loading spinner and clear any error
+          setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+          setCaptionErrors(prev => ({ ...prev, [imageIndex]: '' }));
+          toast.success(`Caption generated for Option ${imageIndex + 1}!`);
+        }
+        break;
+        
+      case 'caption_update':
+        if (message.data?.image_id) {
+          const imageIndex = parseInt(message.data.image_id.split('_')[1]);
+          addLog('info', `Caption generation progress: ${message.data.message}`);
+        }
+        break;
+        
+      case 'caption_error':
+        if (message.data?.image_id) {
+          const imageIndex = parseInt(message.data.image_id.split('_')[1]);
+          const errorMessage = message.data.error_message || 'Caption generation failed';
+          addLog('error', `Caption generation failed for Option ${imageIndex + 1}: ${errorMessage}`);
+          // Stop the loading spinner and show error
+          setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+          setCaptionErrors(prev => ({ ...prev, [imageIndex]: errorMessage }));
+          toast.error(`Caption generation failed for Option ${imageIndex + 1}: ${errorMessage}`);
+        }
         break;
     }
   }, [addLog, fetchRunDetails]);
@@ -860,7 +952,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   };
 
   // Refinement functions
-  const openRefinementModal = (imageIndex: number, imagePath: string) => {
+  const openRefinementModal = (imageIndex: number, imagePath: string, parentRefinementJobId?: string) => {
     if (runDetails?.status !== 'COMPLETED') {
       toast.error('Cannot refine images from incomplete runs');
       return;
@@ -869,21 +961,149 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     setRefinementModal({
       open: true,
       imageIndex,
-      imagePath
+      imagePath,
+      parentRefinementJobId
     });
   };
 
   const closeRefinementModal = () => {
-    setRefinementModal({ open: false, imageIndex: null, imagePath: null });
+    setRefinementModal({ open: false, imageIndex: null, imagePath: null, parentRefinementJobId: undefined });
   };
 
-  const loadRefinements = async () => {
+  const loadRefinements = async (showToastOnError: boolean = false, retryCount: number = 0) => {
     try {
+      setRefinementsLoading(true);
+      addLog('info', 'Loading refinements...');
       const data = await PipelineAPI.getRefinements(runId);
-      setRefinements(data.refinements || []);
-    } catch (error) {
+      const refinementsList = data.refinements || [];
+      
+      setRefinements(refinementsList);
+      
+      if (refinementsList.length > 0) {
+        addLog('info', `Loaded ${refinementsList.length} refinements`);
+      } else {
+        addLog('info', 'No refinements found');
+      }
+      
+      return refinementsList;
+    } catch (error: any) {
+      const errorMsg = `Failed to load refinements: ${error.message}`;
+      addLog('warning', errorMsg);
       console.error('Failed to load refinements:', error);
+      
+      // Retry logic for robustness
+      if (retryCount < 2) {
+        addLog('info', `Retrying refinements load (attempt ${retryCount + 2}/3)...`);
+        setTimeout(() => {
+          loadRefinements(showToastOnError, retryCount + 1);
+        }, 2000 * (retryCount + 1)); // Exponential backoff: 2s, 4s
+        return;
+      }
+      
+      // Only show toast on final retry if requested
+      if (showToastOnError) {
+        toast.error(errorMsg);
+      }
+      
+      // Set empty refinements on final failure to avoid stale state
+      setRefinements([]);
+      return [];
+    } finally {
+      setRefinementsLoading(false);
     }
+  };
+
+  // Caption functions
+  const openCaptionDialog = (imageIndex: number) => {
+    setCaptionImageIndex(imageIndex);
+    setCaptionInitialSettings(undefined);
+    setCaptionDialogOpen(true);
+  };
+
+  const closeCaptionDialog = () => {
+    setCaptionDialogOpen(false);
+    setCaptionInitialSettings(undefined);
+  };
+
+  const handleOpenCaptionSettingsDialog = (imageIndex: number, currentSettings: CaptionSettings, currentModelId?: string) => {
+    setCaptionImageIndex(imageIndex);
+    setCaptionInitialSettings(currentSettings);
+    setCaptionDialogOpen(true);
+  };
+
+  const handleCaptionGenerate = async (settings: CaptionSettings, modelId?: string) => {
+    const imageId = `image_${captionImageIndex}`;
+    
+    try {
+      setCaptionGenerating(prev => ({ ...prev, [captionImageIndex]: true }));
+      setCaptionErrors(prev => ({ ...prev, [captionImageIndex]: '' }));
+      closeCaptionDialog();
+      
+      const request = { settings, model_id: modelId };
+      const response = await PipelineAPI.generateCaption(runId, imageId, request);
+      addLog('info', `Caption generation started for Option ${captionImageIndex + 1}`);
+      toast.success('Caption generation started! Check progress in real-time.');
+      
+    } catch (error: any) {
+      const errorMsg = `Failed to generate caption: ${error.message}`;
+      addLog('error', errorMsg);
+      toast.error(errorMsg);
+      setCaptionGenerating(prev => ({ ...prev, [captionImageIndex]: false }));
+      setCaptionErrors(prev => ({ ...prev, [captionImageIndex]: errorMsg }));
+    }
+  };
+
+  const handleCaptionRegenerate = async (imageIndex: number, version?: number, settings?: CaptionSettings, modelId?: string) => {
+    const imageId = `image_${imageIndex}`;
+    
+    try {
+      setCaptionGenerating(prev => ({ ...prev, [imageIndex]: true }));
+      setCaptionErrors(prev => ({ ...prev, [imageIndex]: '' }));
+      
+      let response;
+      const currentCaptions = imageCaptions[imageIndex] || [];
+      const latestVersion = currentCaptions.length > 0 ? Math.max(...currentCaptions.map(c => c.version)) : -1;
+      
+      const request = { settings, model_id: modelId };
+      
+      if (version !== undefined) {
+        response = await PipelineAPI.regenerateCaption(runId, imageId, version, request);
+      } else {
+        response = await PipelineAPI.regenerateCaption(runId, imageId, latestVersion, request);
+      }
+      
+      addLog('info', `Caption regeneration started for Option ${imageIndex + 1}`);
+      toast.success('Caption regeneration started!');
+      
+    } catch (error: any) {
+      const errorMsg = `Failed to regenerate caption: ${error.message}`;
+      addLog('error', errorMsg);
+      toast.error(errorMsg);
+      setCaptionGenerating(prev => ({ ...prev, [imageIndex]: false }));
+      setCaptionErrors(prev => ({ ...prev, [imageIndex]: errorMsg }));
+    }
+  };
+
+  const loadCaptions = async (imageIndex: number) => {
+    try {
+      const imageId = `image_${imageIndex}`;
+      const response = await PipelineAPI.getCaptions(runId, imageId);
+      
+      if (response.captions && response.captions.length > 0) {
+        setImageCaptions(prev => ({
+          ...prev,
+          [imageIndex]: response.captions
+        }));
+      }
+    } catch (error) {
+      console.debug('No captions found for image', imageIndex);
+    }
+  };
+
+  // Helper function to retry caption generation
+  const retryCaptionGeneration = (imageIndex: number) => {
+    setCaptionErrors(prev => ({ ...prev, [imageIndex]: '' }));
+    openCaptionDialog(imageIndex);
   };
 
   const getStatusIcon = (status: RunStatus | StageStatus) => {
@@ -903,7 +1123,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   const getProgressValue = () => {
     if (!runDetails?.stages.length) return 0;
-    const TOTAL_STAGES = 7; // Fixed total: image_eval, strategy, style_guide, creative_expert, prompt_assembly, image_generation, image_assessment
+    const TOTAL_STAGES = 7;
     const completedStages = runDetails.stages.filter(s => s.status === 'COMPLETED').length;
     return (completedStages / TOTAL_STAGES) * 100;
   };
@@ -916,7 +1136,6 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     return `${minutes}m ${remainingSeconds.toFixed(1)}s`;
   };
 
-  // Helper function to get stage status for visual pipeline
   const getStageStatus = (stageName: string): StageStatus => {
     const stage = runDetails?.stages.find(s => s.stage_name === stageName);
     return stage?.status || 'PENDING' as StageStatus;
@@ -936,6 +1155,273 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       }
     };
   }, [runId]);
+
+  // Load refinements once and rely on WebSocket for updates
+  useEffect(() => {
+    loadRefinements();
+  }, [runId]);
+
+  // Additional effect to handle page visibility changes for robustness
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && runDetails) {
+        addLog('info', 'Page became visible, refreshing refinements...');
+        loadRefinements();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [runDetails]);
+
+  // Load captions whenever generatedImages changes
+  useEffect(() => {
+    const loadCaptionsForAllImages = async () => {
+      if (generatedImages.length > 0 && runDetails?.status === 'COMPLETED') {
+        for (const image of generatedImages) {
+          await loadCaptions(image.strategy_index);
+        }
+      }
+    };
+    
+    loadCaptionsForAllImages();
+  }, [generatedImages, runDetails?.status]);
+
+  // Helper functions for refinements (removed unused getRefinementTitle function)
+
+  // Helper function to group refinements by their ultimate parent image
+  const getGroupedRefinements = () => {
+    const groups: Record<string, Array<any>> = {};
+    
+    // Find ultimate parent for each refinement
+    const getUltimateParent = (refinement: any): { parentImageId: string; parentImageType: string; generationIndex: number } => {
+      if (refinement.parent_image_type === 'original') {
+        return {
+          parentImageId: refinement.parent_image_id || `original_${refinement.generation_index}`,
+          parentImageType: 'original',
+          generationIndex: refinement.generation_index ?? 0
+        };
+      } else {
+        // Find the parent refinement
+        const parentRefinement = refinements.find(r => r.job_id === refinement.parent_image_id);
+        if (parentRefinement) {
+          return getUltimateParent(parentRefinement);
+        } else {
+          // Fallback: try to extract from image path
+          if (refinement.image_path && refinement.image_path.includes('_from_')) {
+            const match = refinement.image_path.match(/_from_(\d+)_/);
+            if (match) {
+              return {
+                parentImageId: `original_${match[1]}`,
+                parentImageType: 'original',
+                generationIndex: parseInt(match[1])
+              };
+            }
+          }
+          return {
+            parentImageId: 'unknown',
+            parentImageType: 'original',
+            generationIndex: 0
+          };
+        }
+      }
+    };
+
+    // Group refinements by ultimate parent
+    refinements.forEach(refinement => {
+      const ultimateParent = getUltimateParent(refinement);
+      const groupKey = ultimateParent.parentImageId;
+      
+      if (!groups[groupKey]) {
+        groups[groupKey] = [];
+      }
+      groups[groupKey].push({
+        ...refinement,
+        ultimateParent
+      });
+    });
+
+    // Sort groups by generation index and refinements within each group by created_at
+    const sortedGroups = Object.keys(groups)
+      .sort((a, b) => {
+        const aIndex = groups[a][0]?.ultimateParent?.generationIndex ?? 0;
+        const bIndex = groups[b][0]?.ultimateParent?.generationIndex ?? 0;
+        return aIndex - bIndex;
+      })
+      .reduce((acc, key) => {
+        acc[key] = groups[key].sort((a, b) => 
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        );
+        return acc;
+      }, {} as Record<string, Array<any>>);
+
+    return sortedGroups;
+  };
+
+  // Helper function to check refinement status with clear failure distinction
+  const getRefinementDisplayStatus = (refinement: any) => {
+    const status = refinement.status;
+    const summary = refinement.refinement_summary || '';
+    const errorMessage = refinement.error_message || '';
+    
+    // Handle successful completion
+    if (status === 'COMPLETED' && refinement.image_path) {
+      return { 
+        type: 'success', 
+        message: 'Refinement Completed',
+        detail: null,
+        suggestion: null
+      };
+    }
+    
+    // Handle legitimate "no changes needed" cases (completed but no output)
+    if (status === 'COMPLETED' && !refinement.image_path && summary.toLowerCase().includes('no changes needed')) {
+      return { 
+        type: 'info', 
+        message: 'No Changes Needed',
+        detail: 'The AI determined that your image doesn\'t need the requested changes.',
+        suggestion: null
+      };
+    }
+    
+    // Handle processing states
+    if (status === 'RUNNING' || status === 'PENDING') {
+      return { 
+        type: 'processing', 
+        message: 'Processing...',
+        detail: 'Your refinement is being processed.',
+        suggestion: null
+      };
+    }
+    
+    // All other cases are failures - provide specific error messages
+    let errorDetail = 'The refinement process failed.';
+    let errorSuggestion = 'Please try creating a new refinement with different settings.';
+    
+    if (summary.toLowerCase().includes('connection failed')) {
+      errorDetail = 'Unable to connect to the AI service.';
+      errorSuggestion = 'Check your internet connection and try creating a new refinement.';
+    } else if (summary.toLowerCase().includes('rate limit')) {
+      errorDetail = 'Too many requests have been made.';
+      errorSuggestion = 'Please wait a moment before creating a new refinement.';
+    } else if (summary.toLowerCase().includes('api error')) {
+      errorDetail = 'The AI service encountered an error.';
+      errorSuggestion = 'Please try creating a new refinement with different settings.';
+    } else if (summary.toLowerCase().includes('authentication failed')) {
+      errorDetail = 'There\'s an issue with the service credentials.';
+      errorSuggestion = 'Please contact support.';
+    } else if (errorMessage) {
+      // Use detailed error message if available
+      const parts = errorMessage.split('. ');
+      errorDetail = parts[0] || 'The refinement process failed.';
+      if (parts.length > 1) {
+        errorSuggestion = parts.slice(1).join('. ');
+      }
+    }
+    
+    return { 
+      type: 'error', 
+      message: 'Refinement Failed',
+      detail: errorDetail,
+      suggestion: errorSuggestion
+    };
+  };
+
+  const getRefinementTypeLabel = (refinementType: string): string => {
+    switch (refinementType) {
+      case 'subject':
+        return 'Subject Enhancement';
+      case 'text':
+        return 'Text Enhancement';
+      case 'prompt':
+        return 'Style Enhancement';
+      default:
+        return 'Image Enhancement';
+    }
+  };
+
+
+
+  const getRefinementTypeColor = (refinementType: string) => {
+    switch (refinementType) {
+      case 'subject':
+        return {
+          chipColor: 'primary' as const,
+          bgColor: '#e3f2fd',
+          borderColor: '#2196f3',
+          textColor: '#1565c0',
+          chipBgColor: '#1976d2',
+          chipTextColor: '#ffffff'
+        };
+      case 'text':
+        return {
+          chipColor: 'success' as const,
+          bgColor: '#e8f5e8',
+          borderColor: '#4caf50',
+          textColor: '#2e7d32',
+          chipBgColor: '#388e3c',
+          chipTextColor: '#ffffff'
+        };
+      case 'prompt':
+        return {
+          chipColor: 'secondary' as const,
+          bgColor: '#f3e5f5',
+          borderColor: '#9c27b0',
+          textColor: '#7b1fa2',
+          chipBgColor: '#7b1fa2',
+          chipTextColor: '#ffffff'
+        };
+      default:
+        return {
+          chipColor: 'default' as const,
+          bgColor: '#f5f5f5',
+          borderColor: '#9e9e9e',
+          textColor: '#616161',
+          chipBgColor: '#757575',
+          chipTextColor: '#ffffff'
+        };
+    }
+  };
+
+  // Helper function to calculate refinement duration
+  const calculateRefinementDuration = (refinement: any): string => {
+    if (!refinement.created_at || !refinement.completed_at) {
+      return 'N/A';
+    }
+    
+    const start = new Date(refinement.created_at);
+    const end = new Date(refinement.completed_at);
+    const durationMs = end.getTime() - start.getTime();
+    const durationSeconds = durationMs / 1000;
+    
+    if (durationSeconds < 60) {
+      return `${durationSeconds.toFixed(1)}s`;
+    } else {
+      const minutes = Math.floor(durationSeconds / 60);
+      const seconds = durationSeconds % 60;
+      return `${minutes}m ${seconds.toFixed(0)}s`;
+    }
+  };
+
+  // Helper function to get chain refinement name
+  const getChainRefinementName = (refinement: any, index: number, group: Array<any>): string => {
+    if (refinement.parent_image_type === 'original') {
+      return `Refinement #${index + 1}`;
+    } else {
+      // This is a chain refinement - find its immediate parent
+      const parentRefinement = group.find(r => r.job_id === refinement.parent_image_id);
+      if (parentRefinement) {
+        const parentIndex = group.findIndex(r => r.job_id === refinement.parent_image_id);
+        return `Refinement #${parentIndex + 1} → #${index + 1}`;
+      } else {
+        // Fallback if parent not found in same group
+        return `Chain Refinement #${index + 1}`;
+      }
+    }
+  };
 
   if (isLoading) {
     return (
@@ -979,11 +1465,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-    >
+    <div>
       {showConfetti && (
         <Confetti
           width={window.innerWidth}
@@ -1052,188 +1534,627 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           <Grid container spacing={4}>
             {/* LEFT SIDE - Main Results */}
             <Grid item xs={12} lg={8}>
-              {/* Generated Images */}
-              {generatedImages.length > 0 && (
-                <Box sx={{ mb: 4 }}>
-                  <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, mb: 3, letterSpacing: '-0.01em' }}>
-                    Generated Images
-                  </Typography>
-                  <Grid container spacing={3}>
-                    {generatedImages.map((result, index) => (
-                      <Grid item xs={12} sm={6} md={6} key={index}>
-                        <Paper sx={{ p: 3, height: '100%', border: 1, borderColor: 'divider' }}>
-                          {result.status === 'success' && result.image_path ? (
-                            <Box>
-                              <Box sx={{ position: 'relative', mb: 2 }}>
-                                <Box
-                                  component="img"
-                                  src={PipelineAPI.getFileUrl(runId, result.image_path)}
-                                  sx={{
-                                    width: '100%',
-                                    maxHeight: 350,
-                                    objectFit: 'contain',
-                                    borderRadius: 2,
-                                    cursor: 'pointer',
-                                    border: 1,
-                                    borderColor: 'divider',
-                                    backgroundColor: 'grey.50',
-                                    transition: 'all 0.2s ease-in-out',
-                                    '&:hover': {
-                                      transform: 'scale(1.02)',
-                                      boxShadow: 2,
-                                    }
-                                  }}
-                                  onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
-                                />
-                              </Box>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                                <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                                  Option {result.strategy_index + 1}
-                                </Typography>
-                                <Chip 
-                                  label="Success" 
-                                  color="success" 
-                                  size="small" 
-                                  sx={{ fontWeight: 500 }} 
-                                />
-                              </Box>
-                              
-                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                                <Tooltip title="View marketing strategy & prompt">
-                                  <Button
-                                    size="small"
-                                    startIcon={<ContentCopyIcon />}
-                                    onClick={() => loadOptionDetails(result.strategy_index)}
-                                    color="secondary"
-                                    variant="outlined"
-                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
-                                  >
-                                    Details
-                                  </Button>
-                                </Tooltip>
-                                <Tooltip title="View full size">
-                                  <Button
-                                    size="small"
-                                    startIcon={<ZoomInIcon />}
-                                    onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
-                                    color="primary"
-                                    variant="outlined"
-                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
-                                  >
-                                    Enlarge
-                                  </Button>
-                                </Tooltip>
-                                <Tooltip title="Download image">
-                                  <Button
-                                    size="small"
-                                    startIcon={<DownloadIcon />}
-                                    onClick={() => downloadImage(result.image_path!, result.image_path!)}
-                                    color="primary"
-                                    variant="contained"
-                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
-                                  >
-                                    Download
-                                  </Button>
-                                </Tooltip>
-                                <Tooltip title="Refine this image">
-                                  <Button
-                                    size="small"
-                                    startIcon={<AutoFixHighIcon />}
-                                    onClick={() => openRefinementModal(result.strategy_index, result.image_path!)}
-                                    color="secondary"
-                                    variant="contained"
-                                    sx={{ fontWeight: 500, fontSize: '0.75rem' }}
-                                  >
-                                    Refine
-                                  </Button>
-                                </Tooltip>
-                              </Box>
-                              
-                              {/* NEW: Assessment Indicators */}
-                              {result.assessment ? (
-                                <ImageAssessmentIndicators 
-                                  assessmentData={result.assessment}
-                                  imageIndex={result.strategy_index}
-                                  isExpanded={assessmentDropdownStates[result.strategy_index] || false}
-                                  onToggleExpanded={() => toggleAssessmentDropdown(result.strategy_index)}
-                                />
-                              ) : (
-                                // Show "Assessment Unavailable" state when no assessment data
-                                <Box sx={{ mt: 2, p: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                                  <Chip 
-                                    label="Assessment Unavailable" 
-                                    size="small" 
-                                    variant="outlined" 
-                                    color="default"
-                                    sx={{ fontSize: '0.7rem' }}
-                                  />
-                                </Box>
-                              )}
-                            </Box>
+
+          {/* Generated Images Section */}
+          {generatedImages.length > 0 && (
+            <Box sx={{ mb: 4 }}>
+              <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, mb: 3, letterSpacing: '-0.01em' }}>
+                Generated Images
+              </Typography>
+              <Grid container spacing={3}>
+                {generatedImages.map((result, index) => (
+                  <Grid item xs={12} sm={6} md={6} key={index}>
+                    <Paper sx={{ p: 3, height: '100%', border: 1, borderColor: 'divider' }}>
+                      {result.status === 'success' && result.image_path ? (
+                        <Box>
+                          <Box sx={{ position: 'relative', mb: 2 }}>
+                            <Box
+                              component="img"
+                              src={PipelineAPI.getFileUrl(runId, result.image_path)}
+                              sx={{
+                                width: '100%',
+                                maxHeight: 350,
+                                objectFit: 'contain',
+                                borderRadius: 2,
+                                cursor: 'pointer',
+                                border: 1,
+                                borderColor: 'divider',
+                                backgroundColor: 'grey.50',
+                                transition: 'all 0.2s ease-in-out',
+                                '&:hover': {
+                                  transform: 'scale(1.02)',
+                                  boxShadow: 2,
+                                }
+                              }}
+                              onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
+                            />
+                          </Box>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                              Option {result.strategy_index + 1}
+                            </Typography>
+                            <Chip 
+                              label="Success" 
+                              color="success" 
+                              size="small" 
+                              sx={{ fontWeight: 500 }} 
+                            />
+                          </Box>
+                          
+                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                            <Tooltip title="View marketing strategy & prompt">
+                              <Button
+                                size="small"
+                                startIcon={<ContentCopyIcon />}
+                                onClick={() => loadOptionDetails(result.strategy_index)}
+                                color="secondary"
+                                variant="outlined"
+                                sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                              >
+                                Details
+                              </Button>
+                            </Tooltip>
+                            <Tooltip title="View full size">
+                              <Button
+                                size="small"
+                                startIcon={<ZoomInIcon />}
+                                onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
+                                color="primary"
+                                variant="outlined"
+                                sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                              >
+                                Enlarge
+                              </Button>
+                            </Tooltip>
+                            <Tooltip title="Download image">
+                              <Button
+                                size="small"
+                                startIcon={<DownloadIcon />}
+                                onClick={() => downloadImage(result.image_path!, result.image_path!)}
+                                color="primary"
+                                variant="contained"
+                                sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                              >
+                                Download
+                              </Button>
+                            </Tooltip>
+                            <Tooltip title="Refine this image">
+                              <Button
+                                size="small"
+                                startIcon={<AutoFixHighIcon />}
+                                onClick={() => openRefinementModal(result.strategy_index, result.image_path!)}
+                                color="secondary"
+                                variant="contained"
+                                sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                              >
+                                Refine
+                              </Button>
+                            </Tooltip>
+                            <Tooltip title="Generate social media caption">
+                              <Button
+                                size="small"
+                                startIcon={captionGenerating[result.strategy_index] ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+                                onClick={() => openCaptionDialog(result.strategy_index)}
+                                color="primary"
+                                variant="outlined"
+                                disabled={captionGenerating[result.strategy_index]}
+                                sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                              >
+                                {captionGenerating[result.strategy_index] ? 'Generating...' : 'Caption'}
+                              </Button>
+                            </Tooltip>
+                          </Box>
+                          
+                          {/* Assessment Indicators */}
+                          {result.assessment ? (
+                            <ImageAssessmentIndicators 
+                              assessmentData={result.assessment}
+                              imageIndex={result.strategy_index}
+                              isExpanded={assessmentDropdownStates[result.strategy_index] || false}
+                              onToggleExpanded={() => toggleAssessmentDropdown(result.strategy_index)}
+                            />
                           ) : (
-                            <Box sx={{ textAlign: 'center', py: 6 }}>
-                              <ErrorIcon color="error" sx={{ fontSize: 64, mb: 2 }} />
-                              <Typography variant="h6" color="error" gutterBottom sx={{ fontWeight: 600 }}>
-                                Generation Failed
-                              </Typography>
+                            <Box sx={{ mt: 2, p: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Chip 
+                                label="Assessment Unavailable" 
+                                size="small" 
+                                variant="outlined" 
+                                color="default"
+                                sx={{ fontSize: '0.7rem' }}
+                              />
+                            </Box>
+                          )}
+
+                          {/* Caption Loading Indicator */}
+                          {captionGenerating[result.strategy_index] && (!imageCaptions[result.strategy_index] || imageCaptions[result.strategy_index].length === 0) && (
+                            <Box sx={{ 
+                              mt: 2, 
+                              p: 2, 
+                              backgroundColor: 'grey.50', 
+                              borderRadius: 2, 
+                              border: 1, 
+                              borderColor: 'divider',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 2
+                            }}>
+                              <CircularProgress size={20} />
                               <Typography variant="body2" color="textSecondary">
-                                {result.error_message || 'Unknown error occurred'}
+                                Generating caption... This may take a moment.
                               </Typography>
                             </Box>
                           )}
-                        </Paper>
-                      </Grid>
-                    ))}
+
+                          {/* Caption Error Display */}
+                          {captionErrors[result.strategy_index] && !captionGenerating[result.strategy_index] && (
+                            <Alert 
+                              severity="error" 
+                              sx={{ mt: 2 }}
+                              action={
+                                <Button 
+                                  color="inherit" 
+                                  size="small" 
+                                  onClick={() => {
+                                    setCaptionErrors(prev => ({ ...prev, [result.strategy_index]: '' }));
+                                    retryCaptionGeneration(result.strategy_index);
+                                  }}
+                                  startIcon={<AutoAwesomeIcon />}
+                                >
+                                  Retry
+                                </Button>
+                              }
+                            >
+                              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                Caption Generation Failed
+                              </Typography>
+                              <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
+                                {captionErrors[result.strategy_index]}
+                              </Typography>
+                            </Alert>
+                          )}
+
+                          {/* Caption Display */}
+                          {imageCaptions[result.strategy_index] && imageCaptions[result.strategy_index].length > 0 && (
+                            <CaptionDisplay
+                              captions={imageCaptions[result.strategy_index]}
+                              onRegenerate={(settings, modelId) => handleCaptionRegenerate(result.strategy_index, undefined, settings, modelId)}
+                              onOpenSettingsDialog={(currentSettings, currentModelId) => handleOpenCaptionSettingsDialog(result.strategy_index, currentSettings, currentModelId)}
+                              isRegenerating={captionGenerating[result.strategy_index]}
+                            />
+                          )}
+                        </Box>
+                      ) : (
+                        <Box sx={{ textAlign: 'center', py: 6 }}>
+                          <ErrorIcon color="error" sx={{ fontSize: 64, mb: 2 }} />
+                          <Typography variant="h6" color="error" gutterBottom sx={{ fontWeight: 600 }}>
+                            Generation Failed
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary">
+                            {result.error_message || 'Unknown error occurred'}
+                          </Typography>
+                        </Box>
+                      )}
+                    </Paper>
                   </Grid>
-                </Box>
-              )}
+                ))}
+              </Grid>
+            </Box>
+          )}
 
-              {/* Visual Pipeline Progress */}
-              <Box sx={{ mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                  <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: '-0.01em' }}>
-                    Pipeline Progress
-                  </Typography>
-                  <Typography variant="body1" color="textSecondary" sx={{ fontWeight: 500 }}>
-                    {runDetails.stages.filter(s => s.status === 'COMPLETED').length} / {PIPELINE_STAGES.length} stages
-                  </Typography>
+          {/* Refined Images - Grouped by Parent Image */}
+          {(refinements.length > 0 || (runDetails?.status === 'COMPLETED' && !refinementsLoading)) && (
+            <Box sx={{ mb: 4 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: '-0.01em' }}>
+                  Refined Images {refinements.length > 0 && `(${refinements.length})`}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    size="small"
+                    startIcon={refinementsLoading ? <CircularProgress size={16} /> : <RefreshIcon />}
+                    onClick={() => loadRefinements(true)}
+                    variant="outlined"
+                    disabled={refinementsLoading}
+                    sx={{ fontWeight: 500 }}
+                  >
+                    {refinementsLoading ? 'Loading...' : 'Refresh'}
+                  </Button>
                 </Box>
-                
-                                 {/* Visual Pipeline Stages Grid */}
-                 <Grid container spacing={2} sx={{ mb: 3 }}>
-                   {PIPELINE_STAGES.map((pipelineStage, index) => {
-                     const stageData = getStageData(pipelineStage.name);
-                     const status = getStageStatus(pipelineStage.name);
-                     const isActive = status === 'RUNNING';
-                     
-                     return (
-                       <Grid item xs={12} sm={6} md={4} lg={2} key={pipelineStage.name} sx={{ display: 'flex', flexDirection: 'column' }}>
-                         <PipelineStageBox
-                           stage={pipelineStage}
-                           status={status}
-                           message={stageData?.message}
-                           duration={stageData?.duration_seconds}
-                           isActive={isActive}
-                         />
-                       </Grid>
-                     );
-                   })}
-                 </Grid>
-
-                {/* Overall Progress Bar */}
-                <LinearProgress 
-                  variant="determinate" 
-                  value={getProgressValue()} 
-                  sx={{ 
-                    height: 8, 
-                    borderRadius: 4,
-                    backgroundColor: 'grey.200',
-                    '& .MuiLinearProgress-bar': {
-                      borderRadius: 4,
-                    }
-                  }}
-                />
               </Box>
+              
+              {refinements.length > 0 ? (
+                (() => {
+                  const groupedRefinements = getGroupedRefinements();
+                  const groupKeys = Object.keys(groupedRefinements);
+                  
+                  return (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {groupKeys.map((groupKey) => {
+                        const group = groupedRefinements[groupKey];
+                        const firstRefinement = group[0];
+                        const originalImageIndex = firstRefinement.ultimateParent.generationIndex;
+                        const originalImage = generatedImages[originalImageIndex];
+                        const isExpanded = refinementGroupsExpanded[groupKey] ?? true;
+                        const showAllInGroup = showAllRefinementsInGroup[groupKey] ?? false;
+                        const visibleRefinements = showAllInGroup ? group : group.slice(0, INITIAL_REFINEMENTS_PER_GROUP);
+                        const hasMoreRefinements = group.length > INITIAL_REFINEMENTS_PER_GROUP;
+                        
+                        return (
+                          <Paper key={groupKey} sx={{ border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+                            {/* Group Header */}
+                            <Box 
+                              sx={{ 
+                                p: 2, 
+                                backgroundColor: 'grey.50', 
+                                borderBottom: isExpanded ? 1 : 0, 
+                                borderColor: 'divider',
+                                cursor: 'pointer',
+                                '&:hover': { backgroundColor: 'grey.100' }
+                              }}
+                              onClick={() => setRefinementGroupsExpanded(prev => ({ 
+                                ...prev, 
+                                [groupKey]: !isExpanded 
+                              }))}
+                            >
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                  {/* Parent Image Thumbnail */}
+                                  {originalImage?.image_path && (
+                                    <Box
+                                      component="img"
+                                      src={PipelineAPI.getFileUrl(runId, originalImage.image_path)}
+                                      sx={{
+                                        width: 48,
+                                        height: 48,
+                                        objectFit: 'cover',
+                                        borderRadius: 1,
+                                        border: 1,
+                                        borderColor: 'divider'
+                                      }}
+                                    />
+                                  )}
+                                  
+                                  <Box>
+                                    <Typography variant="h6" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                                      Option {originalImageIndex + 1} Refinements
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary">
+                                      {group.length} refinement{group.length !== 1 ? 's' : ''} • Total cost: ${group.reduce((sum, r) => sum + (r.cost_usd || 0), 0).toFixed(4)}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                                
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Chip 
+                                    label={`${group.length} refinement${group.length !== 1 ? 's' : ''}`}
+                                    size="small"
+                                    color="primary"
+                                    variant="outlined"
+                                  />
+                                  <ExpandMoreIcon 
+                                    sx={{ 
+                                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                      transition: 'transform 0.2s ease'
+                                    }} 
+                                  />
+                                </Box>
+                              </Box>
+                            </Box>
+                            
+                            {/* Group Content */}
+                            {isExpanded && (
+                              <Box sx={{ p: 2 }}>
+                                <Grid container spacing={2}>
+                                  {visibleRefinements.map((refinement, index) => {
+                                    const displayStatus = getRefinementDisplayStatus(refinement);
+                                    const typeColors = getRefinementTypeColor(refinement.refinement_type);
+                                    const refinementName = getChainRefinementName(refinement, index, group);
+                                    
+                                    return (
+                                      <Grid item xs={12} sm={6} md={4} key={refinement.job_id}>
+                                        <Paper sx={{ p: 2, height: '100%', border: 1, borderColor: 'divider' }}>
+                                          {refinement.image_path ? (
+                                            <Box>
+                                              <Box sx={{ position: 'relative', mb: 2 }}>
+                                                <Box
+                                                  component="img"
+                                                  src={PipelineAPI.getFileUrl(runId, refinement.image_path)}
+                                                  sx={{
+                                                    width: '100%',
+                                                    height: 200,
+                                                    objectFit: 'cover',
+                                                    borderRadius: 1,
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s ease-in-out',
+                                                    '&:hover': {
+                                                      transform: 'scale(1.02)',
+                                                      boxShadow: 2,
+                                                    }
+                                                  }}
+                                                  onClick={() => setSelectedImage(PipelineAPI.getFileUrl(runId, refinement.image_path))}
+                                                />
+                                                <Chip
+                                                  label={getRefinementTypeLabel(refinement.refinement_type)}
+                                                  size="small"
+                                                  sx={{
+                                                    position: 'absolute',
+                                                    top: 8,
+                                                    left: 8,
+                                                    fontWeight: 600,
+                                                    fontSize: '0.7rem',
+                                                    backgroundColor: typeColors.chipBgColor,
+                                                    color: typeColors.chipTextColor,
+                                                    '&:hover': {
+                                                      backgroundColor: typeColors.chipBgColor,
+                                                    }
+                                                  }}
+                                                />
+                                              </Box>
+                                              
+                                              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1, color: 'secondary.main' }}>
+                                                {refinementName}
+                                              </Typography>
+                                              
+                                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                                                <Button
+                                                  size="small"
+                                                  startIcon={<ZoomInIcon />}
+                                                  onClick={() => setSelectedImage(PipelineAPI.getFileUrl(runId, refinement.image_path))}
+                                                  color="primary"
+                                                  variant="outlined"
+                                                  sx={{ fontSize: '0.75rem' }}
+                                                >
+                                                  View
+                                                </Button>
+                                                <Button
+                                                  size="small"
+                                                  startIcon={<DownloadIcon />}
+                                                  onClick={() => downloadImage(refinement.image_path, refinement.image_path)}
+                                                  color="primary"
+                                                  variant="contained"
+                                                  sx={{ fontSize: '0.75rem' }}
+                                                >
+                                                  Download
+                                                </Button>
+                                                <Button
+                                                  size="small"
+                                                  startIcon={<AutoFixHighIcon />}
+                                                  onClick={() => openRefinementModal(-1, refinement.image_path, refinement.job_id)}
+                                                  color="secondary"
+                                                  variant="contained"
+                                                  sx={{ fontSize: '0.75rem' }}
+                                                >
+                                                  Refine
+                                                </Button>
+                                              </Box>
+                                              
+                                              <Box sx={{ display: 'flex', justifyContent: 'space-between', color: 'textSecondary', fontSize: '0.8rem' }}>
+                                                <span>Cost: ${refinement.cost_usd?.toFixed(4) || '0.0000'}</span>
+                                                <span>Duration: {calculateRefinementDuration(refinement)}</span>
+                                              </Box>
+                                            </Box>
+                                          ) : (
+                                            <Box sx={{ textAlign: 'center', py: 4 }}>
+                                              {(() => {
+                                                switch (displayStatus.type) {
+                                                  case 'success':
+                                                    return (
+                                                      <>
+                                                        <CheckCircleIcon color="success" sx={{ fontSize: 48, mb: 1 }} />
+                                                        <Typography variant="h6" color="success.main">{displayStatus.message}</Typography>
+                                                      </>
+                                                    );
+                                                  case 'processing':
+                                                    return (
+                                                      <>
+                                                        <CircularProgress sx={{ mb: 1 }} />
+                                                        <Typography variant="h6" color="primary">{displayStatus.message}</Typography>
+                                                      </>
+                                                    );
+                                                  case 'info':
+                                                    return (
+                                                      <>
+                                                        <CheckCircleIcon color="info" sx={{ fontSize: 48, mb: 1 }} />
+                                                        <Typography variant="h6" color="info.main">{displayStatus.message}</Typography>
+                                                      </>
+                                                    );
+                                                  case 'warning':
+                                                    return (
+                                                      <>
+                                                        <WarningIcon color="warning" sx={{ fontSize: 48, mb: 1 }} />
+                                                        <Typography variant="h6" color="warning.main">{displayStatus.message}</Typography>
+                                                        {displayStatus.detail && (
+                                                          <Typography variant="body2" color="textSecondary" sx={{ mt: 1, mb: 1 }}>
+                                                            {displayStatus.detail}
+                                                          </Typography>
+                                                        )}
+                                                        {displayStatus.suggestion && (
+                                                          <Alert severity="info" sx={{ mt: 1, textAlign: 'left' }}>
+                                                            <Typography variant="body2">
+                                                              <strong>Suggestion:</strong> {displayStatus.suggestion}
+                                                            </Typography>
+                                                          </Alert>
+                                                        )}
+                                                      </>
+                                                    );
+                                                  case 'error':
+                                                  default:
+                                                    return (
+                                                      <>
+                                                        <ErrorIcon color="error" sx={{ fontSize: 48, mb: 1 }} />
+                                                        <Typography variant="h6" color="error">{displayStatus.message}</Typography>
+                                                        {displayStatus.detail && (
+                                                          <Typography variant="body2" color="textSecondary" sx={{ mt: 1, mb: 1 }}>
+                                                            {displayStatus.detail}
+                                                          </Typography>
+                                                        )}
+                                                        {displayStatus.suggestion && (
+                                                          <Alert severity="warning" sx={{ mt: 1, textAlign: 'left' }}>
+                                                            <Typography variant="body2">
+                                                              <strong>Suggestion:</strong> {displayStatus.suggestion}
+                                                            </Typography>
+                                                          </Alert>
+                                                        )}
+                                                      </>
+                                                    );
+                                                }
+                                              })()}
+                                              
+                                              {/* Additional information for failed refinements */}
+                                              <Typography variant="subtitle2" sx={{ fontWeight: 600, mt: 2, color: 'secondary.main' }}>
+                                                {getRefinementTypeLabel(refinement.refinement_type)} - {refinementName}
+                                              </Typography>
+                                              <Box sx={{ display: 'flex', justifyContent: 'center', color: 'textSecondary', fontSize: '0.8rem', mt: 1 }}>
+                                                <span>Duration: {calculateRefinementDuration(refinement)}</span>
+                                              </Box>
+                                            </Box>
+                                          )}
+                                        </Paper>
+                                      </Grid>
+                                    );
+                                  })}
+                                </Grid>
+                                
+                                {/* Show More/Less Button */}
+                                {hasMoreRefinements && (
+                                  <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                                    <Button
+                                      variant="outlined"
+                                      size="small"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowAllRefinementsInGroup(prev => ({
+                                          ...prev,
+                                          [groupKey]: !showAllInGroup
+                                        }));
+                                      }}
+                                      sx={{ fontWeight: 500 }}
+                                    >
+                                      {showAllInGroup 
+                                        ? `Show Less (${INITIAL_REFINEMENTS_PER_GROUP} of ${group.length})`
+                                        : `Show More (${group.length - INITIAL_REFINEMENTS_PER_GROUP} more)`
+                                      }
+                                    </Button>
+                                  </Box>
+                                )}
+                              </Box>
+                            )}
+                          </Paper>
+                        );
+                      })}
+                    </Box>
+                  );
+                })()
+              ) : (
+                runDetails?.status === 'COMPLETED' && generatedImages.length > 0 && (
+                  <Paper sx={{ p: 4, textAlign: 'center', backgroundColor: 'grey.50', border: 1, borderColor: 'divider' }}>
+                    <AutoAwesomeIcon sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
+                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+                      Ready to Refine Your Images!
+                    </Typography>
+                                                        <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
+                                      Choose which generated image you&apos;d like to enhance with AI-powered refinements
+                                    </Typography>
+                    
+                    <Grid container spacing={2} sx={{ maxWidth: 600, mx: 'auto' }}>
+                      {generatedImages.map((image, index) => (
+                        <Grid item xs={12} sm={6} md={4} key={index}>
+                          <Paper
+                            sx={{
+                              p: 2,
+                              border: 1,
+                              borderColor: 'divider',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease',
+                              '&:hover': {
+                                borderColor: 'primary.main',
+                                boxShadow: 2,
+                                transform: 'translateY(-2px)'
+                              }
+                            }}
+                            onClick={() => openRefinementModal(index, image.image_path || '')}
+                          >
+                            <Box
+                              component="img"
+                              src={PipelineAPI.getFileUrl(runId, image.image_path || '')}
+                              sx={{
+                                width: '100%',
+                                height: 120,
+                                objectFit: 'cover',
+                                borderRadius: 1,
+                                mb: 1
+                              }}
+                            />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'primary.main', mb: 1 }}>
+                              Option {index + 1}
+                            </Typography>
+                            <Button
+                              fullWidth
+                              variant="outlined"
+                              startIcon={<AutoFixHighIcon />}
+                              size="small"
+                              sx={{ fontWeight: 500 }}
+                            >
+                              Refine This
+                            </Button>
+                          </Paper>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  </Paper>
+                )
+              )}
+            </Box>
+          )}
+
+          {/* Visual Pipeline Progress */}
+          <Box sx={{ mb: 4 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+              <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: '-0.01em' }}>
+                Pipeline Progress
+              </Typography>
+              <Typography variant="body1" color="textSecondary" sx={{ fontWeight: 500 }}>
+                {runDetails.stages.filter(s => s.status === 'COMPLETED').length} / {PIPELINE_STAGES.length} stages
+              </Typography>
+            </Box>
+            
+            {/* Visual Pipeline Stages Grid */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              {PIPELINE_STAGES.map((pipelineStage) => {
+                const stageData = getStageData(pipelineStage.name);
+                const status = getStageStatus(pipelineStage.name);
+                
+                return (
+                                     <Grid item xs={12} sm={6} md={4} lg={2} key={pipelineStage.name} sx={{ display: 'flex', flexDirection: 'column' }}>
+                     <PipelineStageBox
+                       stage={{ 
+                         name: pipelineStage.name, 
+                         label: pipelineStage.label, 
+                         description: pipelineStage.description 
+                       }}
+                       status={status}
+                       message={stageData?.message}
+                       duration={stageData?.duration_seconds}
+                     />
+                   </Grid>
+                );
+              })}
+            </Grid>
+            
+            {/* Overall Progress Bar */}
+            <LinearProgress 
+              variant="determinate" 
+              value={getProgressValue()} 
+              sx={{ 
+                height: 8, 
+                borderRadius: 4,
+                backgroundColor: 'grey.200',
+                '& .MuiLinearProgress-bar': {
+                  borderRadius: 4,
+                }
+              }}
+            />
+          </Box>
             </Grid>
 
             {/* RIGHT SIDE - Details & Metadata */}
@@ -1288,7 +2209,6 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                   Form Input
                 </Typography>
                 <Grid container spacing={2}>
-                  {/* Basic Parameters */}
                   <Grid item xs={6}>
                     <Typography variant="caption" color="textSecondary">Mode</Typography>
                     <Typography variant="body2" sx={{ textTransform: 'capitalize', fontWeight: 500, mt: 0.5 }}>
@@ -1309,17 +2229,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                       {runDetails.platform_name || 'N/A'}
                     </Typography>
                   </Grid>
-                  
-                  {runDetails.task_type && (
-                    <Grid item xs={12}>
-                      <Typography variant="caption" color="textSecondary">Task Type</Typography>
-                      <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                        {runDetails.task_type}
-                      </Typography>
-                    </Grid>
-                  )}
-                  
-                  {/* User Prompt */}
+
                   {runDetails.prompt && (
                     <Grid item xs={12}>
                       <Typography variant="caption" color="textSecondary">User Prompt</Typography>
@@ -1328,109 +2238,6 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                           {runDetails.prompt}
                         </Typography>
                       </Paper>
-                    </Grid>
-                  )}
-                  
-                  {/* Task Description */}
-                  {runDetails.task_description && (
-                    <Grid item xs={12}>
-                      <Typography variant="caption" color="textSecondary">Task Description</Typography>
-                      <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
-                          {runDetails.task_description}
-                        </Typography>
-                      </Paper>
-                    </Grid>
-                  )}
-                  
-                  {/* Image Reference */}
-                  {runDetails.has_image_reference && (
-                    <Grid item xs={12}>
-                      <Typography variant="caption" color="textSecondary">Reference Image</Typography>
-                      <Box sx={{ mt: 1 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                          {runDetails.image_filename || 'Uploaded image'}
-                        </Typography>
-                        {runDetails.image_instruction && (
-                          <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5, fontStyle: 'italic' }}>
-                            "{runDetails.image_instruction}"
-                          </Typography>
-                        )}
-                      </Box>
-                    </Grid>
-                  )}
-                  
-                  {/* Settings Flags */}
-                  <Grid item xs={12}>
-                    <Typography variant="caption" color="textSecondary">Settings</Typography>
-                    <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      <Chip 
-                        label={`Text: ${runDetails.render_text ? 'ON' : 'OFF'}`}
-                        size="small"
-                        color={runDetails.render_text ? 'success' : 'default'}
-                        variant="outlined"
-                      />
-                      <Chip 
-                        label={`Branding: ${runDetails.apply_branding ? 'ON' : 'OFF'}`}
-                        size="small"
-                        color={runDetails.apply_branding ? 'success' : 'default'}
-                        variant="outlined"
-                      />
-                    </Box>
-                  </Grid>
-                  
-                  {/* Branding Elements */}
-                  {runDetails.branding_elements && (
-                    <Grid item xs={12}>
-                      <Typography variant="caption" color="textSecondary">Branding Elements</Typography>
-                      <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
-                          {runDetails.branding_elements}
-                        </Typography>
-                      </Paper>
-                    </Grid>
-                  )}
-                  
-                  {/* Marketing Goals */}
-                  {(runDetails.marketing_audience || runDetails.marketing_objective || runDetails.marketing_voice || runDetails.marketing_niche) && (
-                    <Grid item xs={12}>
-                      <Typography variant="caption" color="textSecondary" sx={{ mb: 2, display: 'block' }}>
-                        Marketing Goals
-                      </Typography>
-                      <Grid container spacing={1}>
-                        {runDetails.marketing_audience && (
-                          <Grid item xs={12}>
-                            <Typography variant="caption" color="textSecondary">Target Audience</Typography>
-                            <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                              {runDetails.marketing_audience}
-                            </Typography>
-                          </Grid>
-                        )}
-                        {runDetails.marketing_objective && (
-                          <Grid item xs={12}>
-                            <Typography variant="caption" color="textSecondary">Objective</Typography>
-                            <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                              {runDetails.marketing_objective}
-                            </Typography>
-                          </Grid>
-                        )}
-                        {runDetails.marketing_voice && (
-                          <Grid item xs={12}>
-                            <Typography variant="caption" color="textSecondary">Voice</Typography>
-                            <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                              {runDetails.marketing_voice}
-                            </Typography>
-                          </Grid>
-                        )}
-                        {runDetails.marketing_niche && (
-                          <Grid item xs={12}>
-                            <Typography variant="caption" color="textSecondary">Niche</Typography>
-                            <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                              {runDetails.marketing_niche}
-                            </Typography>
-                          </Grid>
-                        )}
-                      </Grid>
                     </Grid>
                   )}
                 </Grid>
@@ -1521,13 +2328,10 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                           borderRadius: 0,
                         }}
                       >
-                        <AnimatePresence>
+                        <React.Fragment>
                           {logs.map((log, index) => (
-                            <motion.div
+                            <div
                               key={index}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
                             >
                               <div 
                                 style={{ 
@@ -1539,19 +2343,19 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                   lineHeight: 1.3,
                                   whiteSpace: 'pre-wrap',
                                   wordBreak: 'break-word',
-                                                                  backgroundColor: log.message?.includes('IMPORTANT:') ? '#ff9800' : 'transparent',
-                                padding: log.message?.includes('IMPORTANT:') ? '4px 8px' : '0',
-                                borderRadius: log.message?.includes('IMPORTANT:') ? '4px' : '0',
-                                fontWeight: log.message?.includes('IMPORTANT:') ? 'bold' : 'normal'
+                                  backgroundColor: log.message?.includes('IMPORTANT:') ? '#ff9800' : 'transparent',
+                                  padding: log.message?.includes('IMPORTANT:') ? '4px 8px' : '0',
+                                  borderRadius: log.message?.includes('IMPORTANT:') ? '4px' : '0',
+                                  fontWeight: log.message?.includes('IMPORTANT:') ? 'bold' : 'normal'
                                 }}
                               >
                                 [{dayjs(log.timestamp).format('HH:mm:ss')}] 
                                 {log.stage && ` [${log.stage}]`} 
                                 {log.message}
                               </div>
-                            </motion.div>
+                            </div>
                           ))}
-                        </AnimatePresence>
+                        </React.Fragment>
                       </Paper>
                     </AccordionDetails>
                   </Accordion>
@@ -1559,6 +2363,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
               )}
             </Grid>
           </Grid>
+
+
         </CardContent>
       </Card>
 
@@ -1601,7 +2407,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           alignItems: 'center',
           backgroundColor: '#f5f5f5',
           overflow: 'auto',
-          minHeight: 'calc(100vh - 140px)', // Account for title and actions
+          minHeight: 'calc(100vh - 140px)',
           maxHeight: 'calc(100vh - 140px)'
         }}>
           {selectedImage && (
@@ -1609,8 +2415,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
               component="img"
               src={selectedImage}
               sx={{
-                maxWidth: 'calc(100vw - 32px)', // Account for padding
-                maxHeight: 'calc(100vh - 160px)', // Account for title, actions, and padding
+                maxWidth: 'calc(100vw - 32px)',
+                maxHeight: 'calc(100vh - 160px)',
                 width: 'auto',
                 height: 'auto',
                 objectFit: 'contain',
@@ -1618,16 +2424,6 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 backgroundColor: 'white',
                 boxShadow: 3,
                 display: 'block'
-              }}
-              onLoad={(e) => {
-                // Log dimensions for debugging
-                const img = e.target as HTMLImageElement;
-                console.log('Image loaded:', {
-                  naturalWidth: img.naturalWidth,
-                  naturalHeight: img.naturalHeight,
-                  displayWidth: img.width,
-                  displayHeight: img.height
-                });
               }}
             />
           )}
@@ -1712,50 +2508,6 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 </Grid>
               )}
 
-              {/* Alt Text */}
-              {optionDetails.visualConcept?.visual_concept?.suggested_alt_text && (
-                <Grid item xs={12}>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
-                    SEO Alt Text
-                  </Typography>
-                  <Paper sx={{ p: 3, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2, position: 'relative' }}>
-                    <Typography 
-                      variant="body1" 
-                      sx={{ 
-                        fontWeight: 500,
-                        lineHeight: 1.6,
-                        pr: 5 // Make room for copy button
-                      }}
-                    >
-                      {optionDetails.visualConcept.visual_concept.suggested_alt_text}
-                    </Typography>
-                    
-                    <Tooltip title="Copy alt text to clipboard">
-                      <IconButton
-                        onClick={() => {
-                          navigator.clipboard.writeText(optionDetails.visualConcept.visual_concept.suggested_alt_text);
-                          toast.success('Alt text copied to clipboard!');
-                        }}
-                        sx={{
-                          position: 'absolute',
-                          top: 8,
-                          right: 8,
-                          color: 'grey.600',
-                          backgroundColor: 'rgba(255,255,255,0.8)',
-                          '&:hover': {
-                            backgroundColor: 'rgba(255,255,255,1)',
-                            color: 'primary.main'
-                          }
-                        }}
-                        size="small"
-                      >
-                        <ContentCopyIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Paper>
-                </Grid>
-              )}
-
               {/* Final Prompt */}
               <Grid item xs={12}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1811,90 +2563,107 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             Copy Prompt
           </Button>
           <Button onClick={closeDetailsDialog} variant="contained">
-                      Close
-        </Button>
-      </DialogActions>
-    </Dialog>
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-    {/* Developer Access Dialog */}
-    <Dialog
-      open={developerDialog}
-      onClose={() => setDeveloperDialog(false)}
-      maxWidth="sm"
-      fullWidth
-      PaperProps={{
-        sx: { borderRadius: 2 }
-      }}
-    >
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 2, pb: 2 }}>
-        <DeveloperModeIcon color="primary" />
-        <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
-          Developer Access Required
-        </Typography>
-      </DialogTitle>
-      
-      <DialogContent sx={{ px: 3, pb: 2 }}>
-        <Typography variant="body1" color="textSecondary" sx={{ mb: 3 }}>
-          Enter the developer code to access stage outputs and system logs. This information is 
-          intended for developers and contains technical details.
-        </Typography>
+      {/* Developer Access Dialog */}
+      <Dialog
+        open={developerDialog}
+        onClose={() => setDeveloperDialog(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: { borderRadius: 2 }
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 2, pb: 2 }}>
+          <DeveloperModeIcon color="primary" />
+          <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
+            Developer Access Required
+          </Typography>
+        </DialogTitle>
         
-        <TextField
-          fullWidth
-          label="Developer Code"
-          type="password"
-          value={developerCode}
-          onChange={(e) => setDeveloperCode(e.target.value)}
-          onKeyPress={(e) => {
-            if (e.key === 'Enter') {
-              handleDeveloperAccess();
-            }
-          }}
-          placeholder="Enter developer access code"
-          sx={{ mb: 2 }}
-          autoFocus
-        />
+        <DialogContent sx={{ px: 3, pb: 2 }}>
+          <Typography variant="body1" color="textSecondary" sx={{ mb: 3 }}>
+            Enter the developer code to access stage outputs and system logs. This information is 
+            intended for developers and contains technical details.
+          </Typography>
+          
+          <TextField
+            fullWidth
+            label="Developer Code"
+            type="password"
+            value={developerCode}
+            onChange={(e) => setDeveloperCode(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handleDeveloperAccess();
+              }
+            }}
+            placeholder="Enter developer access code"
+            sx={{ mb: 2 }}
+            autoFocus
+          />
+          
+          <Alert severity="info" sx={{ fontSize: '0.85rem' }}>
+            <strong>For Developers:</strong> This mode reveals internal pipeline data including 
+            stage outputs, detailed logs, and debug information.
+          </Alert>
+        </DialogContent>
         
-        <Alert severity="info" sx={{ fontSize: '0.85rem' }}>
-          <strong>For Developers:</strong> This mode reveals internal pipeline data including 
-          stage outputs, detailed logs, and debug information.
-        </Alert>
-      </DialogContent>
-      
-      <DialogActions sx={{ px: 3, py: 2, gap: 1 }}>
-        <Button 
-          onClick={() => {
-            setDeveloperDialog(false);
-            setDeveloperCode('');
-          }} 
-          variant="outlined"
-        >
-          Cancel
-        </Button>
-        <Button 
-          onClick={handleDeveloperAccess}
-          variant="contained"
-          disabled={!developerCode.trim()}
-        >
-          Access Developer Tools
-        </Button>
-      </DialogActions>
-    </Dialog>
+        <DialogActions sx={{ px: 3, py: 2, gap: 1 }}>
+          <Button 
+            onClick={() => {
+              setDeveloperDialog(false);
+              setDeveloperCode('');
+            }} 
+            variant="outlined"
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleDeveloperAccess}
+            variant="contained"
+            disabled={!developerCode.trim()}
+          >
+            Access Developer Tools
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-    {/* Refinement Modal */}
-    <RefinementModal
-      open={refinementModal.open}
-      onClose={closeRefinementModal}
-      runId={runId}
-      imageIndex={refinementModal.imageIndex}
-      imagePath={refinementModal.imagePath}
-      onRefinementSubmit={(result) => {
-        addLog('info', `Refinement started: ${result.job_id}`);
-        toast.success('Refinement job started successfully!');
-        // Optionally refresh refinements or setup progress tracking
-        setTimeout(() => loadRefinements(), 1000);
-      }}
-    />
-  </motion.div>
-);
+      {/* Refinement Modal */}
+      <RefinementModal
+        open={refinementModal.open}
+        onClose={closeRefinementModal}
+        runId={runId}
+        imageIndex={refinementModal.imageIndex}
+        imagePath={refinementModal.imagePath}
+        parentRefinementJobId={refinementModal.parentRefinementJobId}
+        onRefinementSubmit={(result) => {
+          addLog('info', `Refinement started: ${result.job_id}`);
+          toast.success('Refinement job started successfully!');
+          
+          setTimeout(() => {
+            loadRefinements().then(() => {
+              addLog('info', 'Refinement job added to queue');
+            });
+          }, 2000);
+        }}
+      />
+
+      {/* Caption Dialog */}
+      <CaptionDialog
+        open={captionDialogOpen}
+        onClose={closeCaptionDialog}
+        onGenerate={handleCaptionGenerate}
+        isGenerating={captionGenerating[captionImageIndex] || false}
+        imageIndex={captionImageIndex}
+        initialSettings={captionInitialSettings}
+        initialModelId={captionInitialSettings ? (imageCaptions[captionImageIndex]?.[imageCaptions[captionImageIndex].length - 1]?.model_id || undefined) : undefined}
+        error={captionErrors[captionImageIndex]}
+      />
+    </div>
+  );
 } 

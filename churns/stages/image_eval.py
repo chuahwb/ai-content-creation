@@ -22,6 +22,7 @@ from ..models import ImageAnalysisResult
 from ..core.json_parser import (
     RobustJSONParser, 
     JSONExtractionError,
+    TruncatedResponseError,
     should_use_manual_parsing
 )
 
@@ -62,7 +63,7 @@ def simulate_image_evaluation_fallback(user_has_provided_instruction: bool) -> D
         return {"error": f"Fallback creation failed: {e}", "main_subject": "Error"}
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """Performs image analysis using VLM, updates pipeline context."""
     ctx.log("Starting image evaluation stage")
     
@@ -136,6 +137,10 @@ def run(ctx: PipelineContext) -> None:
                         raw_content,
                         expected_schema=ImageAnalysisResult
                     )
+                except TruncatedResponseError as truncate_err:
+                    ctx.log(f"ERROR: VLM response was truncated: {truncate_err}")
+                    ctx.log(f"Raw VLM content preview: {raw_content[:300]}...")
+                    raise Exception(f"VLM response truncated - consider increasing max_tokens or trying different model: {truncate_err}")
                 except JSONExtractionError as extract_err:
                     ctx.log(f"ERROR: JSON extraction/parsing failed for VLM response: {extract_err}")
                     ctx.log(f"Raw VLM content: {raw_content}")

@@ -32,26 +32,54 @@ VERBOSE_COST_LATENCY_SUMMARY = True  # Control verbosity of cost/latency summary
 # --- Model Definitions ---
 # Phase 1 Models
 IMG_EVAL_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
-IMG_EVAL_MODEL_ID = "openai/gpt-4.1-mini"  # E.g., "openai/gpt-4-vision-preview", "google/gemini-pro-vision"
+IMG_EVAL_MODEL_ID = "openai/gpt-4.1"  # E.g., "openai/gpt-4-vision-preview", "google/gemini-pro-vision"
 
 STRATEGY_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
 STRATEGY_MODEL_ID = "openai/gpt-4.1-mini"  # E.g., "openai/gpt-4-turbo", "google/gemini-1.5-pro-latest"
 
 # Phase 2 Models
 STYLE_GUIDER_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
-STYLE_GUIDER_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
+STYLE_GUIDER_MODEL_ID = "google/gemini-2.5-pro"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
 
 CREATIVE_EXPERT_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
-CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro-preview"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
+CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro"  # "openai/o4-mini" "deepseek/deepseek-r1-0528" "qwen/qwen3-235b-a22b" "google/gemini-2.5-pro-preview"
 
 # Image Assessment Model (dedicated for image quality evaluation)
 IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenRouter"  # Direct OpenAI for reliable multi-image processing
 IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision tasks
 
+# Caption Generation Model (for social media caption creation)
+CAPTION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"
+
+# Caption Model Options with characteristics
+CAPTION_MODEL_OPTIONS = {
+    "openai/gpt-4.1": {
+        "id": "openai/gpt-4.1",
+        "name": "Quick Response",
+        "description": "Fast generation with efficient processing for immediate results",
+        "strengths": ["Fastest response time", "Reliable output", "Efficient processing"],
+        "best_for": "Time-sensitive posts, quick iterations",
+        "latency": "Low",
+        "creativity": "Efficient"
+    },
+    "google/gemini-2.5-pro": {
+        "id": "google/gemini-2.5-pro", 
+        "name": "Thoughtful Analysis",
+        "description": "Deeper reasoning and analysis for more nuanced captions",
+        "strengths": ["Comprehensive analysis", "Nuanced understanding", "Creative reasoning"],
+        "best_for": "Complex campaigns, premium content",
+        "latency": "Higher",
+        "creativity": "Analytical"
+    }
+}
+
+# Default caption model
+CAPTION_MODEL_ID = "openai/gpt-4.1"  # Default model ID
+
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 
 # Models known to have issues with instructor's default TOOLS mode via OpenRouter
-INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = ["openai/o4-mini", "google/gemini-2.5-pro-preview", "openai/o4-mini-high"]
+INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = ["openai/o4-mini", "google/gemini-2.5-pro", "openai/o4-mini-high"]
 
 # --- Image Token Calculation Parameters ---
 # Two different calculation methods based on model family
@@ -135,7 +163,7 @@ MODEL_PRICING = {
         "currency": "USD",
         "notes": "Pricing for qwen/qwen3-235b-a22b via OpenRouter."
     },
-    "google/gemini-2.5-pro-preview": {  # Added pricing for this model
+    "google/gemini-2.5-pro": {  # Added pricing for this model
         "provider": "OpenRouter",  # Assuming OpenRouter access
         "input_cost_per_mtok": 1.25,  # Example: Gemini 1.5 Pro on OpenRouter
         "output_cost_per_mtok": 10.00,  # Example: Gemini 1.5 Pro on OpenRouter
@@ -155,6 +183,13 @@ MODEL_PRICING = {
         "output_cost_per_mtok": 4.4,  # $0.600 per 1M output tokens
         "currency": "USD",
         "notes": "Pricing for gpt-4.1 via OpenAI native client (vision capabilities)."
+    },
+    "openai/gpt-4o-mini": {  # Used for Caption Generation
+        "provider": "OpenRouter",
+        "input_cost_per_mtok": 0.15,  # $0.15 per 1M input tokens via OpenRouter
+        "output_cost_per_mtok": 0.60,  # $0.60 per 1M output tokens via OpenRouter
+        "currency": "USD",
+        "notes": "Pricing for openai/gpt-4o-mini via OpenRouter (cost-effective for caption generation)."
     },
     "gpt-image-1": {
         "provider": "OpenAI",

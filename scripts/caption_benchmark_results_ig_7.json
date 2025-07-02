@@ -1,0 +1,663 @@
+[
+  {
+    "model_id": "openai/gpt-4.1",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:27:33.657075+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 15.298,
+    "analyst_usage": {
+      "completion_tokens": 438,
+      "prompt_tokens": 1957,
+      "total_tokens": 2395,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "brief": {
+      "core_message": "Our handcrafted soy milk embodies a luminous journey of purity, wellness, and artisanal care—each bottle is a celebration of natural ingredients and heartfelt milestones.",
+      "key_themes_to_include": [
+        "Brand journey and milestones",
+        "Natural, high-quality ingredients",
+        "Handcrafted, artisanal process",
+        "Health and wellness benefits",
+        "Celebratory, luminous aesthetic"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "natural dairy alternative",
+        "artisanal plant-based beverage",
+        "wellness drink",
+        "brand story"
+      ],
+      "target_emotion": "Inspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value (brand story & milestone) + CTA. Start with a captivating, luminous-inspired hook; share a heartfelt snippet of the brand’s journey or a key milestone; highlight the purity and wellness benefits; close with a warm, engaging CTA inviting users to save or share.",
+          "style_notes": "Keep the tone warm, authentic, and subtly celebratory. Weave in visual cues from the image (luminous aura, prismatic light, impressionistic botanicals) to evoke cinematic warmth and purity. Use 1-2 thoughtfully placed emojis to enhance the mood, and encourage engagement with a question or invitation to save. Ensure SEO keywords are present for Alt Text and discoverability."
+        }
+      },
+      "primary_call_to_action": "Save this post to revisit our story, and share your own wellness journey with us below!",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#ArtisanalWellness",
+        "#DairyFreeLiving",
+        "#PlantBasedJourney",
+        "#LuminousAura",
+        "#NaturalIngredients",
+        "#BrandMilestone",
+        "#WellnessCommunity"
+      ],
+      "emoji_suggestions": [
+        "🌱",
+        "✨",
+        "🥛"
+      ],
+      "task_type_notes": "Optimize for Brand Story & Milestones: celebrate achievements, highlight artisanal process, and build emotional connection and trust."
+    },
+    "writer_latency": 3.474,
+    "writer_usage": {
+      "completion_tokens": 153,
+      "prompt_tokens": 804,
+      "total_tokens": 957,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "caption": "✨ Every bottle tells a luminous story—ours begins with a dream to craft a wellness drink that radiates purity and care. \n\nFrom our first small batch to this incredible brand milestone, we’ve poured our hearts into every step, blending impressionistic botanicals and natural ingredients into a handcrafted soy milk that feels as vibrant and nurturing as prismatic light. 🌱\n\nChoosing our artisanal plant-based beverage means savoring a natural dairy alternative that celebrates wellness and honors your journey just as much as ours.\n\nSave this post to revisit our story, and share your own wellness journey with us below!\n\n#HandcraftedSoyMilk #ArtisanalWellness #DairyFreeLiving #PlantBasedJourney #LuminousAura #NaturalIngredients #BrandMilestone #WellnessCommunity",
+    "total_latency": 18.772,
+    "total_tokens": 3352
+  },
+  {
+    "model_id": "openai/gpt-4.1-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:27:54.433672+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 9.631,
+    "analyst_usage": {
+      "completion_tokens": 370,
+      "prompt_tokens": 1957,
+      "total_tokens": 2327,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "brief": {
+      "core_message": "Celebrate the pure, natural journey and handcrafted care behind our luminous soy milk, a nourishing dairy alternative crafted to elevate your wellness.",
+      "key_themes_to_include": [
+        "Artisanal craftsmanship",
+        "Natural, wholesome ingredients",
+        "Health and wellness benefits",
+        "Brand heritage and story",
+        "Ethereal, luminous purity"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "natural dairy alternative",
+        "healthy plant-based beverage",
+        "artisanal soy milk",
+        "nutritious dairy-free drink"
+      ],
+      "target_emotion": "Inspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook → Narrative snippet highlighting brand story and milestone → Emphasize health benefits and natural ingredients → Engaging question to encourage comments and saves → CTA",
+          "style_notes": "Use a warm, approachable tone with informative and authentic storytelling; incorporate subtle emojis to enhance the celebratory and serene mood; encourage users to save the post for its inspiring brand story and wellness insights."
+        }
+      },
+      "primary_call_to_action": "Discover the story behind every glowing bottle and join us on this nourishing journey—what’s your favorite way to enjoy plant-based wellness? Save this post to keep the inspiration close!",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#DairyFreeWellness",
+        "#ArtisanalBeverage",
+        "#PlantBasedNutrition",
+        "#GlowFromWithin"
+      ],
+      "emoji_suggestions": [
+        "✨",
+        "🌿",
+        "🥛"
+      ],
+      "task_type_notes": "Optimize for Brand Story & Milestones: emphasize authentic narrative, emotional connection, and trust-building through inspirational storytelling."
+    },
+    "writer_latency": 4.77,
+    "writer_usage": {
+      "completion_tokens": 189,
+      "prompt_tokens": 751,
+      "total_tokens": 940,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "caption": "✨ From humble beginnings to your table, our handcrafted soy milk is a labor of love and tradition. Each batch honors decades of artisanal craftsmanship, blending only the purest, natural ingredients to create a luminous, nourishing dairy alternative.\n\nThis wholesome, plant-based beverage supports your wellness journey with every sip—rich in nutrients and free from anything artificial. It’s more than just a drink; it’s a celebration of health, heritage, and the beauty of nature’s gifts. 🌿\n\nHow do you like to enjoy your nutritious dairy-free drink? Share your favorite ways below and save this post to keep the inspiration close!\n\nDiscover the story behind every glowing bottle and join us on this nourishing journey—what’s your favorite way to enjoy plant-based wellness? Save this post to keep the inspiration close! 🥛\n\n#HandcraftedSoyMilk #DairyFreeWellness #ArtisanalBeverage #PlantBasedNutrition #GlowFromWithin",
+    "total_latency": 14.402,
+    "total_tokens": 3267
+  },
+  {
+    "model_id": "openai/o4-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:28:10.839160+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 18.821,
+    "analyst_usage": {
+      "completion_tokens": 1623,
+      "prompt_tokens": 1956,
+      "total_tokens": 3579,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Celebrate our journey of crafting pure, luminous handcrafted soy milk that embodies natural wellness and artisanal heritage.",
+      "key_themes_to_include": [
+        "Handcrafted purity",
+        "Artisanal heritage",
+        "Natural wellness",
+        "Luminous vitality",
+        "Brand milestones"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "dairy-free beverage",
+        "natural wellness",
+        "artisanal soy milk",
+        "plant-based nutrition"
+      ],
+      "target_emotion": "Trustworthy",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook → Brief brand story or milestone → Highlight benefits → CTA",
+          "style_notes": "Warm, informative, and approachable tone; weave in ethereal lighting metaphors; use a celebratory, authentic narrative; invite engagement and saves."
+        }
+      },
+      "primary_call_to_action": "Save this post for your wellness inspo and learn more through the link in our bio.",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#ArtisanalDairyAlternative",
+        "#PlantBasedWellness",
+        "#DairyFree",
+        "#NaturalIngredients"
+      ],
+      "emoji_suggestions": [
+        "🥛",
+        "✨",
+        "🌿"
+      ],
+      "task_type_notes": "Optimize for Brand Story & Milestones: celebratory narrative of brand journey."
+    },
+    "writer_latency": 27.947,
+    "writer_usage": {
+      "completion_tokens": 1779,
+      "prompt_tokens": 680,
+      "total_tokens": 2459,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "Every luminous pour has a story. 🥛✨  \nFrom our first small-batch pour to our latest milestone, our artisanal soy milk line celebrates generations of heritage and natural wellness 🌿.  \nOur handcrafted soy milk is a dairy-free beverage packed with plant-based nutrition, offering creamy, radiant vitality in every sip.  \nSave this post for your wellness inspo and learn more through the link in our bio.  \n\n#HandcraftedSoyMilk #ArtisanalDairyAlternative #PlantBasedWellness #DairyFree #NaturalIngredients",
+    "total_latency": 46.768,
+    "total_tokens": 6038
+  },
+  {
+    "model_id": "x-ai/grok-3-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:28:59.610521+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 12.442,
+    "analyst_usage": {
+      "completion_tokens": 298,
+      "prompt_tokens": 1934,
+      "total_tokens": 3977,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 1745,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 5
+      }
+    },
+    "brief": {
+      "core_message": "Discover the inspiring journey behind our handcrafted soy milk, where natural ingredients and artisanal care come together to promote health, wellness, and pure vitality.",
+      "key_themes_to_include": [
+        "Natural Ingredients",
+        "Health Benefits",
+        "Brand Journey",
+        "Artisanal Craftsmanship",
+        "Wellness and Purity"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "natural ingredients",
+        "health benefits",
+        "dairy-free beverage",
+        "artisanal wellness"
+      ],
+      "target_emotion": "Inspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA",
+          "style_notes": "Encourage engagement with questions to spark curiosity about the brand story, and prompt users to save the post by emphasizing its inspirational value; integrate the ethereal visual aesthetic subtly through descriptive language to enhance thumb-stopping appeal."
+        }
+      },
+      "primary_call_to_action": "Share your favorite part of your wellness journey in the comments or save this post for daily inspiration!",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#NaturalIngredients",
+        "#DairyFree",
+        "#WellnessJourney",
+        "#BrandStory"
+      ],
+      "emoji_suggestions": [
+        "🌟",
+        "🌿",
+        "💚"
+      ],
+      "task_type_notes": "Optimize for Brand Story & Milestones: showcase the brand's journey and achievements to build emotional connection and trust through an authentic, grateful narrative."
+    },
+    "writer_latency": 6.115,
+    "writer_usage": {
+      "completion_tokens": 144,
+      "prompt_tokens": 690,
+      "total_tokens": 1699,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 865,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 6
+      }
+    },
+    "caption": "Ever wondered what sparked our journey to create the perfect handcrafted soy milk? 🌟 It all began with a simple passion for natural ingredients and a dream to craft something that nourishes both body and soul.\n\nOver the years, we've poured our hearts into every step, from sourcing the purest natural ingredients to perfecting an artisanal process that highlights incredible health benefits. Our dairy-free beverage isn't just a drink—it's a testament to wellness and purity, inspiring countless milestones along the way. 💚 How has your wellness journey transformed you?\n\nShare your favorite part of your wellness journey in the comments or save this post for daily inspiration! #HandcraftedSoyMilk #NaturalIngredients #DairyFree #WellnessJourney #BrandStory",
+    "total_latency": 18.557,
+    "total_tokens": 5676
+  },
+  {
+    "model_id": "x-ai/grok-3",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:29:20.170746+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 4.729,
+    "analyst_usage": {
+      "completion_tokens": 308,
+      "prompt_tokens": 1933,
+      "total_tokens": 2241,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 5
+      }
+    },
+    "brief": {
+      "core_message": "Celebrate the journey of our handcrafted soy milk, a symbol of purity and wellness, crafted with natural ingredients and a luminous story.",
+      "key_themes_to_include": [
+        "brand journey",
+        "natural ingredients",
+        "health benefits",
+        "artisanal craftsmanship",
+        "purity and vitality"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "dairy-free beverage",
+        "natural ingredients",
+        "health and wellness",
+        "artisanal dairy alternative"
+      ],
+      "target_emotion": "Inspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA: Start with a captivating hook about the brand story, share a brief narrative on purity and craftsmanship, and end with an engaging question or CTA.",
+          "style_notes": "Reflect the luminous, ethereal aesthetic with warm, poetic language; evoke a serene and magical mood to match the cinematic warmth of the visual."
+        }
+      },
+      "primary_call_to_action": "Share your wellness journey with us—how do you embrace natural, healthy choices?",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#DairyFreeLife",
+        "#NaturalWellness",
+        "#ArtisanalDrinks",
+        "#HealthyLiving"
+      ],
+      "emoji_suggestions": [
+        "✨",
+        "🌱",
+        "💛"
+      ],
+      "task_type_notes": "Optimize for Brand Story & Milestones: Focus on building emotional connection through an authentic narrative of heritage and care, highlighting milestones and gratitude."
+    },
+    "writer_latency": 3.071,
+    "writer_usage": {
+      "completion_tokens": 129,
+      "prompt_tokens": 697,
+      "total_tokens": 826,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 6
+      }
+    },
+    "caption": "Every drop of our handcrafted soy milk tells a story of purity and care—a journey from humble beginnings to a luminous symbol of health and wellness. ✨ Crafted with natural ingredients, this dairy-free beverage embodies artisanal craftsmanship, blending tradition with vitality in every sip. 🌱 We’ve poured our heart into creating an artisanal dairy alternative that nurtures your body and soul, celebrating the magic of nature’s finest. How do you embrace natural, healthy choices? Share your wellness journey with us—we’d love to hear! 💛 #HandcraftedSoyMilk #DairyFreeLife #NaturalWellness #ArtisanalDrinks #HealthyLiving",
+    "total_latency": 7.8,
+    "total_tokens": 3067
+  },
+  {
+    "model_id": "google/gemini-2.5-pro",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:29:29.975769+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 22.976,
+    "analyst_usage": {
+      "completion_tokens": 1999,
+      "prompt_tokens": 2018,
+      "total_tokens": 4017,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "This bottle encapsulates our entire journey—a story of dedication to pure, natural ingredients and artisanal craftsmanship, created to illuminate your wellness path.",
+      "key_themes_to_include": [
+        "The brand's origin story and journey",
+        "Purity and naturalness of ingredients (soybeans)",
+        "Artisanal, handcrafted quality",
+        "The 'glowing' essence of wellness and vitality",
+        "Celebrating the product as a milestone ('Our Story, Bottled')"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "artisanal dairy alternative",
+        "natural ingredients",
+        "plant-based wellness",
+        "brand story"
+      ],
+      "target_emotion": "Inspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA. Start with a captivating hook about a journey or a belief. In the body, weave the brand story with the product's pure, natural qualities. End with a question to encourage comments and a prompt to save the post for later inspiration.",
+          "style_notes": "Use warm, evocative language that mirrors the visual's 'luminous aura' and 'cinematic warmth'. The tone should be inspirational and authentic, like sharing a cherished story with a friend. A question is key to building community and driving engagement."
+        }
+      },
+      "primary_call_to_action": "What's one small step you've taken on your wellness journey? Share with us below, and save this post for a reminder of the magic in pure ingredients.",
+      "hashtags": [
+        "#OurStoryBottled",
+        "#HandcraftedSoyMilk",
+        "#ArtisanalWellness",
+        "#DairyAlternative",
+        "#PlantBasedPurity",
+        "#BrandStory",
+        "#WellnessJourney",
+        "#HealthyLiving"
+      ],
+      "emoji_suggestions": [
+        "✨",
+        "🌱",
+        "🤍"
+      ],
+      "task_type_notes": "Optimize for Brand Story & Milestones: Share the brand journey and achievements to build an emotional connection and foster trust with the audience."
+    },
+    "writer_latency": 15.97,
+    "writer_usage": {
+      "completion_tokens": 1461,
+      "prompt_tokens": 819,
+      "total_tokens": 2280,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "We always believed that true wellness begins with what nature provides. 🌱\n\nOur journey has been one of patience and passion, dedicated to artisanal craftsmanship. We started with the humble soybean, committed to using only pure, natural ingredients to create something truly special. This wasn't just about making a dairy alternative; it was about honoring a process and a purpose.\n\nThis bottle? It’s more than just a handcrafted soy milk. It’s our brand story, bottled. ✨ A celebration of plant-based wellness and the luminous glow that comes from within. It’s our heart, our history, and our hope for your health, all in one.\n\nWhat's one small step you've taken on your wellness journey? Share with us below, and save this post for a reminder of the magic in pure ingredients. 🤍\n\n#OurStoryBottled #HandcraftedSoyMilk #ArtisanalWellness #DairyAlternative #PlantBasedPurity #BrandStory #WellnessJourney #HealthyLiving",
+    "total_latency": 38.946,
+    "total_tokens": 6297
+  },
+  {
+    "model_id": "google/gemini-2.5-flash",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:30:10.926530+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 12.804,
+    "analyst_usage": {
+      "completion_tokens": 1677,
+      "prompt_tokens": 2018,
+      "total_tokens": 3695,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Celebrate the authentic journey and natural purity behind our handcrafted soy milk, inviting connection and trust through our brand story.",
+      "key_themes_to_include": [
+        "Handcrafted quality and care",
+        "Natural ingredients and purity",
+        "Brand journey and heritage",
+        "Wellness and vitality",
+        "Emotional connection and trust"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "dairy-free beverage",
+        "natural ingredients",
+        "artisanal plant-based",
+        "wellness drink"
+      ],
+      "target_emotion": "Aspirational, Serene, Trustworthy, Celebratory",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook (evoke wonder/story) → Brand Journey/Value (natural ingredients, handcrafted care, purity) → Engagement Question/CTA.",
+          "style_notes": "Emphasize the brand's authentic journey and the purity of the soy milk. Use language that evokes a sense of warmth, serenity, and natural glow, mirroring the visual aesthetic. Encourage reflection and sharing of personal wellness journeys to foster engagement and saves."
+        }
+      },
+      "primary_call_to_action": "What part of your wellness journey are you most proud of? Share below!",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#DairyFreeLife",
+        "#PlantBasedWellness",
+        "#NaturalIngredients",
+        "#ArtisanalBeverage",
+        "#BrandStory",
+        "#PureGoodness",
+        "#WellnessJourney",
+        "#EtherealVibes"
+      ],
+      "emoji_suggestions": [
+        "✨",
+        "🌿",
+        "🥛"
+      ],
+      "task_type_notes": "Focus on sharing the brand's authentic journey and milestones to build emotional connection and trust, adopting an inspirational and grateful tone."
+    },
+    "writer_latency": 9.664,
+    "writer_usage": {
+      "completion_tokens": 925,
+      "prompt_tokens": 772,
+      "total_tokens": 1697,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "Ever wondered what goes into true purity? ✨ Our journey began with a simple belief: that the best things are crafted with patience and love. Every drop of our `handcrafted soy milk` tells a story of dedication, from the carefully selected `natural ingredients` to the meticulous process that brings you this exceptional `dairy-free beverage`.\n\nWe pour our heart into every batch, ensuring it's not just an `artisanal plant-based` delight, but a testament to wellness and vitality. 🌿 It's more than just a `wellness drink`; it's pure goodness, made to nourish your body and soul, built on a heritage of trust and an unwavering commitment to quality. 🥛\n\nWhat part of your wellness journey are you most proud of? Share below!\n\n#HandcraftedSoyMilk #DairyFreeLife #PlantBasedWellness #NaturalIngredients #ArtisanalBeverage #BrandStory #PureGoodness #WellnessJourney #EtherealVibes",
+    "total_latency": 22.468,
+    "total_tokens": 5392
+  },
+  {
+    "model_id": "google/gemini-2.5-flash-preview-05-20",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:30:35.399664+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 4.969,
+    "analyst_usage": {
+      "completion_tokens": 408,
+      "prompt_tokens": 2018,
+      "total_tokens": 2426,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Celebrate the journey and natural essence of our handcrafted soy milk, embodying purity and dedication in every bottle.",
+      "key_themes_to_include": [
+        "Brand Story",
+        "Natural Ingredients",
+        "Handcrafted Quality",
+        "Purity & Vitality",
+        "Emotional Connection"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "dairy-free beverage",
+        "natural ingredients",
+        "artisanal plant milk",
+        "wellness drink"
+      ],
+      "target_emotion": "Inspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook (evoke wonder) + Value (share brand journey/benefits) + CTA (encourage engagement and trust)",
+          "style_notes": "Embrace a warm, ethereal, and slightly poetic tone. Use language that mirrors the visual's luminous aura and cinematic warmth. Focus on purity, naturalness, and the 'bottled story' concept. Encourage saves by offering a sense of shared journey and unique value."
+        }
+      },
+      "primary_call_to_action": "Discover the story behind our glow. What does 'pure' mean to you?",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#DairyFreeLife",
+        "#PlantBasedGoodness",
+        "#OurStoryBottled",
+        "#ArtisanalBeverage",
+        "#WellnessJourney",
+        "#NaturalIngredients"
+      ],
+      "emoji_suggestions": [
+        "✨",
+        "🌱",
+        "💖"
+      ],
+      "task_type_notes": "Optimize for Brand Story & Milestones: Share brand journey and achievements to build emotional connection and trust, adopting an inspirational, authentic, and grateful tone."
+    },
+    "writer_latency": 4.301,
+    "writer_usage": {
+      "completion_tokens": 220,
+      "prompt_tokens": 738,
+      "total_tokens": 958,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "Ever wondered what true purity tastes like? ✨ It's more than just a flavor; it's a journey, a dedication, a promise. From the humble soybean to the silky smooth **handcrafted soy milk** you hold, every bottle tells a story of intention and care. \n\nWe embarked on this path to create a **dairy-free beverage** that wasn't just an alternative, but a celebration of nature's finest. Sourcing only the most premium **natural ingredients**, we pour our heart into every batch, ensuring that our **artisanal plant milk** embodies vitality and freshness. This isn't just a drink; it's a **wellness drink** crafted with unwavering dedication, reflecting our belief in authentic goodness. We’re so grateful to share this journey with you, transforming simple ingredients into something truly extraordinary. 🌱\n\nDiscover the story behind our glow. What does 'pure' mean to you? 💖 \n#HandcraftedSoyMilk #DairyFreeLife #PlantBasedGoodness #OurStoryBottled #ArtisanalBeverage #WellnessJourney #NaturalIngredients",
+    "total_latency": 9.271,
+    "total_tokens": 3384
+  },
+  {
+    "model_id": "qwen/qwen3-30b-a3b",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-26T12:30:46.673681+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 13.347,
+    "analyst_usage": {
+      "completion_tokens": 784,
+      "prompt_tokens": 1998,
+      "total_tokens": 2782,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Discover the radiant journey of our handcrafted soy milk, where natural purity and artisanal heritage shine through every drop.",
+      "key_themes_to_include": [
+        "Artisanal craftsmanship",
+        "Natural wellness",
+        "Ethereal storytelling",
+        "Sustainable heritage",
+        "Cinematic authenticity"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "natural beverage",
+        "dairy-free alternative",
+        "artisanal wellness",
+        "organic soy milk"
+      ],
+      "target_emotion": "Trusting, Inspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook (celebratory origin story) + Value (health benefits + ingredient storytelling) + CTA (engage with our journey)",
+          "style_notes": "Mirror the ethereal lighting in language - use words like 'glow', 'radiant', 'luminous'. Reference the prismatic light as a metaphor for holistic wellness."
+        }
+      },
+      "primary_call_to_action": "Swipe up to explore how our soy milk nourishes your wellness journey - because purity deserves to shine.",
+      "hashtags": [
+        "#ArtisanalDairyFree",
+        "#RadiantWellness",
+        "#SoyStory",
+        "#NaturalElegance",
+        "#DairyFreeDelight"
+      ],
+      "emoji_suggestions": [
+        "✨",
+        "🌱",
+        "💧"
+      ],
+      "task_type_notes": "Optimize for Brand Story: Emphasize heritage, milestone celebration, and emotional authenticity to build trust"
+    },
+    "writer_latency": 8.062,
+    "writer_usage": {
+      "completion_tokens": 802,
+      "prompt_tokens": 716,
+      "total_tokens": 1518,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "✨ From the first sprout to the final pour, our handcrafted soy milk is a testament to timeless tradition and pure innovation. Every drop is a glow of heritage, pressed with care and kissed by the sun.  \n\nRooted in organic soy and kissed by nature’s rhythm, this dairy-free alternative isn’t just a drink—it’s a ritual. With every sip, you embrace the luminous power of natural wellness, where sustainable heritage meets artisanal purity. 🌱  \n\nJoin us in celebrating the radiant journey of wellness—because the purest flavors are those that tell a story. Swipe up to explore how our soy milk nourishes your path. 💧  \n\n#ArtisanalDairyFree #RadiantWellness #SoyStory #NaturalElegance #DairyFreeDelight",
+    "total_latency": 21.409,
+    "total_tokens": 4300
+  }
+]

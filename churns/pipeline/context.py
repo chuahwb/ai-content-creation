@@ -25,6 +25,7 @@ class PipelineContext:
     mode: str = "easy_mode"
     task_type: Optional[str] = None
     target_platform: Optional[Dict[str, Any]] = None
+    language: str = 'en'
     
     # User inputs
     prompt: Optional[str] = None
@@ -165,7 +166,8 @@ class PipelineContext:
             "request_details": {
                 "mode": self.mode,
                 "task_type": self.task_type,
-                "target_platform": self.target_platform
+                "target_platform": self.target_platform,
+                "language": self.language
             },
             "user_inputs": {
                 "prompt": self.prompt,
@@ -224,6 +226,7 @@ class PipelineContext:
             mode=request_details.get("mode", "easy_mode"),
             task_type=request_details.get("task_type"),
             target_platform=request_details.get("target_platform"),
+            language=request_details.get("language", 'en'),
             prompt=user_inputs.get("prompt"),
             image_reference=user_inputs.get("image_reference"),
             render_text=user_inputs.get("render_text", False),

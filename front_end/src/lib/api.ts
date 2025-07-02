@@ -10,6 +10,12 @@ import {
   WebSocketMessage,
   StageProgressUpdate,
   Platform,
+  CaptionResponse,
+  CaptionRegenerateRequest,
+  CaptionModelsResponse,
+  CaptionModelOption,
+  CaptionRequest,
+  CaptionSettings,
 } from '@/types/api';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
@@ -148,6 +154,11 @@ export class PipelineAPI {
         }
       }
 
+      // Add language setting
+      if (formData.language) {
+        requestData.append('language', formData.language);
+      }
+
       // Add image file if provided
       if (formData.image_file) {
         requestData.append('image_file', formData.image_file);
@@ -254,6 +265,52 @@ export class PipelineAPI {
           'Content-Type': 'multipart/form-data',
         },
       });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  // Caption generation methods
+  static async getCaptionModels(): Promise<CaptionModelsResponse> {
+    try {
+      const response = await apiClient.get('/config/caption-models');
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async generateCaption(
+    runId: string, 
+    imageId: string, 
+    request: CaptionRequest
+  ): Promise<CaptionResponse> {
+    try {
+      const response = await apiClient.post(`/runs/${runId}/images/${imageId}/caption`, request);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async regenerateCaption(
+    runId: string, 
+    imageId: string, 
+    version: number,
+    request: CaptionRegenerateRequest
+  ): Promise<CaptionResponse> {
+    try {
+      const response = await apiClient.post(`/runs/${runId}/images/${imageId}/caption/${version}/regenerate`, request);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async getCaptions(runId: string, imageId: string): Promise<any> {
+    try {
+      const response = await apiClient.get(`/runs/${runId}/images/${imageId}/captions`);
       return response.data;
     } catch (error) {
       return handleApiError(error as AxiosError);

@@ -33,6 +33,11 @@ class JSONExtractionError(Exception):
     pass
 
 
+class TruncatedResponseError(JSONExtractionError):
+    """Specific exception for truncated LLM responses that create malformed JSON."""
+    pass
+
+
 class RobustJSONParser:
     """
     Centralized, robust JSON parser for LLM responses.
@@ -43,6 +48,7 @@ class RobustJSONParser:
     - Common JSON formatting issues
     - Partial JSON responses
     - Multiple fallback extraction strategies
+    - Detection of truncated responses
     """
     
     def __init__(self, debug_mode: bool = False):
@@ -86,19 +92,41 @@ class RobustJSONParser:
             
         Raises:
             JSONExtractionError: If JSON cannot be extracted or validated
+            TruncatedResponseError: If response appears to be truncated
         """
-        # Step 1: Extract JSON string
+        # Step 1: Check for truncated response before attempting extraction
+        if self._is_likely_truncated_response(raw_response):
+            raise TruncatedResponseError(
+                f"Response appears to be truncated mid-generation. "
+                f"Last 100 characters: ...{raw_response[-100:]}"
+            )
+        
+        # Step 2: Extract JSON string
         json_str = self.extract_json_string(raw_response)
         if not json_str:
+            # Check if the failure was due to truncation in a different pattern
+            if self._contains_incomplete_json_patterns(raw_response):
+                raise TruncatedResponseError(
+                    f"Response contains incomplete JSON patterns, likely truncated. "
+                    f"Raw content preview: {raw_response[:200]}..."
+                )
+            
             raise JSONExtractionError(
                 f"Could not extract JSON from response. "
                 f"Raw content preview: {raw_response[:200]}..."
             )
         
-        # Step 2: Parse JSON string
+        # Step 3: Parse JSON string
         try:
             parsed_data = json.loads(json_str)
         except json.JSONDecodeError as e:
+            # Check if this is a truncation-related decode error
+            if self._is_truncation_json_error(json_str, e):
+                raise TruncatedResponseError(
+                    f"JSON parsing failed due to truncated content. "
+                    f"JSONDecodeError: {e}. Last 100 chars: ...{json_str[-100:]}"
+                )
+            
             if self.debug_mode:
                 print(f"Initial JSON parse failed: {e}")
                 print(f"Attempting repair on: {json_str[:200]}...")
@@ -119,7 +147,7 @@ class RobustJSONParser:
                     f"JSONDecodeError: {e}. Extracted JSON: {json_str[:500]}..."
                 )
         
-        # Step 3: Validate with schema if provided
+        # Step 4: Validate with schema if provided
         if expected_schema:
             try:
                 validated_model = expected_schema(**parsed_data)
@@ -231,11 +259,15 @@ class RobustJSONParser:
         return None
     
     def _extract_direct_json(self, text: str) -> Optional[str]:
-        """Try to parse the text directly as JSON."""
+        """Try to parse the text directly as JSON, with repair attempt."""
         try:
             json.loads(text)
             return text
         except json.JSONDecodeError:
+            # Try repairing the JSON and parsing again
+            repaired = self._attempt_json_repair(text)
+            if repaired and self._is_valid_json(repaired):
+                return repaired
             return None
     
     def _extract_partial_json(self, text: str) -> Optional[str]:
@@ -300,26 +332,148 @@ class RobustJSONParser:
         
         repaired = json_str
         
+        # Fix single quotes to double quotes first (preserves string integrity)
+        repaired = repaired.replace("'", '"')
+        
         # Fix trailing commas
         repaired = re.sub(r',(\s*[}\]])', r'\1', repaired)
         
-        # Fix unquoted keys (common LLM mistake)
-        repaired = re.sub(r'(\w+):', r'"\1":', repaired)
-        
-        # Fix single quotes to double quotes
-        repaired = repaired.replace("'", '"')
+        # Fix unquoted keys (only match keys that aren't already quoted)
+        repaired = re.sub(r'(?<!")(\w+)(?!"):', r'"\1":', repaired)
         
         # Fix line breaks in strings (basic attempt)
         repaired = re.sub(r'"\s*\n\s*"', '" "', repaired)
         
-        # Fix missing quotes around string values (basic patterns)
-        repaired = re.sub(r':\s*([a-zA-Z][a-zA-Z0-9_\s]*[a-zA-Z0-9])\s*([,}])', r': "\1"\2', repaired)
+        # Fix missing quotes around string values (only unquoted values)
+        repaired = re.sub(r':\s*([a-zA-Z][a-zA-Z0-9_\s]*[a-zA-Z0-9])(?=\s*[,}])', r': "\1"', repaired)
         
         # Verify the repair worked
         if self._is_valid_json(repaired):
             return repaired
         
         return None
+    
+    def _is_likely_truncated_response(self, raw_text: str) -> bool:
+        """
+        Detect if a response is likely truncated based on common patterns.
+        
+        Args:
+            raw_text: The raw response text
+            
+        Returns:
+            True if response appears truncated
+        """
+        if not raw_text or not raw_text.strip():
+            return False
+        
+        text = raw_text.strip()
+        
+        # Pattern 1: Ends with incomplete JSON string (quote without closing)
+        if re.search(r':\s*"[^"]*$', text):
+            return True
+        
+        # Pattern 2: Ends in the middle of a key-value pair
+        if re.search(r'[,{]\s*"[^"]*"?\s*:?\s*$', text):
+            return True
+        
+        # Pattern 3: Ends with incomplete array or object
+        if re.search(r'[,\[\{]\s*$', text):
+            return True
+        
+        # Pattern 4: Contains markdown code block start but no end
+        if '```json' in text and not text.strip().endswith('```'):
+            # Check if the JSON inside is incomplete
+            json_match = re.search(r'```json\s*(.*?)(?:```|$)', text, re.DOTALL)
+            if json_match:
+                json_content = json_match.group(1).strip()
+                if json_content and not self._is_likely_complete_json(json_content):
+                    return True
+        
+        return False
+    
+    def _contains_incomplete_json_patterns(self, raw_text: str) -> bool:
+        """
+        Check if text contains patterns suggesting incomplete JSON generation.
+        
+        Args:
+            raw_text: The raw response text
+            
+        Returns:
+            True if incomplete JSON patterns are detected
+        """
+        if not raw_text:
+            return False
+        
+        # Look for JSON-like structures that are clearly incomplete
+        patterns = [
+            r'\{\s*"[^"]*"\s*:\s*"[^"]*$',  # Object with unclosed string value
+            r'\[\s*"[^"]*$',                # Array with unclosed string
+            r'"\s*:\s*\{\s*"[^"]*$',       # Nested object with unclosed string
+            r'"[^"]*"\s*:\s*\[\s*$',       # Array value that's just opened
+        ]
+        
+        for pattern in patterns:
+            if re.search(pattern, raw_text):
+                return True
+        
+        return False
+    
+    def _is_truncation_json_error(self, json_str: str, error: json.JSONDecodeError) -> bool:
+        """
+        Determine if a JSONDecodeError is likely due to truncation.
+        
+        Args:
+            json_str: The JSON string that failed to parse
+            error: The JSONDecodeError that occurred
+            
+        Returns:
+            True if error is likely due to truncation
+        """
+        error_msg = str(error).lower()
+        
+        # Common truncation-related JSON errors
+        truncation_indicators = [
+            "unterminated string",
+            "expecting ',' delimiter",
+            "expecting '}'" and json_str.strip().endswith('"'),
+            "expecting ']'" and json_str.strip().endswith('"'),
+            "end of json input",
+        ]
+        
+        for indicator in truncation_indicators:
+            if isinstance(indicator, str) and indicator in error_msg:
+                return True
+            elif isinstance(indicator, bool) and indicator:  # For composite conditions
+                return True
+        
+        # Check if error position is near the end of the string
+        if hasattr(error, 'pos') and error.pos > len(json_str) * 0.8:
+            return True
+        
+        return False
+    
+    def _is_likely_complete_json(self, json_str: str) -> bool:
+        """
+        Quick heuristic to check if JSON string appears complete.
+        
+        Args:
+            json_str: JSON string to check
+            
+        Returns:
+            True if JSON appears complete
+        """
+        if not json_str.strip():
+            return False
+        
+        text = json_str.strip()
+        
+        # Must start and end with proper JSON delimiters
+        if text.startswith('{') and text.endswith('}'):
+            return True
+        if text.startswith('[') and text.endswith(']'):
+            return True
+        
+        return False
 
 
 # Convenience functions for backward compatibility and easy usage

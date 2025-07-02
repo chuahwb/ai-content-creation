@@ -41,6 +41,7 @@ interface RefinementModalProps {
   runId: string;
   imageIndex: number | null;
   imagePath: string | null;
+  parentRefinementJobId?: string; // For chain refinements
   onRefinementSubmit: (refinementData: any) => void;
 }
 
@@ -77,6 +78,7 @@ export default function RefinementModal({
   runId,
   imageIndex,
   imagePath,
+  parentRefinementJobId,
   onRefinementSubmit
 }: RefinementModalProps) {
   const [tabValue, setTabValue] = useState(0);
@@ -217,10 +219,18 @@ export default function RefinementModal({
     try {
       const formData = new FormData();
       
-      // Common fields
-      formData.append('parent_image_id', `image_${imageIndex}`);
-      formData.append('parent_image_type', 'original');
-      formData.append('generation_index', imageIndex?.toString() || '0');
+      // Common fields - handle chain refinements vs original refinements
+      if (parentRefinementJobId) {
+        // Chain refinement: refining a refined image
+        formData.append('parent_image_id', parentRefinementJobId);
+        formData.append('parent_image_type', 'refinement');
+        // Don't set generation_index for chain refinements
+      } else {
+        // Original refinement: refining a generated image
+        formData.append('parent_image_id', `image_${imageIndex}`);
+        formData.append('parent_image_type', 'original');
+        formData.append('generation_index', imageIndex?.toString() || '0');
+      }
 
       // Tab-specific fields
       if (tabValue === 0) { // Subject Repair
@@ -322,7 +332,7 @@ export default function RefinementModal({
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <AutoFixHighIcon sx={{ fontSize: 28 }} />
           <Typography variant="h5" component="div" sx={{ fontWeight: 600 }}>
-            Refine Image - Option {(imageIndex || 0) + 1}
+            {parentRefinementJobId ? 'Refine Further' : `Refine Image - Option ${(imageIndex || 0) + 1}`}
           </Typography>
         </Box>
         <IconButton onClick={handleClose} sx={{ color: 'white' }}>
