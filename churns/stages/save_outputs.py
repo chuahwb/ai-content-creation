@@ -147,11 +147,12 @@ def _get_parent_image_relative_path(ctx: PipelineContext) -> str:
     """Get relative path to the parent image."""
     if ctx.parent_image_type == "original":
         if ctx.generation_index is not None:
-            return f"originals/image_{ctx.generation_index}.png"
+            # Images are stored directly in run directory, not in originals/
+            return f"edited_image_strategy_{ctx.generation_index}_*.png"
         else:
             return f"image_{ctx.parent_image_id}.png"
     elif ctx.parent_image_type == "refinement":
-        return f"refinements/{ctx.parent_image_id}.png"
+        return f"refinements/{ctx.parent_image_id}_from_*.png"
     else:
         return f"unknown/{ctx.parent_image_id}.png"
 

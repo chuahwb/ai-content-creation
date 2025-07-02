@@ -84,7 +84,7 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
     Resolve the full path to the base image based on context.
     
     Logic:
-    - If parent_image_type is "original", look in originals/ directory
+    - If parent_image_type is "original", look for generated images in run directory
     - If parent_image_type is "refinement", look for specific refinement job
     - Use generation_index for original images
     """
@@ -96,12 +96,12 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
         
         base_path = Path(f"./data/runs/{ctx.parent_run_id}")
         logger.info(f"Resolving base image path for original image {ctx.generation_index} in {base_path}")
-        # Try different naming patterns for original images
+        
+        # Updated patterns to match actual file structure
         patterns = [
-            f"originals/image_{ctx.generation_index}*.png",
-            f"image_{ctx.generation_index}*.png",
-            f"generated_image_{ctx.generation_index}*.png",
-            f"edited_image_strategy_{ctx.generation_index}*.png"
+            f"edited_image_strategy_{ctx.generation_index}_*.png",
+            f"generated_image_strategy_{ctx.generation_index}_*.png",
+            f"image_{ctx.generation_index}*.png",  # Fallback pattern
         ]
 
         all_matches = []
@@ -129,13 +129,29 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
         
         # Try different naming patterns for refinement images
         possible_paths = [
-            base_path / f"refinement_{ctx.parent_image_id}.png",
+            base_path / "refinements" / f"{ctx.parent_image_id}_from_*.png",
+            base_path / "refinements" / f"refinement_{ctx.parent_image_id}.png",
         ]
         
-        for path in possible_paths:
-            if path.exists():
-                logger.info(f"Found refinement image at: {path}")
-                return str(path)
+        # Check for glob patterns first
+        for pattern_path in possible_paths:
+            if "*" in str(pattern_path):
+                # Use glob for patterns with wildcards
+                parent_dir = pattern_path.parent
+                pattern = pattern_path.name
+                matches = list(parent_dir.glob(pattern))
+                if matches:
+                    # Sort by modification time (newest first)
+                    matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    path = matches[0]
+                    if path.exists():
+                        logger.info(f"Found refinement image at: {path}")
+                        return str(path)
+            else:
+                # Direct path check
+                if pattern_path.exists():
+                    logger.info(f"Found refinement image at: {pattern_path}")
+                    return str(pattern_path)
         
         raise FileNotFoundError(f"Refinement image not found for job {ctx.parent_image_id} in {base_path}")
     
