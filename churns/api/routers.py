@@ -278,7 +278,7 @@ async def create_refinement(
     
     # DEBUG: Log refinement data received from frontend
     logger.info(f"Refinement request received - Job ID: {refinement_job.id}")
-    # logger.info(f"Refinement data from frontend: {refinement_data}")
+    logger.info(f"Refinement data from frontend: {refinement_data}")
     logger.info(f"Parent image details - ID: {parent_image_id}, Type: {parent_image_type}, Index: {generation_index}")
     
     # Start background refinement execution

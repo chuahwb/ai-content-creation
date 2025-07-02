@@ -218,11 +218,6 @@ class PipelineContext:
         
         ctx = cls(
             run_id=pipeline_settings.get("run_timestamp", datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")),
-            render_text=user_inputs.get("render_text", False),
-            apply_branding=user_inputs.get("apply_branding", False),
-            branding_elements=user_inputs.get("branding_elements"),
-            task_description=user_inputs.get("task_description"),
-            marketing_goals=user_inputs.get("marketing_goals"),
             creativity_level=pipeline_settings.get("creativity_level_selected", 2),
             num_variants=pipeline_settings.get("num_variants", 3),
             pipeline_mode=pipeline_settings.get("pipeline_mode", "generation"),
@@ -231,6 +226,11 @@ class PipelineContext:
             target_platform=request_details.get("target_platform"),
             prompt=user_inputs.get("prompt"),
             image_reference=user_inputs.get("image_reference"),
+            render_text=user_inputs.get("render_text", False),
+            apply_branding=user_inputs.get("apply_branding", False),
+            branding_elements=user_inputs.get("branding_elements"),
+            task_description=user_inputs.get("task_description"),
+            marketing_goals=user_inputs.get("marketing_goals"),
             image_analysis_result=processing_context.get("image_analysis_result"),
             suggested_marketing_strategies=processing_context.get("suggested_marketing_strategies"),
             style_guidance_sets=processing_context.get("style_guidance_sets"),

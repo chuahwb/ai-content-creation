@@ -8,14 +8,19 @@ configurable stage-based executor.
 import time
 import yaml
 import importlib
-import asyncio
-import inspect
 from pathlib import Path
-from logging import Logger
+import logging
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 from .context import PipelineContext
 from ..core.client_config import get_configured_clients
 from ..api.database import StageStatus
+
+# Setup Logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("executor")
 
 class PipelineExecutor:
     """Executes pipeline stages in configurable order."""
@@ -203,7 +208,6 @@ class PipelineExecutor:
         self, 
         ctx: PipelineContext, 
         progress_callback: Optional[Callable[[str, int, StageStatus, str, Optional[Dict], Optional[str], Optional[float]], Awaitable[None]]] = None,
-        logger: Optional[Logger] = None
     ) -> PipelineContext:
         """Execute all stages in order with async support and progress callbacks."""
         logger.info(f"Starting async {self.mode} pipeline execution with {len(self.stages)} stages : {self.stages}")

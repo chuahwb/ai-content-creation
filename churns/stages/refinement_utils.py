@@ -215,7 +215,8 @@ def save_refinement_result(ctx: PipelineContext, image_bytes: bytes) -> str:
     if ctx.parent_image_type == "original":
         parent_id = f"{ctx.generation_index}"
     
-    filename = f"{ctx.run_id}_from_{parent_id}.png"
+    timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
+    filename = f"{ctx.run_id}_from_{parent_id}_{timestamp}.png"
     output_path = output_dir / filename
     
     # Save image

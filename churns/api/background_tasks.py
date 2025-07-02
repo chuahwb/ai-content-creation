@@ -195,7 +195,6 @@ class PipelineTaskProcessor:
             
             # Create pipeline context
             context = PipelineContext.from_dict(pipeline_data)
-            logger.info(f"Pipeline Context: {context}")
             
             # Set the output directory for stages to use
             context.output_directory = str(output_dir)
@@ -359,7 +358,7 @@ class PipelineTaskProcessor:
             
             # Execute pipeline
             executor = PipelineExecutor()
-            await executor.run_async(context, progress_callback, logger)
+            await executor.run_async(context, progress_callback)
             
             # Calculate final cost summary using actual LLM usage data
             await self._calculate_final_cost_summary(context)
@@ -544,7 +543,7 @@ class PipelineTaskProcessor:
         try:
             # DEBUG: Log refinement data being processed in background task
             logger.info(f"Starting refinement execution - Job ID: {job_id}")
-            # logger.info(f"Refinement data in background processor: {refinement_data}")
+            logger.info(f"Refinement data in background processor: {refinement_data}")
             
             # Get job details from database
             with Session(engine) as session:
