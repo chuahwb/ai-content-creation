@@ -193,12 +193,16 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       const response = await PipelineAPI.submitRun(data);
       
       toast.success('Pipeline run started successfully!');
-      onRunStarted(response);
       
       // Reset form for next use
       reset();
       removeImage();
       setShowCustomLanguage(false);
+      
+      // Ensure redirect happens after form cleanup with a slight delay
+      setTimeout(() => {
+        onRunStarted(response);
+      }, 100);
       
     } catch (error: any) {
       console.error('Failed to submit run:', error);

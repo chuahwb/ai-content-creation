@@ -20,8 +20,13 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState<'form' | 'results' | 'history'>('form');
 
   const handleRunStarted = (run: PipelineRunResponse) => {
+    console.log('Pipeline run started, redirecting to results:', run.id);
     setCurrentRun(run);
     setActiveTab('results');
+    // Force a small delay to ensure state updates are processed
+    setTimeout(() => {
+      console.log('Redirect complete, active tab:', 'results');
+    }, 50);
   };
 
   const handleViewRun = (run: PipelineRunResponse) => {
