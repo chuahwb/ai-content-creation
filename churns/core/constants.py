@@ -25,7 +25,7 @@ All constants copied verbatim from the original combined_pipeline.py
 from typing import Dict, List, Any
 
 # --- LLM Configuration ---
-MAX_LLM_RETRIES = 1
+MAX_LLM_RETRIES = 3
 FORCE_MANUAL_JSON_PARSE = False  # Set to False to try Instructor first where applicable
 VERBOSE_COST_LATENCY_SUMMARY = True  # Control verbosity of cost/latency summary
 

@@ -107,7 +107,8 @@ Do not include any other text or formatting outside this JSON structure.
 def _get_style_guider_user_prompt(
     strategies: List[Dict[str, Any]],
     task_type: str,
-    image_subject_from_analysis: Optional[str],
+    image_analysis: Optional[Dict[str, Any]],
+    image_instruction: Optional[str],
     user_prompt_original: Optional[str],
     num_strategies: int,
     use_instructor_parsing: bool
@@ -125,8 +126,37 @@ def _get_style_guider_user_prompt(
         prompt_parts.append(f"  - Objective: {strategy.get('target_objective', 'N/A')}")
         prompt_parts.append(f"  - Voice: {strategy.get('target_voice', 'N/A')}")
 
-    if image_subject_from_analysis: 
-        prompt_parts.append(f"\nConsider that the primary visual subject (from image analysis, if an image was provided) is: '{image_subject_from_analysis}'. Styles should complement or creatively transform this if applicable.")
+    if image_instruction and image_analysis:
+        prompt_parts.append("\n**MANDATORY CONTEXT & CONSTRAINTS FOR STYLE GENERATION:**")
+        prompt_parts.append(f"The user has provided a reference image and a specific instruction: '{image_instruction}'.")
+        prompt_parts.append("Your generated styles MUST respect this instruction. Use the following analysis of the original image as context to inform your style suggestions. Your styles must reflect the user's desired changes, not contradict them.")
+        
+        analysis_details = ["- Analysis of Reference Image:"]
+        
+        def format_list(items: Optional[List[str]]) -> str:
+            return ', '.join(items) if items else "N/A"
+        
+        details_map = {
+            "Angle/Orientation": image_analysis.get("angle_orientation"),
+            "Setting/Environment": image_analysis.get("setting_environment"),
+            "Style/Mood": image_analysis.get("style_mood"),
+            "Secondary Elements": format_list(image_analysis.get("secondary_elements")),
+        }
+        
+        for key, value in details_map.items():
+            if value and value != "N/A":
+                analysis_details.append(f"  - {key}: {value}")
+                
+        if len(analysis_details) > 1:
+            prompt_parts.append("\n".join(analysis_details))
+        
+        prompt_parts.append("\nFor example, if the user instruction is to 'preserve the angle', you are forbidden from suggesting styles with conflicting camera perspectives (like 'top-down'). If the user wants to 'make it more dramatic', your styles must introduce elements of drama, using the original style/mood as a starting point. This is a strict, non-negotiable requirement.")
+
+    elif image_analysis:
+        image_subject = image_analysis.get('main_subject')
+        if image_subject:
+            prompt_parts.append(f"\nConsider that the primary visual subject (from image analysis) is: '{image_subject}'.")
+
     if user_prompt_original: 
         prompt_parts.append(f"\nUser's original prompt hint for overall context: '{user_prompt_original}'.")
 
@@ -163,7 +193,7 @@ def run(ctx: PipelineContext) -> None:
     
     # Get image analysis result
     image_analysis = ctx.image_analysis_result
-    image_subject_from_analysis = image_analysis.get("main_subject") if isinstance(image_analysis, dict) else None
+    image_instruction = ctx.image_reference.get("instruction") if ctx.image_reference else None
     user_prompt_original = ctx.prompt
 
     ctx.log(f"Generating style guidance for {num_strategies} strategies (Creativity: {creativity_level})")
@@ -190,7 +220,7 @@ def run(ctx: PipelineContext) -> None:
     )
     
     user_prompt_sg = _get_style_guider_user_prompt(
-        strategies, task_type, image_subject_from_analysis, 
+        strategies, task_type, image_analysis, image_instruction,
         user_prompt_original, num_strategies, use_instructor_for_sg_call
     )
 
@@ -233,10 +263,29 @@ def run(ctx: PipelineContext) -> None:
 
         completion_sg = effective_client_sg.chat.completions.create(**llm_args_sg)
 
+        # Check for empty or invalid response before processing
+        if completion_sg is None:
+            raise Exception("API call returned None response - possible provider issue")
+        
         if actually_use_instructor_parsing_sg:
+            if not hasattr(completion_sg, 'style_guidance_sets') or not completion_sg.style_guidance_sets:
+                raise Exception("Instructor response missing or empty style_guidance_sets - possible API failure")
             style_guidance_list_data = [item.model_dump() for item in completion_sg.style_guidance_sets]
         else:  # Manual parse using centralized parser
+            if not hasattr(completion_sg, 'choices') or not completion_sg.choices:
+                raise Exception("API response missing choices - possible provider failure")
+            
+            if not completion_sg.choices[0] or not hasattr(completion_sg.choices[0], 'message'):
+                raise Exception("API response missing message in first choice - malformed response")
+            
             raw_content_sg = completion_sg.choices[0].message.content
+            
+            # Check for empty response content
+            if not raw_content_sg or not raw_content_sg.strip():
+                # Log provider issue details
+                provider_context = f"Provider: {STYLE_GUIDER_MODEL_PROVIDER}, Model: {STYLE_GUIDER_MODEL_ID}"
+                ctx.log(f"WARNING: Empty response content from API. {provider_context}")
+                raise Exception(f"Empty response content from API - provider may be experiencing issues. {provider_context}")
             
             try:
                 # Use centralized parser with fallback validation for list handling
@@ -268,13 +317,14 @@ def run(ctx: PipelineContext) -> None:
         ctx.log(f"Successfully generated {len(style_guidance_list_data)} style guidance sets")
         
         # Extract usage information
+        usage_info_sg = None
         raw_response_sg_obj = getattr(completion_sg, '_raw_response', completion_sg)
         if hasattr(raw_response_sg_obj, 'usage') and raw_response_sg_obj.usage:
             usage_info_sg = raw_response_sg_obj.usage.model_dump()
             ctx.log(f"Token Usage (Style Guider): {usage_info_sg}")
-        else: 
+        else:
             ctx.log("Token usage data not available for Style Guider")
-            
+        
         # Store results directly on context
         ctx.style_guidance_sets = style_guidance_list_data
         if usage_info_sg: 

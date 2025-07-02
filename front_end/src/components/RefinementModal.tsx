@@ -241,17 +241,7 @@ export default function RefinementModal({
       }
 
       // Submit refinement request
-      const response = await fetch(`/api/v1/runs/${runId}/refine`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(errorData.detail || `Server error: ${response.status}`);
-      }
-
-      const result = await response.json();
+      const result = await PipelineAPI.submitRefinement(runId, formData);
       
       toast.success('Refinement started! Check progress in real-time.');
       onRefinementSubmit(result);
