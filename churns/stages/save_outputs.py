@@ -20,7 +20,7 @@ from ..pipeline.context import PipelineContext
 from ..models import CostDetail
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """
     Save and finalize refinement outputs.
     
@@ -43,6 +43,7 @@ def run(ctx: PipelineContext) -> None:
     # Validate refinement result exists
     if not ctx.refinement_result:
         raise ValueError("No refinement result found to save")
+    ctx.log("Received refinement result: ", ctx.refinement_result)
     
     # Extract result information
     output_path = ctx.refinement_result.get("output_path")
@@ -50,7 +51,7 @@ def run(ctx: PipelineContext) -> None:
         raise ValueError(f"Refinement output file not found: {output_path}")
     
     # Update refinements index file
-    _update_refinements_index(ctx)
+    # _update_refinements_index("save_outputs", ctx)
     
     # Prepare final database updates
     _prepare_database_updates(ctx)
@@ -64,27 +65,9 @@ def run(ctx: PipelineContext) -> None:
     ctx.log(f"Total cost: ${ctx.refinement_cost:.3f}")
 
 
-def _update_refinements_index(ctx: PipelineContext) -> None:
+def _update_refinements_index(stage_name: str, ctx: PipelineContext) -> None:
     """
     Update the refinements.json index file for the parent run.
-    
-    FILE STRUCTURE:
-    {
-        "refinements": [
-            {
-                "job_id": "job_1",
-                "parent_image_id": "original_0",
-                "parent_image_path": "originals/image_0.png",
-                "image_path": "refinements/job_1_from_0.png",
-                "type": "prompt",
-                "summary": "Add sunset lighting",
-                "cost": 0.15,
-                "created_at": "2024-01-01T12:00:00Z"
-            }
-        ],
-        "total_cost": 0.27,
-        "total_refinements": 2
-    }
     """
     
     # Path to refinements index file
@@ -110,12 +93,13 @@ def _update_refinements_index(ctx: PipelineContext) -> None:
     
     refinement_entry = {
         "job_id": ctx.run_id,
+        "stage_name": stage_name,
         "parent_image_id": ctx.parent_image_id,
         "parent_image_path": parent_image_path,
         "image_path": relative_output_path,
         "type": ctx.refinement_type,
-        "summary": _generate_summary(ctx),
-        "cost": ctx.refinement_cost or 0.0,
+        "summary": "Save outputs",
+        "cost": 0.0,
         "created_at": datetime.utcnow().isoformat() + "Z"
     }
     

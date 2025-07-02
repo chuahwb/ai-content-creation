@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 class ImageAnalysisResult(BaseModel):
     """Structured result of the objective visual analysis of the image."""
     main_subject: str = Field(..., description="The single, primary subject of the image (e.g., 'Gourmet Burger', 'Latte Art', 'Restaurant Interior'). Should be concise and based SOLELY on visual content.")
-    secondary_elements: Optional[List[str]] = Field(None, description="List other notable objects or elements visually present in the image. Omit if not applicable or if analysis is focused only on main_subject.")
+    secondary_elements: Optional[List[str]] = Field(None, description="List other notable objects or elements visually present in the image that SURROUND the main subject. Do not include elements that are ON the main subject (e.g., for a burger, list the fries and drink next to it, not the sesame seeds on the bun). Omit if not applicable or if analysis is focused only on main_subject.")
+    angle_orientation: Optional[str] = Field(None, description="Describe the camera angle or orientation from which the main subject is viewed (e.g., 'eye-level shot', 'top-down view', '45-degree angle shot', 'side view').")
     setting_environment: Optional[str] = Field(None, description="Describe the background or setting of the image as visually observed. Omit if not applicable or if analysis is focused only on main_subject.")
     style_mood: Optional[str] = Field(None, description="Describe the inferred visual style, mood, or atmosphere of the image based SOLELY on its visual content. Omit if not applicable or if analysis is focused only on main_subject.")
     extracted_text: Optional[str] = Field(None, description="Extract any visible text from the image. Omit if no text is visible or if analysis is focused only on main_subject.")

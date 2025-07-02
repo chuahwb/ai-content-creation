@@ -92,7 +92,7 @@ def run(ctx: PipelineContext) -> None:
         f"The F&B marketing context is: Task='{task_type}', Target Platform='{platform}'.",
     ]
     if user_has_provided_instruction:
-        vlm_prompt_text_parts.append("Provide a detailed visual analysis. Identify the `main_subject` concisely. Also describe any `secondary_elements`, the `setting_environment`, the visual `style_mood` of the image, and extract any `extracted_text` visible in the image.")
+        vlm_prompt_text_parts.append("Provide a detailed visual analysis. Identify the `main_subject` concisely. Also describe its `angle_orientation` (e.g., 'top-down view', 'side view'). For `secondary_elements`, list items that SURROUND the main subject, not elements ON it. Also describe the `setting_environment`, the visual `style_mood` of the image, and extract any `extracted_text` visible in the image.")
     else:
         vlm_prompt_text_parts.append("Strictly identify ONLY the `main_subject` of the image. Do not provide analysis for any other fields like secondary elements, setting, style, or extracted text, even if they are part of the response model. Those fields should be omitted or explicitly set to null/None if the model requires them.")
     vlm_prompt_text_parts.append("Focus strictly on what is visually present in the image. Do not infer or add elements not visible. Provide the analysis based on the `ImageAnalysisResult` response model. Be concise and objective.")

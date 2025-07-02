@@ -316,7 +316,7 @@ def _get_creative_expert_user_prompt(
         user_prompt_parts.append("\n**Style Direction to Follow (Provided by Style Guider):**")
         user_prompt_parts.append(f"- Style Keywords: {', '.join(style_guidance_item.style_keywords if style_guidance_item.style_keywords else [])}")
         user_prompt_parts.append(f"- Style Description: {style_guidance_item.style_description if style_guidance_item.style_description else 'N/A'}")
-        user_prompt_parts.append(f"- Marketing Impact of this Style: {style_guidance_item.marketing_impact if style_guidance_item.marketing_impact else 'N/A'}")
+        # user_prompt_parts.append(f"- Marketing Impact of this Style: {style_guidance_item.marketing_impact if style_guidance_item.marketing_impact else 'N/A'}")
         user_prompt_parts.append("   Your `visual_style` field description in the JSON output MUST be a detailed and creative elaboration of these provided style elements, adhering to its artistic boundaries and constraints.")
     else:
         user_prompt_parts.append("\n**Style Direction to Follow:** No specific style guidance provided by Style Guider; invent a style based on the creativity level (from system prompt) and other inputs.")

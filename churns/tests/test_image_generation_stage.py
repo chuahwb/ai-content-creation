@@ -149,7 +149,7 @@ class TestImageGenerationStage:
         assert len(ctx.generated_image_results) == 2
         result = ctx.generated_image_results[0]
         assert result["status"] == "success"
-        assert "edited_image_strategy_0_" in result["result_path"]
+        assert "edited_image_strategy_0" in result["result_path"]
         
         # Verify edit API was called instead of generate
         ctx.image_generation_client.images.edit.assert_called()

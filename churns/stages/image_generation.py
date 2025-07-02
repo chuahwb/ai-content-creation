@@ -153,9 +153,9 @@ async def generate_image(
                     timestamp_img = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
 
                     if operation_type == "editing":
-                        local_filename = f"edited_image_strategy_{strategy_index}_{timestamp_img}.png"
+                        local_filename = f"edited_image_strategy_{strategy_index}.png"
                     else:  # Covers "generation" and "generation_with_reference_in_prompt"
-                        local_filename = f"generated_image_strategy_{strategy_index}_{timestamp_img}.png"
+                        local_filename = f"generated_image_strategy_{strategy_index}.png"
 
                     saved_filepath = os.path.join(run_directory, local_filename)
                     with open(saved_filepath, "wb") as f:
@@ -174,9 +174,9 @@ async def generate_image(
                     img_response_download.raise_for_status()
                     timestamp_img_url = datetime.datetime.now().strftime('%Y%m%d%H%M%S%f')
                     if operation_type == "editing":
-                        url_filename = f"edited_image_strategy_{strategy_index}_{timestamp_img_url}.png"
+                        url_filename = f"edited_image_strategy_{strategy_index}.png"
                     else:
-                        url_filename = f"generated_image_strategy_{strategy_index}_{timestamp_img_url}.png"
+                        url_filename = f"generated_image_strategy_{strategy_index}.png"
 
                     saved_filepath = os.path.join(run_directory, url_filename)
                     with open(saved_filepath, "wb") as f:

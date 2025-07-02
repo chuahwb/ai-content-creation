@@ -12,8 +12,8 @@ import {
   Platform,
 } from '@/types/api';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+const WS_BASE_URL = (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000').replace(/\/+$/, '');
 
 // Create axios instance with default config
 const apiClient = axios.create({
@@ -229,6 +229,30 @@ export class PipelineAPI {
     try {
       const response = await apiClient.get(`/files/${runId}/${filename}`, {
         responseType: 'blob',
+      });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  // Get refinements for a run
+  static async getRefinements(runId: string): Promise<any> {
+    try {
+      const response = await apiClient.get(`/runs/${runId}/refinements`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  // Submit refinement request
+  static async submitRefinement(runId: string, formData: FormData): Promise<any> {
+    try {
+      const response = await apiClient.post(`/runs/${runId}/refine`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       });
       return response.data;
     } catch (error) {

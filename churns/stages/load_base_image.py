@@ -7,6 +7,7 @@ images and previously refined images.
 """
 
 import os
+import asyncio
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -15,7 +16,7 @@ from ..pipeline.context import PipelineContext
 from ..models import PipelineCostSummary, CostDetail
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """
     Load base image and metadata for refinement.
     
@@ -51,7 +52,8 @@ def run(ctx: PipelineContext) -> None:
     
     # Load and validate image
     try:
-        with Image.open(ctx.base_image_path) as img:
+        img = await asyncio.to_thread(Image.open, ctx.base_image_path)
+        with img:
             ctx.log(f"Loaded base image: {img.size[0]}x{img.size[1]} {img.mode}")
             # Store basic image info
             ctx.base_image_metadata = {
@@ -86,16 +88,18 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
             raise ValueError("generation_index required for original image type")
         
         base_path = Path(f"./data/runs/{ctx.parent_run_id}")
-        
+        ctx.log(f"Resolving base image path for original image {ctx.generation_index} in {base_path}")
         # Try different naming patterns for original images
         possible_paths = [
             base_path / "originals" / f"image_{ctx.generation_index}.png",
             base_path / f"image_{ctx.generation_index}.png",
-            base_path / f"generated_image_{ctx.generation_index}.png"
+            base_path / f"generated_image_{ctx.generation_index}.png",
+            base_path / f"edited_image_strategy_{ctx.generation_index}.png"
         ]
         
         for path in possible_paths:
             if path.exists():
+                ctx.log(f"Found original image at: {path}")
                 return str(path)
         
         raise FileNotFoundError(f"Original image not found for index {ctx.generation_index} in {base_path}")
@@ -107,13 +111,12 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
         
         # Try different naming patterns for refinement images
         possible_paths = [
-            base_path / "refinements" / f"{ctx.parent_image_id}.png",
-            base_path / "refinements" / f"{ctx.parent_image_id}_refined.png",
-            base_path / f"refinement_{ctx.parent_image_id}.png"
+            base_path / f"refinement_{ctx.parent_image_id}.png",
         ]
         
         for path in possible_paths:
             if path.exists():
+                ctx.log(f"Found refinement image at: {path}")
                 return str(path)
         
         raise FileNotFoundError(f"Refinement image not found for job {ctx.parent_image_id} in {base_path}")
