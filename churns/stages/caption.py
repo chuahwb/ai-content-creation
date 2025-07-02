@@ -146,7 +146,7 @@ def _extract_style_context(ctx: PipelineContext, prompt_index: int) -> Dict[str,
     return style_context
 
 
-def _get_analyst_system_prompt() -> str:
+def _get_analyst_system_prompt(language: str = 'en') -> str:
     """Returns the system prompt for the Analyst LLM."""
     # ============================
     # ===== ENHANCEMENT AREA =====
@@ -154,11 +154,22 @@ def _get_analyst_system_prompt() -> str:
     # The original prompt was good. The enhanced version is more explicit about
     # the 'why' behind the SEO, focusing on creating 'save-worthy' content
     # and providing more detailed, actionable instructions for each platform.
-    return """You are a master social media strategist and SEO expert. Your task is to analyze a comprehensive set of marketing and visual data and distill it into a structured JSON "Caption Brief" for a creative copywriter. You do not write the final caption yourself. Your ultimate goal is to create a brief for content so valuable and discoverable that users will **save** it for later.
+    
+    # Map language codes to readable names
+    language_names = {
+        'en': 'ENGLISH',
+        'zh': 'SIMPLIFIED CHINESE',
+        'es': 'SPANISH',
+        'fr': 'FRENCH',
+        'ja': 'JAPANESE'
+    }
+    language_name = language_names.get(language, language.upper())
+    
+    return f"""You are a master social media strategist and SEO expert. Your task is to analyze a comprehensive set of marketing and visual data and distill it into a structured JSON "Caption Brief" for a creative copywriter. You do not write the final caption yourself. Your ultimate goal is to create a brief for content so valuable and discoverable that users will **save** it for later.
 
 **Instructions:**
 - Carefully analyze all the provided CONTEXT_DATA.
-- **Language Consistency:** Generate ALL fields in the `CaptionBrief` JSON object (including `core_message`, `key_themes_to_include`, `seo_keywords`, `target_emotion`, `primary_call_to_action`, and `hashtags`) in English as the primary language. However, preserve authentic cultural or aesthetic terms (e.g., "Japandi", "wabi-sabi", "matcha") when they add value and authenticity to the content. Only switch to a non-English primary language if the user's input data (marketing goals, task description, or explicit instructions) clearly indicates a different target language.
+- **Language Consistency:** Generate the *language-controlled* fields listed below in {language_name}. Preserve authentic terms (e.g., "Japandi") but do not switch languages elsewhere.
 - Follow the USER_SETTINGS if they are provided. If a user setting conflicts with the context data (e.g., user-selected tone vs. target_voice), the user's choice MUST be prioritized.
 - If a setting is not provided by the user, you must infer the optimal choice from the context data as per the AUTO_MODE_LOGIC.
 - Generate a single, valid JSON object based on the CaptionBrief schema.
@@ -177,25 +188,27 @@ def _get_analyst_system_prompt() -> str:
 - **Pinterest:** Treat this as a visual search engine. The caption must be a mini-blog post: a compelling, keyword-rich Title followed by a detailed, helpful description that makes it a top search result.
 - **Xiaohongshu:** The caption title MUST be a hook-y, attention-grabbing long-tail keyword phrase (标题党 style). The body should be a helpful, authentic note, using emojis to enhance readability. The goal is to provide immense value to encourage saves (收藏) and comments.
 
-**Required JSON Output Format:**
-{
+**CRITICAL JSON STRUCTURE REQUIREMENTS:**
+You must output a valid JSON object with exactly these fields. Do not omit any field:
+
+{{
   "core_message": "A concise, one-sentence summary of the main message.",
   "key_themes_to_include": ["Array of 3-5 key themes or concepts"],
   "seo_keywords": ["Array of 3-5 important SEO keywords"],
   "target_emotion": "Primary emotion to evoke (e.g., 'Aspirational', 'Trustworthy')",
-  "platform_optimizations": {
-    "[PLATFORM_NAME]": {
+  "platform_optimizations": {{
+    "[EXACT_PLATFORM_NAME]": {{
       "caption_structure": "Brief instruction on structure for this platform",
       "style_notes": "Platform-specific style guidance"
-    }
-  },
+    }}
+  }},
   "primary_call_to_action": "The final call to action string",
   "hashtags": ["Array of hashtag strings with # symbol"],
   "emoji_suggestions": ["Array of 2-3 relevant emoji characters"],
   "task_type_notes": "Optional concise note about task-type optimization (e.g., 'Optimize for Product Photography: showcase features & craftsmanship'). Set to null if no task type guidance was provided."
-}
+}}
 
-**CRITICAL:** The platform_optimizations object must contain exactly one key matching the target platform name provided in the context."""
+**CRITICAL:** The platform_optimizations object must contain exactly one key matching the target platform name provided in the context. Use the EXACT platform name as given in the context (e.g., "Instagram Post (1:1 Square)", not just "Instagram"). This field is mandatory and cannot be omitted."""
 
 
 def _extract_main_subject(ctx: PipelineContext, visual_concept: Dict[str, Any]) -> str:
@@ -312,6 +325,16 @@ def _get_analyst_user_prompt(
     # Validate we have minimum required data
     _validate_required_data(strategy_data, visual_data, main_subject)
     
+    # Map language codes to readable names
+    language_names = {
+        'en': 'English',
+        'zh': 'Simplified Chinese',
+        'es': 'Spanish',
+        'fr': 'French',
+        'ja': 'Japanese'
+    }
+    language_name = language_names.get(ctx.language, ctx.language.upper())
+    
     prompt_parts = [
         f"**Target Platform:** {platform_name}",
         "",
@@ -406,7 +429,9 @@ def _get_analyst_user_prompt(
     
     prompt_parts.extend([
         "",
-        "**Important:** This content should be generated primarily in English. Preserve authentic cultural/aesthetic terms (like 'Japandi', 'matcha', 'wabi-sabi') that add authenticity, but ensure the primary language is English unless the user has explicitly requested a different target language.",
+        f"**Important (Language Control):** The fields `core_message`, `primary_call_to_action`, `hashtags`, and `seo_keywords` should be written in {language_name.upper()}. Other guidance fields remain in English.",
+        "",
+        f"**CRITICAL REMINDER:** In your JSON response, the `platform_optimizations` field must contain exactly one key: \"{platform_name}\". Do not use a shortened or translated version of this platform name.",
         "",
         "Based on this context, generate a CaptionBrief JSON object that will guide the caption writer.",
         "Focus on strategic analysis and provide clear, actionable guidance for the creative execution."
@@ -415,7 +440,7 @@ def _get_analyst_user_prompt(
     return "\n".join(prompt_parts)
 
 
-def _get_writer_system_prompt() -> str:
+def _get_writer_system_prompt(language: str = 'en') -> str:
     """Returns the system prompt for the Writer LLM."""
     # ============================
     # ===== ENHANCEMENT AREA =====
@@ -423,11 +448,22 @@ def _get_writer_system_prompt() -> str:
     # The original prompt was good, but this version adds a **CRITICAL** instruction
     # to ensure the Writer LLM does not deviate from the Analyst's strategic
     # platform-specific structure. It makes the guidance non-negotiable.
-    return """You are an expert social media copywriter with a flair for creative, authentic, and engaging storytelling. Your brand voice is natural and human-like.
+    
+    # Map language codes to readable names
+    language_names = {
+        'en': 'ENGLISH',
+        'zh': 'SIMPLIFIED CHINESE',
+        'es': 'SPANISH',
+        'fr': 'FRENCH',
+        'ja': 'JAPANESE'
+    }
+    language_name = language_names.get(language, language.upper())
+    
+    return f"""You are an expert social media copywriter with a flair for creative, authentic, and engaging storytelling. Your brand voice is natural and human-like.
 
 **Instructions:**
 - Your task is to write a compelling social media caption based on the provided Caption Brief.
-- **Language Adherence:** Write your final caption primarily in English, but preserve authentic cultural, aesthetic, or brand terms from the brief that add authenticity and value (e.g., "Japandi", "matcha", "wabi-sabi", brand names). Only write in a non-English language if the `CaptionBrief` explicitly indicates the target audience expects content in that language.
+- **Language Adherence:** Write the final caption in {language_name}, keeping cultural/brand terms as-is. Only use a different language if explicitly present in those terms.
 - Read the entire brief carefully to understand the strategic goals.
 - **CRITICAL:** You MUST strictly adhere to the `caption_structure` and `style_notes` provided in the `platform_optimizations` section of the brief. This structure is non-negotiable and is the key to the caption's success on that specific platform.
 - Write a caption that feels authentic and human, not like it was written by an AI.
@@ -505,7 +541,7 @@ async def _run_analyst(
         ctx.log("ERROR: Caption LLM client not available")
         return None
     
-    system_prompt = _get_analyst_system_prompt()
+    system_prompt = _get_analyst_system_prompt(ctx.language)
     # Get the prompt index for style context extraction
     prompt_index = getattr(ctx, 'current_prompt_index', 0)
     user_prompt = _get_analyst_user_prompt(ctx, settings, platform_name, strategy, visual_concept, alt_text, prompt_index)
@@ -525,6 +561,7 @@ async def _run_analyst(
     
     try:
         ctx.log(f"Running Analyst LLM for caption brief using {CAPTION_MODEL_PROVIDER} model: {CAPTION_MODEL_ID}")
+        ctx.log(f"Target platform for caption: {platform_name}")
         
         completion = client_to_use.chat.completions.create(**llm_args)
         
@@ -558,6 +595,39 @@ async def _run_analyst(
         
         return CaptionBrief(**brief_dict)
         
+    except ValidationError as ve:
+        # Handle specific validation errors (especially missing platform_optimizations)
+        ctx.log(f"ERROR: Caption Analyst validation failed: {ve}")
+        
+        # If instructor failed due to validation, try fallback to manual parsing
+        if use_instructor_for_call and base_llm_client_caption:
+            ctx.log("Attempting fallback to manual JSON parsing...")
+            try:
+                # Get raw response using base client
+                fallback_args = llm_args.copy()
+                if "response_model" in fallback_args:
+                    del fallback_args["response_model"]
+                
+                fallback_completion = base_llm_client_caption.chat.completions.create(**fallback_args)
+                raw_content = fallback_completion.choices[0].message.content
+                
+                ctx.log(f"Raw LLM response for manual parsing: {raw_content[:500]}...")
+                
+                # Try manual parsing
+                brief_dict = _json_parser.extract_and_parse(
+                    raw_content,
+                    expected_schema=CaptionBrief
+                )
+                
+                # If manual parsing succeeds, return the result
+                ctx.log("✅ Fallback manual parsing succeeded")
+                return CaptionBrief(**brief_dict)
+                
+            except Exception as fallback_err:
+                ctx.log(f"❌ Fallback manual parsing also failed: {fallback_err}")
+        
+        return None
+        
     except Exception as e:
         ctx.log(f"ERROR: Caption Analyst LLM call failed: {e}")
         ctx.log(traceback.format_exc())
@@ -575,7 +645,7 @@ async def _run_writer(ctx: PipelineContext, brief: CaptionBrief) -> Optional[str
         ctx.log("ERROR: Caption LLM client not available")
         return None
     
-    system_prompt = _get_writer_system_prompt()
+    system_prompt = _get_writer_system_prompt(ctx.language)
     user_prompt = _get_writer_user_prompt(brief)
     
     llm_args = {

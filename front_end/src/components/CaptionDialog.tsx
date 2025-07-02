@@ -19,26 +19,34 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
   IconButton,
   Chip,
   Alert,
+  Card,
+  CardContent,
+  RadioGroup,
+  Radio,
+  CircularProgress,
 } from '@mui/material';
 import {
   Close as CloseIcon,
   ExpandMore as ExpandMoreIcon,
   AutoAwesome as AutoAwesomeIcon,
   Tune as TuneIcon,
+  Speed as SpeedIcon,
+  Psychology as PsychologyIcon,
 } from '@mui/icons-material';
-import { CaptionSettings } from '@/types/api';
+import { CaptionSettings, CaptionModelOption } from '@/types/api';
+import { PipelineAPI } from '@/lib/api';
 
 interface CaptionDialogProps {
   open: boolean;
   onClose: () => void;
-  onGenerate: (settings: CaptionSettings) => void;
+  onGenerate: (settings: CaptionSettings, modelId?: string) => void;
   isGenerating?: boolean;
   imageIndex: number;
   initialSettings?: CaptionSettings;
+  initialModelId?: string;
   error?: string;
 }
 
@@ -49,12 +57,37 @@ export default function CaptionDialog({
   isGenerating = false,
   imageIndex,
   initialSettings,
+  initialModelId,
   error,
 }: CaptionDialogProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [settings, setSettings] = useState<CaptionSettings>({
     include_emojis: true, // Default to true for better engagement
   });
+  const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const [availableModels, setAvailableModels] = useState<CaptionModelOption[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  // Load available models when dialog opens
+  useEffect(() => {
+    if (open && availableModels.length === 0) {
+      setLoadingModels(true);
+      PipelineAPI.getCaptionModels()
+        .then(response => {
+          setAvailableModels(response.models);
+          // Set default model if none selected
+          if (!selectedModelId) {
+            setSelectedModelId(initialModelId || response.default_model_id);
+          }
+        })
+        .catch(error => {
+          console.error('Failed to load caption models:', error);
+        })
+        .finally(() => {
+          setLoadingModels(false);
+        });
+    }
+  }, [open, availableModels.length, selectedModelId, initialModelId]);
 
   // Populate settings when initialSettings is provided (for regeneration)
   useEffect(() => {
@@ -66,12 +99,16 @@ export default function CaptionDialog({
       setSettings({ include_emojis: true });
       setAdvancedOpen(false);
     }
-  }, [initialSettings, open]);
+    
+    if (initialModelId && open) {
+      setSelectedModelId(initialModelId);
+    }
+  }, [initialSettings, initialModelId, open]);
 
   const handleGenerate = () => {
     // If advanced options are not opened, send empty settings for auto-mode
     const finalSettings = advancedOpen ? settings : {};
-    onGenerate(finalSettings);
+    onGenerate(finalSettings, selectedModelId);
   };
 
   const handleClose = () => {
@@ -204,13 +241,92 @@ export default function CaptionDialog({
           
           <AccordionDetails sx={{ pt: 3, pb: 2 }}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Generation Mode Selection */}
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <AutoAwesomeIcon fontSize="small" color="primary" />
+                  Generation Mode
+                </Typography>
+                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                  Choose between quick results or deeper analysis for your caption
+                </Typography>
+                
+                {loadingModels ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={20} />
+                  </Box>
+                ) : (
+                  <RadioGroup
+                    value={selectedModelId}
+                    onChange={(e) => setSelectedModelId(e.target.value)}
+                  >
+                    {availableModels.map((model) => (
+                      <Box
+                        key={model.id}
+                        sx={{
+                          border: 1,
+                          borderColor: selectedModelId === model.id ? 'primary.main' : 'grey.300',
+                          borderRadius: 2,
+                          backgroundColor: selectedModelId === model.id ? 'primary.50' : 'white',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          mb: 1,
+                          '&:hover': {
+                            borderColor: 'primary.main',
+                            backgroundColor: 'primary.25',
+                          }
+                        }}
+                        onClick={() => setSelectedModelId(model.id)}
+                      >
+                        <FormControlLabel
+                          control={
+                            <Radio
+                              checked={selectedModelId === model.id}
+                              value={model.id}
+                              size="small"
+                            />
+                          }
+                          label={
+                            <Box sx={{ py: 0.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  {model.name}
+                                </Typography>
+                                <Chip
+                                  icon={model.latency === 'Low' ? <SpeedIcon /> : <PsychologyIcon />}
+                                  label={model.latency === 'Low' ? 'Fast' : 'Analytical'}
+                                  size="small"
+                                  color={model.latency === 'Low' ? 'success' : 'secondary'}
+                                  variant="outlined"
+                                  sx={{ fontSize: '0.65rem', height: 18 }}
+                                />
+                              </Box>
+                              <Typography variant="caption" color="textSecondary">
+                                {model.description}
+                              </Typography>
+                            </Box>
+                          }
+                          sx={{
+                            m: 0,
+                            p: 1.5,
+                            width: '100%',
+                            alignItems: 'flex-start',
+                            '& .MuiFormControlLabel-label': { flex: 1 }
+                          }}
+                        />
+                      </Box>
+                    ))}
+                  </RadioGroup>
+                )}
+              </Box>
+
               {/* Caption Tone */}
               <FormControl fullWidth>
                 <InputLabel>Caption Tone</InputLabel>
                 <Select
                   value={settings.tone || ''}
                   label="Caption Tone"
-                  onChange={(e) => setSettings(prev => ({ ...prev, tone: e.target.value as any }))}
+                  onChange={(e) => setSettings(prev => ({ ...prev, tone: e.target.value as string }))}
                 >
                   <MenuItem value="">
                     <em>Auto (Let AI decide)</em>
@@ -228,8 +344,8 @@ export default function CaptionDialog({
                 fullWidth
                 label="Call to Action (CTA)"
                 placeholder="e.g., Shop Now, Learn More, Link in Bio"
-                value={settings.cta || ''}
-                onChange={(e) => setSettings(prev => ({ ...prev, cta: e.target.value }))}
+                value={settings.call_to_action || ''}
+                onChange={(e) => setSettings(prev => ({ ...prev, call_to_action: e.target.value }))}
                 helperText="Leave blank for AI to generate automatically"
               />
 
@@ -257,7 +373,7 @@ export default function CaptionDialog({
                 <Select
                   value={settings.hashtag_strategy || ''}
                   label="Hashtag Strategy"
-                  onChange={(e) => setSettings(prev => ({ ...prev, hashtag_strategy: e.target.value as any }))}
+                  onChange={(e) => setSettings(prev => ({ ...prev, hashtag_strategy: e.target.value as string }))}
                 >
                   <MenuItem value="">
                     <em>Auto (Balanced Mix)</em>

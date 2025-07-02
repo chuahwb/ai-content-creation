@@ -32,7 +32,7 @@ VERBOSE_COST_LATENCY_SUMMARY = True  # Control verbosity of cost/latency summary
 # --- Model Definitions ---
 # Phase 1 Models
 IMG_EVAL_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
-IMG_EVAL_MODEL_ID = "openai/gpt-4.1-mini"  # E.g., "openai/gpt-4-vision-preview", "google/gemini-pro-vision"
+IMG_EVAL_MODEL_ID = "openai/gpt-4.1"  # E.g., "openai/gpt-4-vision-preview", "google/gemini-pro-vision"
 
 STRATEGY_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "Gemini"
 STRATEGY_MODEL_ID = "openai/gpt-4.1-mini"  # E.g., "openai/gpt-4-turbo", "google/gemini-1.5-pro-latest"
@@ -50,7 +50,31 @@ IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision 
 
 # Caption Generation Model (for social media caption creation)
 CAPTION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"
-CAPTION_MODEL_ID = "google/gemini-2.5-pro"  # Cost-effective model for caption generation
+
+# Caption Model Options with characteristics
+CAPTION_MODEL_OPTIONS = {
+    "openai/gpt-4.1": {
+        "id": "openai/gpt-4.1",
+        "name": "Quick Response",
+        "description": "Fast generation with efficient processing for immediate results",
+        "strengths": ["Fastest response time", "Reliable output", "Efficient processing"],
+        "best_for": "Time-sensitive posts, quick iterations",
+        "latency": "Low",
+        "creativity": "Efficient"
+    },
+    "google/gemini-2.5-pro": {
+        "id": "google/gemini-2.5-pro", 
+        "name": "Thoughtful Analysis",
+        "description": "Deeper reasoning and analysis for more nuanced captions",
+        "strengths": ["Comprehensive analysis", "Nuanced understanding", "Creative reasoning"],
+        "best_for": "Complex campaigns, premium content",
+        "latency": "Higher",
+        "creativity": "Analytical"
+    }
+}
+
+# Default caption model
+CAPTION_MODEL_ID = "openai/gpt-4.1"  # Default model ID
 
 IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
 

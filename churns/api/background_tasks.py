@@ -834,7 +834,8 @@ class PipelineTaskProcessor:
                 "target_platform": {
                     "name": request.platform_name,
                     "resolution_details": self._get_platform_resolution(request.platform_name)
-                }
+                },
+                "language": request.language or 'en'
             },
             "user_inputs": {
                 "prompt": request.prompt,
@@ -1373,8 +1374,9 @@ class PipelineTaskProcessor:
             settings = caption_data.get("settings", {})
             version = caption_data.get("version", 0)
             writer_only = caption_data.get("writer_only", False)
+            model_id = caption_data.get("model_id", CAPTION_MODEL_ID)
             
-            logger.info(f"Starting caption generation for image {image_id} in run {run_id}")
+            logger.info(f"Starting caption generation for image {image_id} in run {run_id} using model {model_id}")
             
             # Load the original pipeline context to get metadata
             with Session(engine) as session:
@@ -1442,7 +1444,7 @@ class PipelineTaskProcessor:
                     "caption_id": caption_id,
                     "image_id": image_id,
                     "status": "RUNNING",
-                    "message": "Generating caption..."
+                    "message": f"Generating caption using {model_id}..."
                 }
             )
             await connection_manager.send_message_to_run(run_id, message)
@@ -1457,10 +1459,10 @@ class PipelineTaskProcessor:
             # Get configured clients
             clients = get_configured_clients()
             
-            # Configure caption stage globals using centralized configuration
+            # Configure caption stage globals using the selected model
             caption_module.instructor_client_caption = clients.get('instructor_client_caption')
             caption_module.base_llm_client_caption = clients.get('base_llm_client_caption')
-            caption_module.CAPTION_MODEL_ID = CAPTION_MODEL_ID
+            caption_module.CAPTION_MODEL_ID = model_id  # Use the selected model
             caption_module.CAPTION_MODEL_PROVIDER = CAPTION_MODEL_PROVIDER
             caption_module.FORCE_MANUAL_JSON_PARSE = clients.get('force_manual_json_parse', False)
             caption_module.INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = clients.get('instructor_tool_mode_problem_models', [])
@@ -1501,6 +1503,7 @@ class PipelineTaskProcessor:
                         "settings_used": caption_result.get("settings_used", {}),
                         "brief_used": caption_result["brief_used"],
                         "created_at": caption_result.get("created_at"),
+                        "model_id": model_id,  # Save the model used
                         "llm_usage": {
                             "caption_analyst": context.llm_usage.get("caption_analyst", {}),
                             "caption_writer": context.llm_usage.get("caption_writer", {})
@@ -1517,12 +1520,13 @@ class PipelineTaskProcessor:
                         "status": "COMPLETED",
                         "text": caption_text,
                         "version": version,
+                        "model_id": model_id,
                         "file_path": str(caption_file)
                     }
                 )
                 await connection_manager.send_message_to_run(run_id, success_message)
                 
-                logger.info(f"Caption generation completed for {caption_id}")
+                logger.info(f"Caption generation completed for {caption_id} using model {model_id}")
                 
             else:
                 raise Exception("Caption generation failed - no caption produced")

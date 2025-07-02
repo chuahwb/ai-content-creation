@@ -39,6 +39,7 @@ export interface PipelineRunRequest {
   render_text: boolean;
   apply_branding: boolean;
   marketing_goals?: MarketingGoalsInput;
+  language?: string;
 }
 
 export interface StageProgressUpdate {
@@ -89,6 +90,7 @@ export interface PipelineRunDetail extends PipelineRunResponse {
   marketing_objective?: string;
   marketing_voice?: string;
   marketing_niche?: string;
+  language?: string;
 }
 
 // NEW: Assessment data structure
@@ -146,10 +148,36 @@ export interface PipelineResults {
 
 // Caption-related interfaces
 export interface CaptionSettings {
-  tone?: 'professional' | 'friendly' | 'witty' | 'inspirational' | 'direct';
-  cta?: string;
+  tone?: string;
+  call_to_action?: string;
   include_emojis?: boolean;
-  hashtag_strategy?: 'none' | 'niche' | 'broad' | 'balanced';
+  hashtag_strategy?: string;
+}
+
+export interface CaptionModelOption {
+  id: string;
+  name: string;
+  description: string;
+  strengths: string[];
+  best_for: string;
+  latency: string;
+  creativity: string;
+}
+
+export interface CaptionModelsResponse {
+  models: CaptionModelOption[];
+  default_model_id: string;
+}
+
+export interface CaptionRequest {
+  settings?: CaptionSettings;
+  model_id?: string;
+}
+
+export interface CaptionRegenerateRequest {
+  settings?: CaptionSettings;
+  writer_only?: boolean;
+  model_id?: string;
 }
 
 export interface CaptionResult {
@@ -158,6 +186,7 @@ export interface CaptionResult {
   settings_used: CaptionSettings;
   brief_used?: Record<string, any>;
   created_at: string;
+  model_id?: string;
 }
 
 export interface CaptionResponse {
@@ -210,6 +239,7 @@ export interface PipelineFormData {
   marketing_objective?: string;
   marketing_voice?: string;
   marketing_niche?: string;
+  language?: string;
 }
 
 // Configuration types
