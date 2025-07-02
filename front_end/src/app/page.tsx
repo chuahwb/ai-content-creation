@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Container,
   Typography,
@@ -19,25 +19,27 @@ export default function HomePage() {
   const [currentRun, setCurrentRun] = useState<PipelineRunResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'form' | 'results' | 'history'>('form');
 
-  const handleRunStarted = (run: PipelineRunResponse) => {
+  const handleRunStarted = useCallback((run: PipelineRunResponse) => {
     console.log('Pipeline run started, redirecting to results:', run.id);
+    // Update both states immediately
     setCurrentRun(run);
     setActiveTab('results');
-    // Force a small delay to ensure state updates are processed
-    setTimeout(() => {
-      console.log('Redirect complete, active tab:', 'results');
-    }, 50);
-  };
+  }, []);
 
-  const handleViewRun = (run: PipelineRunResponse) => {
+  const handleViewRun = useCallback((run: PipelineRunResponse) => {
     setCurrentRun(run);
     setActiveTab('results');
-  };
+  }, []);
 
-  const handleNewRun = () => {
+  const handleNewRun = useCallback(() => {
     setCurrentRun(null);
     setActiveTab('form');
-  };
+  }, []);
+
+  // Debug effect to log state changes
+  useEffect(() => {
+    console.log('Active tab changed to:', activeTab, 'Current run:', currentRun?.id);
+  }, [activeTab, currentRun]);
 
   return (
     <>

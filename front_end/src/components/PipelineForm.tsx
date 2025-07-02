@@ -199,10 +199,8 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       removeImage();
       setShowCustomLanguage(false);
       
-      // Ensure redirect happens after form cleanup with a slight delay
-      setTimeout(() => {
-        onRunStarted(response);
-      }, 100);
+      // Trigger redirect immediately after form cleanup
+      onRunStarted(response);
       
     } catch (error: any) {
       console.error('Failed to submit run:', error);
