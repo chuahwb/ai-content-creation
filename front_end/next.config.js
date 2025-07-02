@@ -34,6 +34,11 @@ const nextConfig = {
       },
     ];
   },
+  
+  // Increase timeout for long-running operations like caption generation
+  experimental: {
+    proxyTimeout: 60000, // 60 seconds
+  },
 };
 
 module.exports = nextConfig; 

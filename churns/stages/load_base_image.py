@@ -16,6 +16,7 @@ from ..pipeline.context import PipelineContext
 from ..models import PipelineCostSummary, CostDetail
 
 
+
 async def run(ctx: PipelineContext) -> None:
     """
     Load base image and metadata for refinement.

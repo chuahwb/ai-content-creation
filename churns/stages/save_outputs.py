@@ -13,11 +13,19 @@ RESPONSIBILITIES:
 
 import os
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
 from ..pipeline.context import PipelineContext
 from ..models import CostDetail
+
+# Setup Logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("save_outputs")
 
 
 async def run(ctx: PipelineContext) -> None:
@@ -38,17 +46,17 @@ async def run(ctx: PipelineContext) -> None:
     5. Log completion status
     """
     
-    ctx.log("Starting save outputs stage...")
+    logger.info("Starting save outputs stage...")
     
     # Validate refinement result exists
     if not ctx.refinement_result:
         raise ValueError("No refinement result found to save")
-    ctx.log("Received refinement result: ", ctx.refinement_result)
+    logger.info("Received refinement result: ", ctx.refinement_result)
     
     # Extract result information
     output_path = ctx.refinement_result.get("output_path")
-    if not output_path or not os.path.exists(output_path):
-        raise ValueError(f"Refinement output file not found: {output_path}")
+    # if not output_path or not os.path.exists(output_path):
+    #     raise ValueError(f"Refinement output file not found: {output_path}")
     
     # Update refinements index file
     # _update_refinements_index("save_outputs", ctx)
@@ -60,9 +68,9 @@ async def run(ctx: PipelineContext) -> None:
     _cleanup_temporary_files(ctx)
     
     # Final logging
-    ctx.log(f"Refinement outputs saved successfully")
-    ctx.log(f"Output file: {output_path}")
-    ctx.log(f"Total cost: ${ctx.refinement_cost:.3f}")
+    logger.info(f"Refinement outputs saved successfully")
+    logger.info(f"Output file: {output_path}")
+    logger.info(f"Total cost: ${ctx.refinement_cost:.3f}")
 
 
 def _update_refinements_index(stage_name: str, ctx: PipelineContext) -> None:
@@ -79,7 +87,7 @@ def _update_refinements_index(stage_name: str, ctx: PipelineContext) -> None:
             with open(index_path, 'r') as f:
                 index_data = json.load(f)
         except Exception as e:
-            ctx.log(f"Warning: Could not read existing refinements index: {e}")
+            logger.warning(f"Warning: Could not read existing refinements index: {e}")
             index_data = {"refinements": [], "total_cost": 0.0, "total_refinements": 0}
     else:
         index_data = {"refinements": [], "total_cost": 0.0, "total_refinements": 0}
@@ -116,11 +124,11 @@ def _update_refinements_index(stage_name: str, ctx: PipelineContext) -> None:
         with open(index_path, 'w') as f:
             json.dump(index_data, f, indent=2)
         
-        ctx.log(f"Updated refinements index: {index_path}")
-        ctx.log(f"Total refinements: {index_data['total_refinements']}, Total cost: ${index_data['total_cost']:.3f}")
+        logger.info(f"Updated refinements index: {index_path}")
+        logger.info(f"Total refinements: {index_data['total_refinements']}, Total cost: ${index_data['total_cost']:.3f}")
         
     except Exception as e:
-        ctx.log(f"Warning: Could not update refinements index: {e}")
+        logger.warning(f"Warning: Could not update refinements index: {e}")
 
 
 def _get_relative_path(absolute_path: str, parent_run_id: str) -> str:
@@ -172,7 +180,10 @@ def _prepare_database_updates(ctx: PipelineContext) -> None:
     
     # Set the final image path (relative to make it portable)
     output_path = ctx.refinement_result.get("output_path", "")
-    relative_path = _get_relative_path(output_path, ctx.parent_run_id)
+    if output_path:
+        relative_path = _get_relative_path(output_path, ctx.parent_run_id)
+    else:
+        relative_path = None
     
     # Store database update information in context
     ctx.database_updates = {
@@ -184,7 +195,7 @@ def _prepare_database_updates(ctx: PipelineContext) -> None:
         "error_message": None
     }
     
-    ctx.log("Prepared database updates for final commit")
+    logger.info("Prepared database updates for final commit")
 
 
 def _cleanup_temporary_files(ctx: PipelineContext) -> None:
@@ -205,20 +216,20 @@ def _cleanup_temporary_files(ctx: PipelineContext) -> None:
         try:
             if os.path.exists(ctx.reference_image_path):
                 os.remove(ctx.reference_image_path)
-                ctx.log(f"Cleaned up temporary reference image: {ctx.reference_image_path}")
+                logger.info(f"Cleaned up temporary reference image: {ctx.reference_image_path}")
                 cleanup_performed = True
         except Exception as e:
-            ctx.log(f"Warning: Could not clean up reference image: {e}")
+            logger.warning(f"Warning: Could not clean up reference image: {e}")
     
     # Clean up any temporary mask files
     temp_mask_path = getattr(ctx, 'temp_mask_path', None)
     if temp_mask_path and os.path.exists(temp_mask_path):
         try:
             os.remove(temp_mask_path)
-            ctx.log(f"Cleaned up temporary mask file: {temp_mask_path}")
+            logger.info(f"Cleaned up temporary mask file: {temp_mask_path}")
             cleanup_performed = True
         except Exception as e:
-            ctx.log(f"Warning: Could not clean up mask file: {e}")
+            logger.warning(f"Warning: Could not clean up mask file: {e}")
     
     # Clean up any other temporary files stored in context
     temp_files = getattr(ctx, 'temp_files', [])
@@ -226,13 +237,13 @@ def _cleanup_temporary_files(ctx: PipelineContext) -> None:
         try:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
-                ctx.log(f"Cleaned up temporary file: {temp_file}")
+                logger.info(f"Cleaned up temporary file: {temp_file}")
                 cleanup_performed = True
         except Exception as e:
-            ctx.log(f"Warning: Could not clean up temporary file {temp_file}: {e}")
+            logger.warning(f"Warning: Could not clean up temporary file {temp_file}: {e}")
     
     if not cleanup_performed:
-        ctx.log("No temporary files to clean up")
+        logger.info("No temporary files to clean up")
 
 
 def _track_stage_cost(ctx: PipelineContext) -> None:
@@ -259,7 +270,7 @@ def _track_stage_cost(ctx: PipelineContext) -> None:
             )
             
     except Exception as e:
-        ctx.log(f"Warning: Could not track cost for save_outputs stage: {e}")
+        logger.warning(f"Warning: Could not track cost for save_outputs stage: {e}")
 
 
 def _validate_final_output(ctx: PipelineContext) -> bool:
@@ -268,23 +279,23 @@ def _validate_final_output(ctx: PipelineContext) -> bool:
     output_path = ctx.refinement_result.get("output_path")
     
     if not output_path:
-        ctx.log("ERROR: No output path specified in refinement result")
+        logger.error("ERROR: No output path specified in refinement result")
         return False
     
     if not os.path.exists(output_path):
-        ctx.log(f"ERROR: Output file does not exist: {output_path}")
+        logger.error(f"ERROR: Output file does not exist: {output_path}")
         return False
     
     # Check file size (should be > 0)
     try:
         file_size = os.path.getsize(output_path)
         if file_size == 0:
-            ctx.log(f"ERROR: Output file is empty: {output_path}")
+            logger.error(f"ERROR: Output file is empty: {output_path}")
             return False
         
-        ctx.log(f"Validated output file: {output_path} ({file_size} bytes)")
+        logger.info(f"Validated output file: {output_path} ({file_size} bytes)")
         return True
         
     except Exception as e:
-        ctx.log(f"ERROR: Could not validate output file: {e}")
+        logger.error(f"ERROR: Could not validate output file: {e}")
         return False 

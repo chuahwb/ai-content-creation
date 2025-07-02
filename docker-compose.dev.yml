@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   api:
     build:
@@ -41,8 +39,8 @@ services:
       - /app/.next
     environment:
       - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=https://b950-2001-d08-d1-c1b6-fce7-4eca-72bc-11fe.ngrok-free.app
-      - NEXT_PUBLIC_WS_URL=wss://b950-2001-d08-d1-c1b6-fce7-4eca-72bc-11fe.ngrok-free.app
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_WS_URL=wss://localhost:8000
       - INTERNAL_API_URL=http://api:8000
     command: npm run dev
     depends_on:

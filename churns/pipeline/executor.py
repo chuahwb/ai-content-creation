@@ -241,6 +241,7 @@ class PipelineExecutor:
                 self._inject_clients_into_stage(stage_module)
                 
                 # Stage is async, call directly (all stages should be async)
+                
                 await stage_module.run(ctx)
                 
                 stage_duration = time.time() - stage_start_time

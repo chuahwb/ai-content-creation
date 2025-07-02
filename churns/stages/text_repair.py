@@ -260,7 +260,7 @@ async def _perform_text_rephrase(ctx: PipelineContext, analysis_result: Dict):
     return rephrased_brand.data
     
 
-async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict, cosine_sim: float, base_image) -> str:
+async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict, cosine_sim: float, base_image) -> Optional[str]:
     logger.info("-----Performing text repair-----")
     
     # Get main object
@@ -370,6 +370,7 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
             image_gen_client=image_gen_client
         )
     else:
+        result_image_path = None
         logger.info("No final prompt generated. Skipping text repair.")
     
     return result_image_path
