@@ -40,6 +40,14 @@ import { motion } from 'framer-motion';
 import { PipelineFormData, PipelineRunResponse, Platform } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
 
+// Common ISO-639-1 language codes for validation
+const VALID_LANGUAGE_CODES = [
+  'en', 'zh', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 
+  'ar', 'hi', 'th', 'vi', 'nl', 'sv', 'no', 'da', 'fi', 'pl',
+  'tr', 'he', 'cs', 'hu', 'ro', 'bg', 'hr', 'sk', 'sl', 'et',
+  'lv', 'lt', 'mt', 'ga', 'cy', 'eu', 'ca', 'gl', 'is', 'fo'
+];
+
 // Form validation schema
 const formSchema = z.object({
   mode: z.enum(['easy_mode', 'custom_mode', 'task_specific_mode']),
@@ -58,6 +66,18 @@ const formSchema = z.object({
   marketing_objective: z.string().optional(),
   marketing_voice: z.string().optional(),
   marketing_niche: z.string().optional(),
+  language: z.string()
+    .optional()
+    .refine((val) => {
+      if (!val || val === 'en' || val === 'zh') return true;
+      // For custom languages, check if it's a valid ISO-639-1 code
+      if (val.length === 2 && VALID_LANGUAGE_CODES.includes(val.toLowerCase())) {
+        return true;
+      }
+      return false;
+    }, {
+      message: 'Please enter a valid 2-letter ISO-639-1 language code (e.g., es, fr, ja, de, it)',
+    }),
 });
 
 interface PipelineFormProps {
@@ -93,6 +113,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [showCustomLanguage, setShowCustomLanguage] = useState(false);
 
   const {
     control,
@@ -110,6 +131,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       num_variants: 3,
       render_text: false,
       apply_branding: false,
+      language: 'en',
     },
   });
 
@@ -176,6 +198,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       // Reset form for next use
       reset();
       removeImage();
+      setShowCustomLanguage(false);
       
     } catch (error: any) {
       console.error('Failed to submit run:', error);
@@ -188,6 +211,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const handleReset = () => {
     reset();
     removeImage();
+    setShowCustomLanguage(false);
     toast.success('Form reset');
   };
 
@@ -218,9 +242,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
               {/* LEFT SIDE - All Basic Components */}
               <Grid item xs={12} lg={7}>
                 <Box sx={{ pr: { lg: 2 } }}>
-                  {/* Mode & Platform Row */}
+                  {/* Mode & Platform & Language Row */}
                   <Grid container spacing={3} sx={{ mb: 4 }}>
-                    <Grid item xs={12} md={6}>
+                    <Grid item xs={12} md={4}>
                       <FormControl fullWidth>
                         <InputLabel>Mode</InputLabel>
                         <Controller
@@ -237,7 +261,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       </FormControl>
                     </Grid>
 
-                    <Grid item xs={12} md={6}>
+                    <Grid item xs={12} md={4}>
                       <FormControl fullWidth required>
                         <InputLabel>Target Platform</InputLabel>
                         <Controller
@@ -260,33 +284,102 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                         </Typography>
                       )}
                     </Grid>
-                  </Grid>
 
-                  {/* Task Type (conditional) */}
-                  {requiresTaskType && (
-                    <Box sx={{ mb: 4 }}>
-                      <FormControl fullWidth required>
-                        <InputLabel>Task Type</InputLabel>
+                    <Grid item xs={12} md={4}>
+                      <FormControl fullWidth>
+                        <InputLabel>Output Language</InputLabel>
                         <Controller
-                          name="task_type"
+                          name="language"
                           control={control}
                           render={({ field }) => (
-                            <Select {...field} label="Task Type" error={!!errors.task_type}>
-                              {taskTypes.map((taskType) => (
-                                <MenuItem key={taskType} value={taskType}>
-                                  {taskType}
-                                </MenuItem>
-                              ))}
+                            <Select 
+                              {...field} 
+                              label="Output Language"
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                if (value === 'other') {
+                                  setShowCustomLanguage(true);
+                                  field.onChange(''); // Clear the language field for custom input
+                                } else {
+                                  setShowCustomLanguage(false);
+                                  field.onChange(value);
+                                }
+                              }}
+                              value={showCustomLanguage ? 'other' : field.value}
+                            >
+                              <MenuItem value="en">
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Typography>English</Typography>
+                                  <Chip label="Default" size="small" color="primary" sx={{ ml: 1 }} />
+                                </Box>
+                              </MenuItem>
+                              <MenuItem value="zh">
+                                <Typography>中文 | Chinese</Typography>
+                              </MenuItem>
+                              <MenuItem value="other">
+                                <Typography>Other Language</Typography>
+                              </MenuItem>
                             </Select>
                           )}
                         />
                       </FormControl>
-                      {errors.task_type && (
-                        <Typography color="error" variant="caption" sx={{ mt: 0.5, display: 'block' }}>
-                          {errors.task_type.message}
-                        </Typography>
+                      <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block', fontSize: '0.75rem' }}>
+                        Controls text on images & captions
+                      </Typography>
+                    </Grid>
+                  </Grid>
+
+                  {/* Conditional Fields Row - Task Type & Custom Language */}
+                  {(requiresTaskType || showCustomLanguage) && (
+                    <Grid container spacing={3} sx={{ mb: 4 }}>
+                      {requiresTaskType && (
+                        <Grid item xs={12} md={6}>
+                          <FormControl fullWidth required>
+                            <InputLabel>Task Type</InputLabel>
+                            <Controller
+                              name="task_type"
+                              control={control}
+                              render={({ field }) => (
+                                <Select {...field} label="Task Type" error={!!errors.task_type}>
+                                  {taskTypes.map((taskType) => (
+                                    <MenuItem key={taskType} value={taskType}>
+                                      {taskType}
+                                    </MenuItem>
+                                  ))}
+                                </Select>
+                              )}
+                            />
+                          </FormControl>
+                          {errors.task_type && (
+                            <Typography color="error" variant="caption" sx={{ mt: 0.5, display: 'block' }}>
+                              {errors.task_type.message}
+                            </Typography>
+                          )}
+                        </Grid>
                       )}
-                    </Box>
+
+                      {showCustomLanguage && (
+                        <Grid item xs={12} md={requiresTaskType ? 6 : 4}>
+                          <Controller
+                            name="language"
+                            control={control}
+                            render={({ field }) => (
+                              <TextField
+                                fullWidth
+                                size="medium"
+                                label="Custom Language Code"
+                                placeholder="Enter ISO-639-1 code (e.g., es, fr, ja)"
+                                value={field.value || ''}
+                                onChange={(e) => field.onChange(e.target.value.toLowerCase())}
+                                error={!!errors.language}
+                                helperText={errors.language?.message || "Examples: es (Spanish), fr (French), ja (Japanese)"}
+                                autoFocus
+                              />
+                            )}
+                          />
+                        </Grid>
+                      )}
+                    </Grid>
                   )}
 
                   {/* Generation Settings */}

@@ -82,7 +82,8 @@ def _get_creative_expert_system_prompt(
     render_text_flag: bool,
     apply_branding_flag: bool,
     platform_name: str,
-    target_model_family: str = "openai"
+    target_model_family: str = "openai",
+    language: str = 'en'
 ) -> str:
     """Returns the system prompt for the Creative Expert agent."""
     
@@ -95,6 +96,15 @@ Your primary objective is to generate a highly detailed, exceptionally creative,
 This structured concept will later be used to generate a prompt for a text-to-image generation model.
 Your goal is to provide concepts that are significantly value-added, pushing beyond generic interpretations and getting the user much closer to their ideal image on the first attempt.
 """
+    
+    # Language control instruction
+    language_display = "SIMPLIFIED CHINESE" if language == 'zh' else language.upper()
+    lang_note = (
+        f"\n**Language Control (IMPORTANT):** "
+        f"Write the following JSON fields **only** in {language_display}: "
+        "`promotional_text_visuals`, `branding_visuals`, `suggested_alt_text`. "
+        "Keep all other fields (e.g., composition_and_framing, background_environment) in ENGLISH to optimize LLM comprehension.\n"
+    )
     
     input_refinement_ce = """
 **Input Refinement:** Critically review ALL user inputs (Original User Prompt Hint, Specific Task Content/Description, Branding Guidelines, Image Instruction, and the provided Style Guidance). If any input is brief, vague, contains grammatical errors, or seems misaligned, you MUST interpret the user's likely intent, refine it, expand upon it creatively, and clearly explain your refined interpretation within the relevant structured output fields. Ensure the final concept is coherent and aligns with the marketing strategy and task type.
@@ -268,7 +278,7 @@ Ensure all descriptions are detailed enough to guide image generation effectivel
 """
     
     prompt_parts_ce = [
-        base_persona_ce, input_refinement_ce, core_task_ce, task_type_awareness_ce,
+        base_persona_ce, lang_note, input_refinement_ce, core_task_ce, task_type_awareness_ce,
         creativity_instruction_ce, image_ref_handling_ce, text_branding_field_instruction_ce,
         reasoning_ce, alt_text_ce, adherence_ce
     ]
@@ -295,7 +305,8 @@ def _get_creative_expert_user_prompt(
     image_instruction: Optional[str],
     use_instructor_parsing: bool,
     is_default_edit: bool,
-    style_guidance_item: Optional[StyleGuidance]
+    style_guidance_item: Optional[StyleGuidance],
+    language: str = 'en'
 ) -> str:
     """Constructs the user prompt for the Creative Expert agent."""
     
@@ -363,6 +374,13 @@ def _get_creative_expert_user_prompt(
     }
     platform_guidance_text = platform_guidance_map.get(clean_platform_name, f"Adapt the concept for the target platform '{clean_platform_name}' using {aspect_ratio_for_prompt} aspect ratio.")
     user_prompt_parts.append(f"\n**Platform Optimization (General Reminder):** {platform_guidance_text} (Detailed task-specific platform optimization is in system prompt).")
+
+    # Language reminder  
+    language_display = "Simplified Chinese" if language == 'zh' else language.upper()
+    lang_reminder = (
+        f"\n**Language Reminder:** When filling `promotional_text_visuals`, `branding_visuals`, and `suggested_alt_text`, use {language_display}. All other descriptions stay in English.\n"
+    )
+    user_prompt_parts.append(lang_reminder)
 
     final_instruction = f"""
 \nBased on ALL the above context (especially the core marketing strategy, the provided Style Direction, and the task-specific guidance from the system prompt) and your expertise (refining user inputs as needed), generate the `ImageGenerationPrompt` JSON object.
@@ -459,14 +477,16 @@ async def _generate_visual_concept_for_strategy(
     system_prompt_ce = _get_creative_expert_system_prompt(
         creativity_level, task_type, use_instructor_for_ce_call, has_image_reference, has_instruction_flag,
         render_text_flag, apply_branding_flag, platform_name,
-        target_model_family=CREATIVE_EXPERT_MODEL_PROVIDER.lower()
+        target_model_family=CREATIVE_EXPERT_MODEL_PROVIDER.lower(),
+        language=ctx.language
     )
     
     user_prompt_ce = _get_creative_expert_user_prompt(
         platform_name, aspect_ratio_for_prompt_text, strategy, task_type, user_prompt_original,
         task_description, branding_elements, render_text_flag, apply_branding_flag,
         has_image_reference, saved_image_filename, image_subject_from_analysis,
-        image_instruction, use_instructor_for_ce_call, is_default_edit_case, style_guidance_item
+        image_instruction, use_instructor_for_ce_call, is_default_edit_case, style_guidance_item,
+        language=ctx.language
     )
 
     llm_args_ce = {
