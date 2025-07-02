@@ -207,7 +207,7 @@ class PipelineExecutor:
     async def run_async(
         self, 
         ctx: PipelineContext, 
-        progress_callback: Optional[Callable[[str, int, StageStatus, str, Optional[Dict], Optional[str], Optional[float]], Awaitable[None]]] = None,
+        progress_callback: Optional[Callable[[str, int, StageStatus, str, Optional[Dict], Optional[str], Optional[float]], Awaitable[None]]] = None
     ) -> PipelineContext:
         """Execute all stages in order with async support and progress callbacks."""
         logger.info(f"Starting async {self.mode} pipeline execution with {len(self.stages)} stages : {self.stages}")

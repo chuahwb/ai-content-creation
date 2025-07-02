@@ -9,13 +9,19 @@ images and previously refined images.
 import os
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 from PIL import Image
 from ..pipeline.context import PipelineContext
 from ..models import PipelineCostSummary, CostDetail
 
-
+# Setup Logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("load_base_image")
 
 async def run(ctx: PipelineContext) -> None:
     """
@@ -34,7 +40,7 @@ async def run(ctx: PipelineContext) -> None:
     - ctx.original_pipeline_data: Original pipeline generation data
     """
     
-    ctx.log("Loading base image and metadata for refinement...")
+    logger.info("Loading base image and metadata for refinement...")
     
     # Validate required context
     if not ctx.parent_run_id:
@@ -55,7 +61,7 @@ async def run(ctx: PipelineContext) -> None:
     try:
         img = await asyncio.to_thread(Image.open, ctx.base_image_path)
         with img:
-            ctx.log(f"Loaded base image: {img.size[0]}x{img.size[1]} {img.mode}")
+            logger.info(f"Loaded base image: {img.size[0]}x{img.size[1]} {img.mode}")
             # Store basic image info
             ctx.base_image_metadata = {
                 "width": img.size[0],
@@ -70,7 +76,7 @@ async def run(ctx: PipelineContext) -> None:
     # Load original pipeline metadata
     ctx.original_pipeline_data = _load_original_pipeline_metadata(ctx)
     
-    ctx.log(f"Successfully loaded base image: {ctx.base_image_path}")
+    logger.info(f"Successfully loaded base image: {ctx.base_image_path}")
 
 
 def _resolve_base_image_path(ctx: PipelineContext) -> str:
@@ -89,20 +95,31 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
             raise ValueError("generation_index required for original image type")
         
         base_path = Path(f"./data/runs/{ctx.parent_run_id}")
-        ctx.log(f"Resolving base image path for original image {ctx.generation_index} in {base_path}")
+        logger.info(f"Resolving base image path for original image {ctx.generation_index} in {base_path}")
         # Try different naming patterns for original images
-        possible_paths = [
-            base_path / "originals" / f"image_{ctx.generation_index}.png",
-            base_path / f"image_{ctx.generation_index}.png",
-            base_path / f"generated_image_{ctx.generation_index}.png",
-            base_path / f"edited_image_strategy_{ctx.generation_index}.png"
+        patterns = [
+            f"originals/image_{ctx.generation_index}*.png",
+            f"image_{ctx.generation_index}*.png",
+            f"generated_image_{ctx.generation_index}*.png",
+            f"edited_image_strategy_{ctx.generation_index}*.png"
         ]
-        
-        for path in possible_paths:
-            if path.exists():
-                ctx.log(f"Found original image at: {path}")
-                return str(path)
-        
+
+        all_matches = []
+        for pattern in patterns:
+            matches = list(base_path.glob(pattern))
+            logger.info(f"Pattern '{pattern}' found matches: {matches}")
+            all_matches.extend(matches)
+
+        if all_matches:
+            # Sort all matches by modification time (newest first)
+            all_matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            newest_file = all_matches[0]
+            if newest_file.exists():
+                logger.info(f"Found original image at: {newest_file}")
+                return str(newest_file)
+            else:
+                logger.warning(f"File matched but does not exist: {newest_file}")
+
         raise FileNotFoundError(f"Original image not found for index {ctx.generation_index} in {base_path}")
     
     elif ctx.parent_image_type == "refinement":
@@ -117,7 +134,7 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
         
         for path in possible_paths:
             if path.exists():
-                ctx.log(f"Found refinement image at: {path}")
+                logger.info(f"Found refinement image at: {path}")
                 return str(path)
         
         raise FileNotFoundError(f"Refinement image not found for job {ctx.parent_image_id} in {base_path}")
@@ -151,14 +168,14 @@ def _load_original_pipeline_metadata(ctx: PipelineContext) -> Dict[str, Any]:
             try:
                 with open(metadata_file, 'r') as f:
                     metadata = json.load(f)
-                    ctx.log(f"Loaded pipeline metadata from: {metadata_file}")
+                    logger.info(f"Loaded pipeline metadata from: {metadata_file}")
                     return metadata
             except Exception as e:
-                ctx.log(f"Failed to load metadata from {metadata_file}: {e}")
+                logger.info(f"Failed to load metadata from {metadata_file}: {e}")
                 continue
     
     # If no metadata file found, return minimal context
-    ctx.log("Warning: No pipeline metadata found, proceeding with minimal context")
+    logger.info("Warning: No pipeline metadata found, proceeding with minimal context")
     return {
         "processing_context": {
             "suggested_marketing_strategies": [],
@@ -187,4 +204,4 @@ def _track_stage_cost(ctx: PipelineContext) -> None:
             ctx.cost_summary['stage_costs'].append(cost_detail.model_dump())
             
     except Exception as e:
-        ctx.log(f"Warning: Could not track cost for load_base_image stage: {e}") 
+        logger.info(f"Warning: Could not track cost for load_base_image stage: {e}") 

@@ -635,11 +635,7 @@ class PipelineTaskProcessor:
             
             # Execute refinement pipeline
             executor = PipelineExecutor(mode="refinement")
-            await executor.run_async(
-                ctx=context,
-                progress_callback=refinement_progress_callback,
-                logger=logger
-            )
+            await executor.run_async(context, refinement_progress_callback)
             
             # Update job with results
             # The updated context will be passed down from above
