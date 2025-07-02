@@ -1097,6 +1097,8 @@ async def list_captions(
                         "settings_used": caption_data.get("settings_used", {}),
                         "brief_used": caption_data.get("brief_used", {}),
                         "created_at": caption_data.get("created_at", ""),
+                        "model_id": caption_data.get("model_id"),
+                        "usage_summary": caption_data.get("usage_summary", {}),
                         "llm_usage": caption_data.get("llm_usage", {})
                     })
                 except Exception as e:

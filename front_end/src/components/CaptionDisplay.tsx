@@ -19,6 +19,8 @@ import {
   MoreVert as MoreVertIcon,
   AutoAwesome as AutoAwesomeIcon,
   Tune as TuneIcon,
+  AttachMoney as CostIcon,
+  Speed as SpeedIcon,
 } from '@mui/icons-material';
 import { CaptionResult, CaptionSettings } from '@/types/api';
 import toast from 'react-hot-toast';
@@ -191,6 +193,46 @@ export default function CaptionDisplay({
       >
         {currentCaption.text}
       </Typography>
+
+      {/* Usage Summary - Simple User Display */}
+      {currentCaption.usage_summary && 
+       currentCaption.usage_summary.total_cost_usd !== undefined && 
+       currentCaption.usage_summary.total_latency_seconds !== undefined && (
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            p: 1,
+            backgroundColor: 'grey.50',
+            borderRadius: 1,
+            border: 1,
+            borderColor: 'grey.200'
+          }}>
+            {/* Cost */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <CostIcon fontSize="small" color="success" />
+              <Typography variant="caption" color="textSecondary">
+                Cost:
+              </Typography>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'success.main' }}>
+                ${(currentCaption.usage_summary.total_cost_usd || 0).toFixed(4)}
+              </Typography>
+            </Box>
+
+            {/* Speed */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <SpeedIcon fontSize="small" color="info" />
+              <Typography variant="caption" color="textSecondary">
+                Speed:
+              </Typography>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'info.main' }}>
+                {((currentCaption.usage_summary.total_latency_seconds || 0)).toFixed(1)}s
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      )}
 
       {/* Settings Used */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
