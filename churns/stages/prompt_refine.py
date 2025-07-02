@@ -30,7 +30,7 @@ from .refinement_utils import (
 )
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """
     Perform prompt-based refinement on images with optional regional masking.
     
@@ -73,7 +73,7 @@ def run(ctx: PipelineContext) -> None:
         mask_path, editing_type = _prepare_regional_mask(ctx, base_image)
     
     # Perform actual prompt refinement using OpenAI API
-    result_image_path = asyncio.run(_perform_prompt_refinement_api(ctx, base_image, mask_path))
+    result_image_path = await _perform_prompt_refinement_api(ctx, base_image, mask_path)
     
     # Cleanup temporary files
     if mask_path:

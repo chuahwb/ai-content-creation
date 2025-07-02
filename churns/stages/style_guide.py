@@ -169,7 +169,7 @@ def _get_style_guider_user_prompt(
     return "\n".join(prompt_parts)
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """Generates N distinct style guidance sets for N marketing strategies."""
     stage_name = "Style Guide"
     ctx.log(f"Starting {stage_name} stage")

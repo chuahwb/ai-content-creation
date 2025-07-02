@@ -826,7 +826,7 @@ async def _assess_images_parallel(
     return processed_results
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """Main entry point for image assessment stage."""
     ctx.log("Starting image assessment stage")
     
@@ -925,7 +925,7 @@ def run(ctx: PipelineContext) -> None:
     
     try:
         # Run parallel assessments
-        parallel_results = asyncio.run(_assess_images_parallel(assessor, image_tasks, reference_image_data))
+        parallel_results = await _assess_images_parallel(assessor, image_tasks, reference_image_data)
         
         # Initialize aggregated usage tracking (dictionary format for cost calculation compatibility)
         if "image_assessment" not in ctx.llm_usage:

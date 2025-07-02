@@ -63,7 +63,7 @@ def simulate_image_evaluation_fallback(user_has_provided_instruction: bool) -> D
         return {"error": f"Fallback creation failed: {e}", "main_subject": "Error"}
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """Performs image analysis using VLM, updates pipeline context."""
     ctx.log("Starting image evaluation stage")
     

@@ -102,7 +102,7 @@ def simulate_marketing_strategy_fallback_staged(
     return strategies[:num_strategies] # Ensure exact number
 
 
-def run(ctx: PipelineContext) -> None:
+async def run(ctx: PipelineContext) -> None:
     """Generates N diverse marketing strategy combinations using a STAGED LLM approach."""
     ctx.log("Starting marketing strategy generation stage")
     
