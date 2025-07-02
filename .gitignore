@@ -110,6 +110,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+test_env/
 uv.lock
 
 # Spyder project settings
@@ -179,4 +180,8 @@ yarn-error.log*
 out/
 
 # Docker
-.dockerignore 
+.dockerignore
+
+# Benchmarking files (should not be tracked)
+scripts/benchmark_caption_models.py
+scripts/caption_benchmark_results_*.json 
