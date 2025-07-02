@@ -1494,6 +1494,55 @@ class PipelineTaskProcessor:
                 with open(brief_file, 'w', encoding='utf-8') as f:
                     json.dump(caption_result["brief_used"], f, indent=2)
                 
+                # Create streamlined usage summary
+                analyst_usage = context.llm_usage.get("caption_analyst", {})
+                writer_usage = context.llm_usage.get("caption_writer", {})
+                
+                # Calculate totals
+                total_cost = 0.0
+                total_latency = 0.0
+                
+                analyst_cost = 0.0
+                writer_cost = 0.0
+                analyst_latency = 0.0
+                writer_latency = 0.0
+                
+                if analyst_usage.get("cost_breakdown"):
+                    analyst_cost = analyst_usage["cost_breakdown"]["total_cost"]
+                    total_cost += analyst_cost
+                    analyst_latency = analyst_usage.get("latency_seconds", 0)
+                    total_latency += analyst_latency
+                
+                if writer_usage.get("cost_breakdown"):
+                    writer_cost = writer_usage["cost_breakdown"]["total_cost"]
+                    total_cost += writer_cost
+                    writer_latency = writer_usage.get("latency_seconds", 0)
+                    total_latency += writer_latency
+                
+                usage_summary = {
+                    "total_cost_usd": round(total_cost, 6),
+                    "total_latency_seconds": round(total_latency, 3),
+                    "model_id": model_id,
+                    "analyst": {
+                        "tokens": {
+                            "prompt": analyst_usage.get("prompt_tokens", 0),
+                            "completion": analyst_usage.get("completion_tokens", 0),
+                            "cached": analyst_usage.get("cached_tokens", 0)
+                        },
+                        "cost": round(analyst_cost, 6),
+                        "latency": round(analyst_latency, 3)
+                    } if analyst_usage else {},
+                    "writer": {
+                        "tokens": {
+                            "prompt": writer_usage.get("prompt_tokens", 0),
+                            "completion": writer_usage.get("completion_tokens", 0),
+                            "cached": writer_usage.get("cached_tokens", 0)
+                        },
+                        "cost": round(writer_cost, 6),
+                        "latency": round(writer_latency, 3)
+                    } if writer_usage else {}
+                }
+
                 # Also save caption result with metadata to match pipeline pattern
                 result_file = caption_dir / f"v{version}_result.json"
                 with open(result_file, 'w', encoding='utf-8') as f:
@@ -1504,10 +1553,7 @@ class PipelineTaskProcessor:
                         "brief_used": caption_result["brief_used"],
                         "created_at": caption_result.get("created_at"),
                         "model_id": model_id,  # Save the model used
-                        "llm_usage": {
-                            "caption_analyst": context.llm_usage.get("caption_analyst", {}),
-                            "caption_writer": context.llm_usage.get("caption_writer", {})
-                        }
+                        "usage_summary": usage_summary
                     }, f, indent=2)
                 
                 # Send success update

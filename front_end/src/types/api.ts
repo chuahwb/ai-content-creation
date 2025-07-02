@@ -180,6 +180,24 @@ export interface CaptionRegenerateRequest {
   model_id?: string;
 }
 
+export interface CaptionUsageComponent {
+  tokens: {
+    prompt: number;
+    completion: number;
+    cached: number;
+  };
+  cost: number;
+  latency: number;
+}
+
+export interface CaptionUsage {
+  total_cost_usd?: number;
+  total_latency_seconds?: number;
+  model_id?: string;
+  analyst?: CaptionUsageComponent;
+  writer?: CaptionUsageComponent;
+}
+
 export interface CaptionResult {
   version: number;
   text: string;
@@ -187,6 +205,7 @@ export interface CaptionResult {
   brief_used?: Record<string, any>;
   created_at: string;
   model_id?: string;
+  usage_summary?: CaptionUsage;
 }
 
 export interface CaptionResponse {

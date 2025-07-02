@@ -27,6 +27,7 @@ from ..core.json_parser import (
     TruncatedResponseError,
     should_use_manual_parsing
 )
+from ..core.token_cost_manager import get_token_cost_manager, TokenUsage
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 instructor_client_caption = None
@@ -563,7 +564,9 @@ async def _run_analyst(
         ctx.log(f"Running Analyst LLM for caption brief using {CAPTION_MODEL_PROVIDER} model: {CAPTION_MODEL_ID}")
         ctx.log(f"Target platform for caption: {platform_name}")
         
+        start_time = time.time()
         completion = client_to_use.chat.completions.create(**llm_args)
+        end_time = time.time()
         
         if use_instructor_for_call:
             brief_dict = completion.model_dump()
@@ -585,13 +588,58 @@ async def _run_analyst(
                 ctx.log(f"Raw Analyst content: {raw_content}")
                 return None
         
-        # Track usage
+        # Track usage with enhanced cost calculation
         raw_response_obj = getattr(completion, '_raw_response', completion)
         if hasattr(raw_response_obj, 'usage') and raw_response_obj.usage:
-            usage_info = raw_response_obj.usage.model_dump()
-            ctx.log(f"Token Usage (Caption Analyst): {usage_info}")
+            base_usage_info = raw_response_obj.usage.model_dump()
+            
+            # Extract cached tokens if available
+            cached_tokens = 0
+            if hasattr(raw_response_obj, 'usage') and hasattr(raw_response_obj.usage, 'prompt_tokens_details'):
+                details = raw_response_obj.usage.prompt_tokens_details
+                if hasattr(details, 'cached_tokens'):
+                    cached_tokens = getattr(details, 'cached_tokens', 0)
+            
+            # Calculate latency
+            latency_seconds = round(end_time - start_time, 3)
+            latency_ms = round(latency_seconds * 1000, 1)
+            
+            # Use TokenCostManager for detailed cost calculation
+            token_manager = get_token_cost_manager()
+            usage = TokenUsage(
+                prompt_tokens=base_usage_info.get("prompt_tokens", 0),
+                completion_tokens=base_usage_info.get("completion_tokens", 0),
+                total_tokens=base_usage_info.get("total_tokens", 0),
+                cached_tokens=cached_tokens,
+                model=CAPTION_MODEL_ID,
+                provider=CAPTION_MODEL_PROVIDER
+            )
+            cost_breakdown = token_manager.calculate_cost(usage)
+            
+            # Create enhanced usage info with cost and latency
+            enhanced_usage_info = {
+                **base_usage_info,
+                "latency_seconds": latency_seconds,
+                "latency_ms": latency_ms,
+                "model": CAPTION_MODEL_ID,
+                "provider": CAPTION_MODEL_PROVIDER,
+                "cost_breakdown": {
+                    "input_cost": round(cost_breakdown.input_cost, 6),
+                    "output_cost": round(cost_breakdown.output_cost, 6),
+                    "total_cost": round(cost_breakdown.total_cost, 6),
+                    "currency": cost_breakdown.currency,
+                    "input_rate": cost_breakdown.input_rate,
+                    "output_rate": cost_breakdown.output_rate,
+                    "notes": cost_breakdown.notes
+                }
+            }
+            
+            ctx.log(f"Caption Analyst: {enhanced_usage_info['total_tokens']} tokens, "
+                   f"${enhanced_usage_info['cost_breakdown']['total_cost']:.6f}, "
+                   f"{latency_ms}ms")
+            
             if "caption_analyst" not in ctx.llm_usage:
-                ctx.llm_usage["caption_analyst"] = usage_info
+                ctx.llm_usage["caption_analyst"] = enhanced_usage_info
         
         return CaptionBrief(**brief_dict)
         
@@ -661,7 +709,10 @@ async def _run_writer(ctx: PipelineContext, brief: CaptionBrief) -> Optional[str
     try:
         ctx.log("Running Writer LLM for final caption")
         
+        start_time = time.time()
         completion = client_to_use.chat.completions.create(**llm_args)
+        end_time = time.time()
+        
         raw_content = completion.choices[0].message.content
         
         # Check for truncated responses and retry if needed
@@ -693,13 +744,58 @@ async def _run_writer(ctx: PipelineContext, brief: CaptionBrief) -> Optional[str
         # Use the raw response as the caption (models generate clean captions directly)
         caption_text = raw_content.strip() if raw_content else ""
         
-        # Track usage
+        # Track usage with enhanced cost calculation
         raw_response_obj = getattr(completion, '_raw_response', completion)
         if hasattr(raw_response_obj, 'usage') and raw_response_obj.usage:
-            usage_info = raw_response_obj.usage.model_dump()
-            ctx.log(f"Token Usage (Caption Writer): {usage_info}")
+            base_usage_info = raw_response_obj.usage.model_dump()
+            
+            # Extract cached tokens if available
+            cached_tokens = 0
+            if hasattr(raw_response_obj, 'usage') and hasattr(raw_response_obj.usage, 'prompt_tokens_details'):
+                details = raw_response_obj.usage.prompt_tokens_details
+                if hasattr(details, 'cached_tokens'):
+                    cached_tokens = getattr(details, 'cached_tokens', 0)
+            
+            # Calculate latency
+            latency_seconds = round(end_time - start_time, 3)
+            latency_ms = round(latency_seconds * 1000, 1)
+            
+            # Use TokenCostManager for detailed cost calculation
+            token_manager = get_token_cost_manager()
+            usage = TokenUsage(
+                prompt_tokens=base_usage_info.get("prompt_tokens", 0),
+                completion_tokens=base_usage_info.get("completion_tokens", 0),
+                total_tokens=base_usage_info.get("total_tokens", 0),
+                cached_tokens=cached_tokens,
+                model=CAPTION_MODEL_ID,
+                provider=CAPTION_MODEL_PROVIDER
+            )
+            cost_breakdown = token_manager.calculate_cost(usage)
+            
+            # Create enhanced usage info with cost and latency
+            enhanced_usage_info = {
+                **base_usage_info,
+                "latency_seconds": latency_seconds,
+                "latency_ms": latency_ms,
+                "model": CAPTION_MODEL_ID,
+                "provider": CAPTION_MODEL_PROVIDER,
+                "cost_breakdown": {
+                    "input_cost": round(cost_breakdown.input_cost, 6),
+                    "output_cost": round(cost_breakdown.output_cost, 6),
+                    "total_cost": round(cost_breakdown.total_cost, 6),
+                    "currency": cost_breakdown.currency,
+                    "input_rate": cost_breakdown.input_rate,
+                    "output_rate": cost_breakdown.output_rate,
+                    "notes": cost_breakdown.notes
+                }
+            }
+            
+            ctx.log(f"Caption Writer: {enhanced_usage_info['total_tokens']} tokens, "
+                   f"${enhanced_usage_info['cost_breakdown']['total_cost']:.6f}, "
+                   f"{latency_ms}ms")
+            
             if "caption_writer" not in ctx.llm_usage:
-                ctx.llm_usage["caption_writer"] = usage_info
+                ctx.llm_usage["caption_writer"] = enhanced_usage_info
         
         return caption_text
         
