@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from PIL import Image, ImageDraw
-
+from openai import OpenAI
 from ..pipeline.context import PipelineContext
 from ..core.constants import IMAGE_GENERATION_MODEL_ID, MODEL_PRICING
 from ..core.token_cost_manager import TokenCostManager, TokenUsage, CostBreakdown
@@ -23,17 +23,29 @@ from ..models import CostDetail
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 # These will be set by the pipeline executor before stage execution
-image_gen_client = None
 
+def get_image_ctx_and_main_object(ctx: PipelineContext):
+    processing_ctx = ctx.original_pipeline_data.get('processing_context')
+    
+    # Get Image Prompts Context
+    image_prompts = processing_ctx.get('generated_image_prompts')
+    image_ctx_json = image_prompts[ctx.generation_index]
+    
+    # Get Main Object from Image Analysis Result
+    image_analysis_result = processing_ctx.get('image_analysis_result')
+    analysis_main_obj = image_analysis_result.get('main_subject')
+
+    main_obj = image_ctx_json.get('main_subject')
+    if not main_obj:
+        if analysis_main_obj:
+            ctx.log(f"Setting Main Object of Visual Context to Analysis Main Object - {analysis_main_obj}")
+            main_obj = analysis_main_obj
+    else:
+        ctx.log(f"Main Object of Visual Context - {main_obj}")
+    return image_ctx_json, main_obj
 
 def validate_refinement_inputs(ctx: PipelineContext, refinement_type: str) -> None:
     """Common input validation for all refinement stages."""
-    
-    # Import the client reference from image_generation stage for consistency
-    from . import image_generation
-    
-    if not image_generation.image_gen_client:
-        raise ValueError("Image generation client not configured")
     
     if not ctx.base_image_path or not os.path.exists(ctx.base_image_path):
         raise ValueError("Base image path is required and must exist")
@@ -42,12 +54,16 @@ def validate_refinement_inputs(ctx: PipelineContext, refinement_type: str) -> No
         raise ValueError(f"Invalid refinement type for {refinement_type} refinement: {ctx.refinement_type}")
 
 
-def load_and_prepare_image(ctx: PipelineContext) -> Image.Image:
+def load_and_prepare_image(ctx: PipelineContext, type: str) -> Image.Image:
     """Load and validate the base image for refinement processing."""
     
     try:
-        image = Image.open(ctx.base_image_path)
-        ctx.log(f"Loaded base image: {image.size} {image.mode}")
+        if type=='base':
+            image = Image.open(ctx.base_image_path)
+            ctx.log(f"Loaded base image: {image.size} {image.mode} from {ctx.base_image_path}")
+        elif type=='reference':
+            image = Image.open(ctx.reference_image_path)
+            ctx.log(f"Loaded reference image: {image.size} {image.mode} from {ctx.reference_image_path}")
         
         # Ensure RGB mode for processing
         if image.mode != 'RGB':
@@ -77,28 +93,17 @@ def determine_api_image_size(original_size: Tuple[int, int]) -> str:
         return "1024x1792"
 
 
-def create_openai_client():
-    """Create an OpenAI client using environment variable."""
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set")
-    image_client = OpenAI(api_key=api_key)
-    return image_client
-
-
 async def call_openai_images_edit(
     ctx: PipelineContext,
     enhanced_prompt: str,
     image_size: str,
-    mask_path: Optional[str] = None
+    mask_path: Optional[str] = None,
+    image_gen_client: Optional[OpenAI] = None
 ) -> str:
     """
     Common OpenAI images.edit API call with standardized error handling.
     Returns the path to the saved result image.
-    """
-    
-    # Import the client reference for consistency with existing patterns
-    from . import image_generation
+    """    
     
     # Use global model ID (same pattern as image_generation.py)
     model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"
@@ -106,7 +111,7 @@ async def call_openai_images_edit(
     operation_type = "regional editing" if mask_path else "global editing"
     ctx.log(f"--- Calling OpenAI Images Edit API ({model_id}) ---")
     ctx.log(f"   Base Image: {ctx.base_image_path}")
-    ctx.log(f"   Enhanced Prompt: {enhanced_prompt}")
+    ctx.log(f"   Reference Image: {ctx.reference_image_path}")
     ctx.log(f"   Size: {image_size}")
     if mask_path:
         ctx.log(f"   Mask Image: {mask_path}")
@@ -118,27 +123,38 @@ async def call_openai_images_edit(
             "prompt": enhanced_prompt,
             "n": 1,
             "size": image_size,
-            "response_format": "b64_json"
         }
         
         # Call OpenAI images.edit API
         if mask_path:
             # Regional editing with mask
-            with open(ctx.base_image_path, "rb") as image_file, open(mask_path, "rb") as mask_file:
-                response = await asyncio.to_thread(
-                    image_generation.image_gen_client.images.edit,
-                    image=image_file,
-                    mask=mask_file,
-                    **api_params
-                )
+            ctx.log("Calling OpenAI Images Edit API for regional editing with mask")
+            response = await asyncio.to_thread(
+                image_gen_client.images.edit,
+                image=[
+                    open(ctx.base_image_path, "rb"),
+                    open(ctx.reference_image_path, "rb")
+                ],
+                mask=[open(mask_path, "rb")],
+                **api_params
+            )
         else:
             # Global editing without mask
-            with open(ctx.base_image_path, "rb") as image_file:
-                response = await asyncio.to_thread(
-                    image_generation.image_gen_client.images.edit,
-                    image=image_file,
-                    **api_params
-                )
+            if ctx.reference_image_path:
+                image_list = [
+                    open(ctx.base_image_path, "rb"),
+                    open(ctx.reference_image_path, "rb")
+                ]
+            else:
+                image_list = [
+                    open(ctx.base_image_path, "rb")
+                ]
+            ctx.log("Calling OpenAI Images Edit API for global editing without mask")
+            response = await asyncio.to_thread(
+                image_gen_client.images.edit,
+                image=image_list,
+                **api_params
+            )
         
         # Process API response (same pattern as image_generation.py)
         if response and response.data and len(response.data) > 0:

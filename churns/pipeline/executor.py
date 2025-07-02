@@ -8,13 +8,19 @@ configurable stage-based executor.
 import time
 import yaml
 import importlib
-import asyncio
-import inspect
 from pathlib import Path
+import logging
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 from .context import PipelineContext
 from ..core.client_config import get_configured_clients
 from ..api.database import StageStatus
+
+# Setup Logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("executor")
 
 class PipelineExecutor:
     """Executes pipeline stages in configurable order."""
@@ -204,13 +210,13 @@ class PipelineExecutor:
         progress_callback: Optional[Callable[[str, int, StageStatus, str, Optional[Dict], Optional[str], Optional[float]], Awaitable[None]]] = None
     ) -> PipelineContext:
         """Execute all stages in order with async support and progress callbacks."""
-        ctx.log(f"Starting async {self.mode} pipeline execution with {len(self.stages)} stages")
+        logger.info(f"Starting async {self.mode} pipeline execution with {len(self.stages)} stages : {self.stages}")
         
         overall_start_time = time.time()
         
         for stage_order, stage_name in enumerate(self.stages, 1):
             stage_start_time = time.time()
-            ctx.log(f"--- Stage {stage_order}: {stage_name} ---")
+            logger.info(f"--- Stage {stage_order}: {stage_name} ---")
             
             # Handle conditional stage resolution for refinements
             actual_stage_name = stage_name
@@ -218,12 +224,13 @@ class PipelineExecutor:
                 resolved_stage = self._resolve_conditional_stage(ctx)
                 if resolved_stage:
                     actual_stage_name = resolved_stage
-                    ctx.log(f"Resolved conditional stage to: {actual_stage_name}")
+                    logger.info(f"Resolved conditional stage to: {actual_stage_name}")
                 else:
-                    ctx.log(f"Warning: Could not resolve conditional stage for refinement type: {getattr(ctx, 'refinement_type', 'unknown')}")
+                    logger.warning(f"Warning: Could not resolve conditional stage for refinement type: {getattr(ctx, 'refinement_type', 'unknown')}")
                     continue
             
             # Send stage starting notification
+            
             if progress_callback:
                 await progress_callback(
                     actual_stage_name, stage_order, StageStatus.RUNNING, 
@@ -237,20 +244,12 @@ class PipelineExecutor:
                 # Inject clients into stage
                 self._inject_clients_into_stage(stage_module)
                 
-                # Check if stage function is async and handle appropriately
-                if inspect.iscoroutinefunction(stage_module.run):
-                    # Stage is async, call directly
-                    await stage_module.run(ctx)
-                else:
-                    # Stage is sync, execute in thread pool to avoid blocking
-                    def run_stage():
-                        return stage_module.run(ctx)
-                    
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, run_stage)
+                # Stage is async, call directly (all stages should be async)
+                
+                await stage_module.run(ctx)
                 
                 stage_duration = time.time() - stage_start_time
-                ctx.log(f"Stage {actual_stage_name} completed in {stage_duration:.2f}s")
+                logger.info(f"Stage {actual_stage_name} completed in {stage_duration:.2f}s")
                 
                 # Send stage completion notification
                 if progress_callback:
@@ -265,8 +264,8 @@ class PipelineExecutor:
             except Exception as e:
                 stage_duration = time.time() - stage_start_time
                 error_msg = f"ERROR in stage {actual_stage_name}: {e}"
-                ctx.log(error_msg)
-                ctx.log(f"Stage {actual_stage_name} failed after {stage_duration:.2f}s")
+                logger.error(error_msg)
+                logger.info(f"Stage {actual_stage_name} failed after {stage_duration:.2f}s")
                 
                 # Send stage error notification
                 if progress_callback:
@@ -280,7 +279,7 @@ class PipelineExecutor:
                 # In production, you might want to halt on critical failures
         
         overall_duration = time.time() - overall_start_time
-        ctx.log(f"{self.mode.capitalize()} pipeline execution completed in {overall_duration:.2f}s")
+        logger.info(f"{self.mode.capitalize()} pipeline execution completed in {overall_duration:.2f}s")
         
         return ctx
     

@@ -566,13 +566,11 @@ class PipelineTaskProcessor:
             
             # Set up directories
             parent_run_dir = Path(f"./data/runs/{job.parent_run_id}")
-            originals_dir = parent_run_dir / "originals"
             refinements_dir = parent_run_dir / "refinements"
             refinements_dir.mkdir(exist_ok=True)
             
-            # Create pipeline context for refinement
+            # Create pipeline context
             context = PipelineContext()
-            context.run_id = job_id
             context.parent_run_id = job.parent_run_id
             context.parent_image_id = job.parent_image_id
             context.parent_image_type = job.parent_image_type
@@ -642,40 +640,53 @@ class PipelineTaskProcessor:
             await executor.run_async(context, refinement_progress_callback)
             
             # Update job with results
+            # The updated context will be passed down from above
             with Session(engine) as session:
                 job = session.get(RefinementJob, job_id)
                 if job:
                     job.status = RunStatus.COMPLETED
                     job.completed_at = datetime.utcnow()
                     job.cost_usd = total_cost
-                    
+                    if job.refinement_type == "subject":
+                        job.refinement_summary = "Subject replaced = False" 
+                    elif job.refinement_type == "text":
+                        job.refinement_summary = "Text repaired = False" 
+                    elif job.refinement_type == "prompt":
+                        job.refinement_summary = "Prompt refined = False"
+
                     # Set result path from context
+                    # If has refinement_result indicates the subject repair is success
                     if hasattr(context, 'refinement_result') and context.refinement_result:
                         job.image_path = context.refinement_result.get("output_path")
-                        job.refinement_summary = context.refinement_result.get("summary", f"{job.refinement_type} refinement")
-                    
+                        if job.refinement_type == "subject":
+                            job.refinement_summary = "Subject replaced = " + str(context.refinement_result.get("modifications")['subject_replaced']) 
+                        elif job.refinement_type == "text":
+                            job.refinement_summary = "Text repaired = " + str(context.refinement_result.get("modifications")['text_corrected']) 
+                        elif job.refinement_type == "prompt":
+                            job.refinement_summary = "Prompt refined = " + str(context.refinement_result.get("modifications")['prompt_refined']) 
                     session.add(job)
                     session.commit()
             
-            # Update refinements.json index
-            await self._update_refinements_index(job.parent_run_id, job_id, job)
-            
-            # Send completion notification with refinement-specific data
-            refinement_result = {
-                "job_id": job_id,
-                "type": job.refinement_type,
-                "status": "completed",
-                "parent_image_id": job.parent_image_id,
-                "parent_image_type": job.parent_image_type,
-                "generation_index": job.generation_index,
-                "image_path": job.image_path,
-                "cost_usd": job.cost_usd,
-                "summary": job.refinement_summary,
-                "created_at": job.created_at.isoformat() if job.created_at else None
-            }
-            
-            await connection_manager.send_run_complete(job_id, refinement_result)
-            logger.info(f"Refinement job {job_id} completed successfully")
+                
+                # Send completion notification with refinement-specific data
+                refinement_result = {
+                    "job_id": job_id,
+                    "type": job.refinement_type,
+                    "parent_run_id": job.parent_run_id,
+                    "parent_image_type": job.parent_image_type,
+                    "parent_image_path": self._get_parent_image_path(job),
+                    "reference_image_path": context.reference_image_path, 
+                    "image_path": job.image_path,
+                    "cost_usd": job.cost_usd,
+                    "summary": job.refinement_summary,
+                    "created_at": job.created_at.isoformat() if job.created_at else None
+                }
+                
+                # Update refinements.json index
+                await self._update_refinements_index(refinement_result)
+                
+                await connection_manager.send_run_complete(job_id, refinement_result)
+                logger.info(f"Refinement job {job_id} completed successfully")
             
         except Exception as e:
             error_message = f"Refinement execution failed: {str(e)}"
@@ -695,10 +706,10 @@ class PipelineTaskProcessor:
             # Send error notification
             await connection_manager.send_run_error(job_id, error_message, {"traceback": error_traceback})
 
-    async def _update_refinements_index(self, parent_run_id: str, job_id: str, job: RefinementJob):
+    async def _update_refinements_index(self, refinement_result):
         """Update the refinements.json index file"""
         try:
-            parent_run_dir = Path(f"./data/runs/{parent_run_id}")
+            parent_run_dir = Path(f"./data/runs/{refinement_result['parent_run_id']}")
             refinements_file = parent_run_dir / "refinements.json"
             
             # Load existing refinements or create new structure
@@ -706,42 +717,49 @@ class PipelineTaskProcessor:
                 with open(refinements_file, 'r') as f:
                     refinements_data = json.load(f)
             else:
+                logger.info(f"Refinements file {refinements_file} does not exist, creating new")
                 refinements_data = {
                     "refinements": [],
                     "total_cost": 0.0,
                     "total_refinements": 0
                 }
             
-            # Add new refinement
-            new_refinement = {
-                "job_id": job_id,
-                "parent_image_id": job.parent_image_id,
-                "parent_image_type": job.parent_image_type,
-                "parent_image_path": self._get_parent_image_path(parent_run_id, job),
-                "image_path": job.image_path,
-                "type": job.refinement_type,
-                "summary": job.refinement_summary or f"{job.refinement_type} refinement",
-                "cost": job.cost_usd or 0.0,
-                "created_at": job.created_at.isoformat() if job.created_at else datetime.utcnow().isoformat()
-            }
-            
-            refinements_data["refinements"].append(new_refinement)
-            refinements_data["total_cost"] += job.cost_usd or 0.0
+            refinements_data["refinements"].append(refinement_result)
+            refinements_data["total_cost"] += refinement_result["cost_usd"]
             refinements_data["total_refinements"] = len(refinements_data["refinements"])
             
             # Save updated index
             with open(refinements_file, 'w') as f:
                 json.dump(refinements_data, f, indent=2)
             
-            logger.info(f"Updated refinements index for run {parent_run_id}")
+            logger.info(f"Updated refinements index for run {refinement_result['job_id']}")
             
         except Exception as e:
             logger.error(f"Failed to update refinements index: {e}")
 
-    def _get_parent_image_path(self, parent_run_id: str, job: RefinementJob) -> str:
-        """Get the relative path to the parent image"""
+    def _get_parent_image_path(self, job: RefinementJob) -> str:
+        """Get the relative path to the parent image"""        
         if job.parent_image_type == "original":
-            return f"originals/image_{job.generation_index}.png"
+            # Directory where originals are stored
+            originals_dir = Path(f"./data/runs/{job.parent_run_id}")
+            if not os.path.exists(originals_dir):
+                raise FileNotFoundError(f"Originals directory does not exist: {originals_dir}")
+            # Patterns: with and without timestamp
+            patterns = [
+                f"edited_image_strategy_{job.generation_index}.png",
+                f"edited_image_strategy_{job.generation_index}_*.png"
+            ]
+            matches = []
+            for pattern in patterns:
+                matches.extend(originals_dir.glob(pattern))
+            matches = list(set(matches))  # Remove duplicates if any
+
+            logger.info(f"Searching for parent image with patterns {patterns} in {originals_dir}")
+            if not matches:
+                raise FileNotFoundError(f"No image found for patterns: {patterns} in {originals_dir}")
+            matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            logger.info(f"Found parent image: {matches[0]}")
+            return str(matches[0].relative_to(originals_dir))
         else:
             # It's a refinement, need to look up the path
             return f"refinements/{job.parent_image_id}_from_{job.generation_index}.png"

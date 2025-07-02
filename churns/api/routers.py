@@ -255,7 +255,6 @@ async def create_refinement(
     
     # Process reference image if provided
     reference_image_data = None
-    reference_image_path = None
     if reference_image:
         # Validate image file
         if not reference_image.content_type or not reference_image.content_type.startswith('image/'):

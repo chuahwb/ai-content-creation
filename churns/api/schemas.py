@@ -223,6 +223,16 @@ class WebSocketMessage(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     data: Dict[str, Any] = Field(default_factory=dict)
 
+
+class ImageAnalysisResult(BaseModel):  
+    """Image analysis result from text repair stage"""
+    main_text: str
+    secondary_texts: List[str]
+    object_description: str
+    brand_name: str
+    corrections: Dict
+
+
 # Caption-related schemas
 class CaptionSettings(BaseModel):
     """User settings for caption generation"""
@@ -270,4 +280,4 @@ class CaptionResponse(BaseModel):
     version: int = Field(description="Version number of this caption")
     settings_used: CaptionSettings = Field(description="Settings that were used to generate this caption")
     created_at: datetime = Field(description="When the caption was created")
-    status: str = Field(description="Status of caption generation") 
+    status: str = Field(description="Status of caption generation")
