@@ -736,9 +736,28 @@ class PipelineTaskProcessor:
             logger.error(f"Failed to update refinements index: {e}")
 
     def _get_parent_image_path(self, job: RefinementJob) -> str:
-        """Get the relative path to the parent image"""
+        """Get the relative path to the parent image"""        
         if job.parent_image_type == "original":
-            return f"edit_image_strategy_{job.generation_index}.png"
+            # Directory where originals are stored
+            originals_dir = Path(f"./data/runs/{job.parent_run_id}")
+            if not os.path.exists(originals_dir):
+                raise FileNotFoundError(f"Originals directory does not exist: {originals_dir}")
+            # Patterns: with and without timestamp
+            patterns = [
+                f"edited_image_strategy_{job.generation_index}.png",
+                f"edited_image_strategy_{job.generation_index}_*.png"
+            ]
+            matches = []
+            for pattern in patterns:
+                matches.extend(originals_dir.glob(pattern))
+            matches = list(set(matches))  # Remove duplicates if any
+
+            logger.info(f"Searching for parent image with patterns {patterns} in {originals_dir}")
+            if not matches:
+                raise FileNotFoundError(f"No image found for patterns: {patterns} in {originals_dir}")
+            matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            logger.info(f"Found parent image: {matches[0]}")
+            return str(matches[0].relative_to(originals_dir))
         else:
             # It's a refinement, need to look up the path
             return f"refinements/{job.parent_image_id}_from_{job.generation_index}.png"
