@@ -571,18 +571,33 @@ class PipelineTaskProcessor:
             
             # Create pipeline context
             context = PipelineContext()
+            context.run_id = job_id  # Set the current refinement job ID
             context.parent_run_id = job.parent_run_id
             context.parent_image_id = job.parent_image_id
             context.parent_image_type = job.parent_image_type
             context.generation_index = job.generation_index
             context.refinement_type = job.refinement_type
-    
+            context.pipeline_mode = "refinement"  # Set pipeline mode for executor
+
             context.base_run_dir = str(parent_run_dir)
             
             # Set refinement-specific inputs
             if job.refinement_type == "subject":
                 context.instructions = refinement_data.get("instructions")
-                context.reference_image_path = refinement_data.get("reference_image_path")
+                # Handle reference image path (already absolute with new API structure)
+                reference_image_path = refinement_data.get("reference_image_path")
+                if reference_image_path:
+                    # Check if path is already absolute or relative
+                    if os.path.isabs(reference_image_path):
+                        context.reference_image_path = reference_image_path
+                        logger.info(f"Using absolute reference image path: {reference_image_path}")
+                    else:
+                        # Legacy relative path handling
+                        context.reference_image_path = str(parent_run_dir / reference_image_path)
+                        logger.info(f"Converted relative reference image path: {reference_image_path} -> {context.reference_image_path}")
+                else:
+                    context.reference_image_path = None
+                    logger.warning(f"No reference image path found in refinement data: {refinement_data}")
             elif job.refinement_type == "text":
                 context.instructions = refinement_data.get("instructions")
             elif job.refinement_type == "prompt":
@@ -594,6 +609,9 @@ class PipelineTaskProcessor:
             if metadata_path.exists():
                 with open(metadata_path, 'r') as f:
                     context.original_pipeline_data = json.load(f)
+            else:
+                logger.warning(f"No pipeline metadata found at {metadata_path}")
+                context.original_pipeline_data = {"processing_context": {}, "user_inputs": {}}
             
             # Initialize cost tracking
             total_cost = 0.0
@@ -610,22 +628,25 @@ class PipelineTaskProcessor:
                 if status == StageStatus.COMPLETED and duration_seconds:
                     stage_cost = 0.0
                     
-                    # Calculate refinement-specific costs
+                    # Get actual cost from context if calculated by stage
                     if stage_name in ["subject_repair", "text_repair", "prompt_refine"]:
-                        # Get cost from context if calculated by stage
+                        # Check if stage calculated its own cost
                         stage_cost = getattr(context, 'refinement_cost', 0.0)
                         if stage_cost == 0.0:
-                            # Fallback estimation
-                            stage_cost = 0.040  # Typical DALL-E edit cost
+                            # Use more accurate estimation based on OpenAI pricing
+                            stage_cost = 0.042  # Current gpt-image-1 model pricing for 1024x1024
+                    elif stage_name in ["load_base_image", "save_outputs"]:
+                        stage_cost = 0.0  # No external API costs for utility stages
                     else:
-                        stage_cost = 0.001  # Minimal cost for utility stages
+                        stage_cost = 0.001  # Minimal cost for other utility stages
                     
                     if stage_cost > 0:
                         total_cost += stage_cost
                         stage_costs.append({
                             "stage_name": stage_name,
                             "cost_usd": stage_cost,
-                            "duration_seconds": duration_seconds
+                            "duration_seconds": duration_seconds,
+                            "model_used": "gpt-image-1" if stage_name in ["subject_repair", "text_repair", "prompt_refine"] else "local"
                         })
                         logger.info(f"Refinement stage {stage_name} cost: ${stage_cost:.6f}")
                 
@@ -639,31 +660,49 @@ class PipelineTaskProcessor:
             executor = PipelineExecutor(mode="refinement")
             await executor.run_async(context, refinement_progress_callback)
             
-            # Update job with results
-            # The updated context will be passed down from above
+            # Update job with results using database_updates from save_outputs stage
             with Session(engine) as session:
                 job = session.get(RefinementJob, job_id)
                 if job:
-                    job.status = RunStatus.COMPLETED
-                    job.completed_at = datetime.utcnow()
-                    job.cost_usd = total_cost
-                    if job.refinement_type == "subject":
-                        job.refinement_summary = "Subject replaced = False" 
-                    elif job.refinement_type == "text":
-                        job.refinement_summary = "Text repaired = False" 
-                    elif job.refinement_type == "prompt":
-                        job.refinement_summary = "Prompt refined = False"
-
-                    # Set result path from context
-                    # If has refinement_result indicates the subject repair is success
-                    if hasattr(context, 'refinement_result') and context.refinement_result:
-                        job.image_path = context.refinement_result.get("output_path")
-                        if job.refinement_type == "subject":
-                            job.refinement_summary = "Subject replaced = " + str(context.refinement_result.get("modifications")['subject_replaced']) 
-                        elif job.refinement_type == "text":
-                            job.refinement_summary = "Text repaired = " + str(context.refinement_result.get("modifications")['text_corrected']) 
-                        elif job.refinement_type == "prompt":
-                            job.refinement_summary = "Prompt refined = " + str(context.refinement_result.get("modifications")['prompt_refined']) 
+                    # Use database_updates prepared by save_outputs stage if available
+                    if hasattr(context, 'database_updates') and context.database_updates:
+                        db_updates = context.database_updates
+                        
+                        # Set status based on save_outputs analysis
+                        if db_updates["status"] == "completed":
+                            job.status = RunStatus.COMPLETED
+                        else:
+                            job.status = RunStatus.FAILED
+                        
+                        job.completed_at = datetime.utcnow()
+                        job.cost_usd = total_cost
+                        job.image_path = db_updates.get("image_path")
+                        job.refinement_summary = db_updates.get("refinement_summary", "Refinement processed")
+                        job.error_message = db_updates.get("error_message")
+                        
+                        logger.info(f"Updated job {job_id} with save_outputs database_updates: status={job.status}, summary={job.refinement_summary}")
+                    else:
+                        # Fallback to old logic if database_updates not available
+                        logger.warning(f"No database_updates found in context for job {job_id}, using fallback logic")
+                        job.status = RunStatus.COMPLETED
+                        job.completed_at = datetime.utcnow()
+                        job.cost_usd = total_cost
+                        
+                        # Check if refinement actually succeeded
+                        if hasattr(context, 'refinement_result') and context.refinement_result:
+                            output_path = context.refinement_result.get("output_path")
+                            if output_path and os.path.exists(output_path):
+                                # Convert to relative path for database storage
+                                try:
+                                    job.image_path = str(Path(output_path).relative_to(parent_run_dir))
+                                except ValueError:
+                                    job.image_path = f"refinements/{os.path.basename(output_path)}"
+                                job.refinement_summary = f"{job.refinement_type.title()} enhancement: Successful"
+                            else:
+                                job.refinement_summary = f"{job.refinement_type.title()} enhancement: No changes made"
+                        else:
+                            job.refinement_summary = f"{job.refinement_type.title()} enhancement: No changes made"
+                    
                     session.add(job)
                     session.commit()
             
@@ -685,7 +724,8 @@ class PipelineTaskProcessor:
                 # Update refinements.json index
                 await self._update_refinements_index(refinement_result)
                 
-                await connection_manager.send_run_complete(job_id, refinement_result)
+                # Send completion notification to the parent run (not the job ID)
+                await connection_manager.send_run_complete(job.parent_run_id, refinement_result)
                 logger.info(f"Refinement job {job_id} completed successfully")
             
         except Exception as e:
@@ -704,7 +744,7 @@ class PipelineTaskProcessor:
                     session.commit()
             
             # Send error notification
-            await connection_manager.send_run_error(job_id, error_message, {"traceback": error_traceback})
+            await connection_manager.send_run_error(job.parent_run_id, error_message, {"traceback": error_traceback, "job_id": job_id})
 
     async def _update_refinements_index(self, refinement_result):
         """Update the refinements.json index file"""

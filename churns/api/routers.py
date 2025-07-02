@@ -295,13 +295,24 @@ async def create_refinement(
         "reference_image_data": reference_image_data
     }
     
-    # Save reference image if provided
+    # Save reference image if provided (updated for hybrid structure)
     if reference_image_data:
         parent_run_dir = Path(f"./data/runs/{run_id}")
-        parent_run_dir.mkdir(parents=True, exist_ok=True)
-        ref_image_path = parent_run_dir / f"ref_{refinement_job.id}_{reference_image.filename}"
+        
+        # Create job-specific directory for hybrid structure
+        job_refinement_dir = parent_run_dir / "refinements" / refinement_job.id
+        job_refinement_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Store reference image directly in job-specific directory
+        # Preserve original file extension for better compatibility
+        original_extension = Path(reference_image.filename or "reference.png").suffix
+        ref_image_filename = f"reference{original_extension}"
+        ref_image_path = job_refinement_dir / ref_image_filename
+        
         with open(ref_image_path, "wb") as f:
             f.write(reference_image_data)
+        
+        # Store path relative to job directory for the refinement utilities
         refinement_data["reference_image_path"] = str(ref_image_path)
     
     # DEBUG: Log refinement data received from frontend
@@ -741,10 +752,10 @@ async def get_pipeline_results(
 
 
 # File serving endpoints
-@files_router.get("/{run_id}/{filename}")
+@files_router.get("/{run_id}/{file_path:path}")
 async def get_run_file(
     run_id: str,
-    filename: str,
+    file_path: str,
     session: Session = Depends(get_session)
 ):
     """Serve files from a pipeline run (images, metadata, etc.)"""
@@ -753,27 +764,30 @@ async def get_run_file(
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
-    # Construct file path safely
-    file_path = Path(f"./data/runs/{run_id}") / filename
+    # Construct file path safely - file_path can now include subdirectories
+    full_file_path = Path(f"./data/runs/{run_id}") / file_path
     
     # Security check: ensure file is within the run directory
     try:
-        file_path = file_path.resolve()
+        full_file_path = full_file_path.resolve()
         run_dir = Path(f"./data/runs/{run_id}").resolve()
-        file_path.relative_to(run_dir)  # Will raise ValueError if outside
+        full_file_path.relative_to(run_dir)  # Will raise ValueError if outside
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
     
-    if not file_path.exists():
+    if not full_file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
     # Determine media type
-    media_type, _ = mimetypes.guess_type(str(file_path))
+    media_type, _ = mimetypes.guess_type(str(full_file_path))
     if not media_type:
         media_type = "application/octet-stream"
     
+    # Extract just the filename for the download
+    filename = full_file_path.name
+    
     return FileResponse(
-        path=str(file_path),
+        path=str(full_file_path),
         media_type=media_type,
         filename=filename
     )

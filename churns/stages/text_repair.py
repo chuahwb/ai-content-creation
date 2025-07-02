@@ -29,7 +29,8 @@ from .refinement_utils import (
     call_openai_images_edit,
     calculate_refinement_cost,
     track_refinement_cost,
-    get_image_ctx_and_main_object
+    get_image_ctx_and_main_object,
+    RefinementError
 )
 from sentence_transformers import SentenceTransformer, util
 
@@ -91,17 +92,39 @@ async def run(ctx: PipelineContext) -> None:
             base_image=base_image
         )
         
-        # Update context with results
-        ctx.refinement_result = {
-            "type": "text_repair",
-            "status": "completed", 
-            "output_path": result_image_path,
-            "modifications": {
-                "text_corrected": True,
-                "design_preserved": True,
-                "instructions_applied": ctx.instructions
+        # Check if we got a result
+        if result_image_path and os.path.exists(result_image_path):
+            # Successful text repair
+            ctx.refinement_result = {
+                "type": "text_repair",
+                "status": "completed", 
+                "output_path": result_image_path,
+                "modifications": {
+                    "text_corrected": True,
+                    "design_preserved": True,
+                    "instructions_applied": ctx.instructions
+                },
+                "error_context": None
             }
-        }
+            logger.info(f"Text repair completed successfully: {result_image_path}")
+        else:
+            # This should not happen with the new error handling - if we get here, something unexpected occurred
+            ctx.refinement_result = {
+                "type": "text_repair",
+                "status": "api_no_result",
+                "output_path": None,
+                "modifications": {
+                    "text_corrected": False,
+                    "reason": "API call completed but no result was generated"
+                },
+                "error_context": {
+                    "error_type": "api_no_result",
+                    "user_message": "The AI was unable to make the requested text changes to your image",
+                    "suggestion": "Try using different text repair instructions or check if the image actually contains text that needs correction",
+                    "is_retryable": True
+                }
+            }
+            logger.info("Text repair API call completed but no result was generated")
         
         # Calculate and track costs using shared utilities
         ctx.refinement_cost = calculate_refinement_cost(
@@ -112,12 +135,83 @@ async def run(ctx: PipelineContext) -> None:
         )
         track_refinement_cost(ctx, "text_repair", ctx.instructions or "", duration_seconds=4.0)
         
-        logger.info(f"Text repair completed: {result_image_path}")
+    except RefinementError as e:
+        # Handle our custom refinement errors with detailed context
+        if e.error_type == "no_changes_needed":
+            # This is a legitimate case where no changes are needed
+            logger.info(f"Text repair determined no changes needed: {e.message}")
+            ctx.refinement_result = {
+                "type": "text_repair",
+                "status": "no_changes_needed",
+                "output_path": None,
+                "modifications": {
+                    "text_corrected": False,
+                    "reason": e.message
+                },
+                "error_context": {
+                    "error_type": e.error_type,
+                    "user_message": e.message,
+                    "suggestion": e.suggestion,
+                    "is_retryable": e.is_retryable
+                }
+            }
+            # Don't re-raise for legitimate no changes cases
+            return
+        else:
+            # Handle actual error cases
+            error_msg = f"Text repair failed: {e.message}"
+            logger.error(error_msg)
+            
+            # Set detailed error result with user-friendly information
+            ctx.refinement_result = {
+                "type": "text_repair",
+                "status": "failed",
+                "output_path": None,
+                "modifications": {
+                    "text_corrected": False,
+                    "error": e.message
+                },
+                "error_context": {
+                    "error_type": e.error_type,
+                    "user_message": e.message,
+                    "suggestion": e.suggestion or "Please try again with different text repair settings",
+                    "is_retryable": e.is_retryable
+                }
+            }
+            
+            # Still track minimal cost for the attempt
+            ctx.refinement_cost = 0.001
+            
+            # Re-raise to be handled by the executor
+            raise
         
     except Exception as e:
-        error_msg = f"Error in text repair stage: {str(e)}"
+        # Handle unexpected errors
+        error_msg = f"Text repair stage failed unexpectedly: {str(e)}"
         logger.error(error_msg)
-        raise  # Re-raise the error to be caught by the executor
+        
+        # Set generic error result
+        ctx.refinement_result = {
+            "type": "text_repair",
+            "status": "failed",
+            "output_path": None,
+            "modifications": {
+                "text_corrected": False,
+                "error": str(e)
+            },
+            "error_context": {
+                "error_type": "unexpected_error",
+                "user_message": "An unexpected error occurred during text repair",
+                "suggestion": "Please try again. If the problem persists, contact support.",
+                "is_retryable": True
+            }
+        }
+        
+        # Still track minimal cost for the attempt
+        ctx.refinement_cost = 0.001
+        
+        # Re-raise to be handled by the executor
+        raise
 
 
 def _validate_text_repair_inputs(ctx: PipelineContext) -> None:
@@ -359,9 +453,12 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
     image_size = determine_api_image_size(base_image.size)
     logger.info(f"Base Image Size: {image_size}")
     
+    # Store API image size in context for metadata
+    ctx._api_image_size = image_size
+    
     # Call OpenAI API using shared utility (no mask for global text repair)
     # Only call if prompt exists 
-    if final_prompt:
+    if final_prompt.strip():
         result_image_path = await call_openai_images_edit(
             ctx=ctx,
             enhanced_prompt=final_prompt,
@@ -369,9 +466,17 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
             mask_path=None,  # Text repair uses global editing
             image_gen_client=image_gen_client
         )
+        logger.info(f"Text repair API call completed: {result_image_path}")
     else:
-        result_image_path = None
-        logger.info("No final prompt generated. Skipping text repair.")
+        # This is a legitimate case where no changes are needed
+        logger.info("No final prompt generated. No text changes are needed.")
+        # Raise a special error to indicate legitimate no changes needed
+        raise RefinementError(
+            "no_changes_needed",
+            "No text changes are required for this image",
+            "The image text appears to be correct as-is, or no text was found that needs repair.",
+            is_retryable=False
+        )
     
     return result_image_path
 
@@ -382,7 +487,7 @@ def _prepare_text_repair_prompt(detected_txt: str, expected_txt: str) -> str:
     You are editing an image that might contains visible branding and text description. 
 
     Instructions:
-    1. Replace every instance of “{detected_txt}” with “{expected_txt}”,  preserving the original casing style — if the existing text is in all uppercase, the replacement must also appear in all uppercase.
+    1. Replace every instance of "{detected_txt}" with "{expected_txt}", preserving the original casing style — if the existing text is in all uppercase, the replacement must also appear in all uppercase.
     2. Maintain the original font style, size, color, positioning, and alignment exactly as seen in the source image. The updated text must seamlessly match the formatting and spatial layout of the original.
     3. Ensure the new text blends naturally with the surrounding design — matching textures, shadows, lighting, and perspective.
     4. Do not alter any other elements of the image or introduce additional text.
@@ -398,8 +503,16 @@ def _prepare_render_text_prompt(ctx: PipelineContext) -> str:
 
     # Get image ctx
     processing_context = ctx.original_pipeline_data.get('processing_context')
-    image_ctx_json = processing_context.get('generated_image_prompts')[ctx.generation_index]
+    generated_image_prompts = processing_context.get('generated_image_prompts')
     
+    # For chain refinements, generation_index might be None
+    if ctx.generation_index is not None:
+        image_ctx_json = generated_image_prompts[ctx.generation_index]
+    else:
+        # For chain refinements, use the first available prompt context as fallback
+        image_ctx_json = generated_image_prompts[0] if generated_image_prompts else {}
+        ctx.log("Using fallback image context for chain refinement in text repair")
+
     prompt_render = f"""
     You are editing an image to render promotional text onto it based on the following precise visual specification.
 
@@ -411,7 +524,7 @@ def _prepare_render_text_prompt(ctx: PipelineContext) -> str:
     1. Carefully study the Text Styling Details to guide the appearance and placement of the promotional text.
     - These details serve as **style inspiration**, not fixed spatial rules.
     - You may adapt **positioning or layout** of the text to suit the image without compromising legibility or aesthetics.
-    2. **Do not alter, shrink, resize, reposition, or visually obstruct** the main object (“{main_obj}”) in any way.
+    2. **Do not alter, shrink, resize, reposition, or visually obstruct** the main object ("{main_obj}") in any way.
     - The object must remain visually dominant and unchanged in size, scale, and placement.
     - Preserve all existing content and composition in the image.
     3. **Flexibly adjust** the position of the promotional text to maintain:

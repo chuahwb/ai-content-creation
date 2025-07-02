@@ -40,26 +40,29 @@ async def run(ctx: PipelineContext) -> None:
     
     PERFORMS:
     1. Validate refinement result exists
-    2. Update refinements.json index file
-    3. Set final database record fields
-    4. Cleanup temporary files if any
-    5. Log completion status
+    2. Prepare final database record fields
+    3. Cleanup temporary files if any
+    4. Log completion status
     """
     
     logger.info("Starting save outputs stage...")
     
-    # Validate refinement result exists
-    if not ctx.refinement_result:
-        raise ValueError("No refinement result found to save")
-    logger.info("Received refinement result: ", ctx.refinement_result)
+    # Validate refinement result - allow cases where no result was generated
+    if not hasattr(ctx, 'refinement_result') or not ctx.refinement_result:
+        logger.info("No refinement result found - this may be normal for failed refinements")
+        ctx.refinement_result = {
+            "type": ctx.refinement_type,
+            "status": "no_changes",
+            "output_path": None,
+            "modifications": {}
+        }
     
     # Extract result information
     output_path = ctx.refinement_result.get("output_path")
-    # if not output_path or not os.path.exists(output_path):
-    #     raise ValueError(f"Refinement output file not found: {output_path}")
-    
-    # Update refinements index file
-    # _update_refinements_index("save_outputs", ctx)
+    if output_path and os.path.exists(output_path):
+        logger.info(f"Refinement output file found: {output_path}")
+    else:
+        logger.info("No refinement output file generated")
     
     # Prepare final database updates
     _prepare_database_updates(ctx)
@@ -68,67 +71,10 @@ async def run(ctx: PipelineContext) -> None:
     _cleanup_temporary_files(ctx)
     
     # Final logging
-    logger.info(f"Refinement outputs saved successfully")
-    logger.info(f"Output file: {output_path}")
-    logger.info(f"Total cost: ${ctx.refinement_cost:.3f}")
-
-
-def _update_refinements_index(stage_name: str, ctx: PipelineContext) -> None:
-    """
-    Update the refinements.json index file for the parent run.
-    """
-    
-    # Path to refinements index file
-    index_path = Path(f"./data/runs/{ctx.parent_run_id}/refinements.json")
-    
-    # Load existing index or create new one
-    if index_path.exists():
-        try:
-            with open(index_path, 'r') as f:
-                index_data = json.load(f)
-        except Exception as e:
-            logger.warning(f"Warning: Could not read existing refinements index: {e}")
-            index_data = {"refinements": [], "total_cost": 0.0, "total_refinements": 0}
-    else:
-        index_data = {"refinements": [], "total_cost": 0.0, "total_refinements": 0}
-    
-    # Prepare new refinement entry
-    output_path = ctx.refinement_result.get("output_path", "")
-    relative_output_path = _get_relative_path(output_path, ctx.parent_run_id)
-    
-    # Determine parent image path
-    parent_image_path = _get_parent_image_relative_path(ctx)
-    
-    refinement_entry = {
-        "job_id": ctx.run_id,
-        "stage_name": stage_name,
-        "parent_image_id": ctx.parent_image_id,
-        "parent_image_path": parent_image_path,
-        "image_path": relative_output_path,
-        "type": ctx.refinement_type,
-        "summary": "Save outputs",
-        "cost": 0.0,
-        "created_at": datetime.utcnow().isoformat() + "Z"
-    }
-    
-    # Add to index
-    index_data["refinements"].append(refinement_entry)
-    index_data["total_cost"] += refinement_entry["cost"]
-    index_data["total_refinements"] = len(index_data["refinements"])
-    
-    # Save updated index
-    try:
-        # Ensure directory exists
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(index_path, 'w') as f:
-            json.dump(index_data, f, indent=2)
-        
-        logger.info(f"Updated refinements index: {index_path}")
-        logger.info(f"Total refinements: {index_data['total_refinements']}, Total cost: ${index_data['total_cost']:.3f}")
-        
-    except Exception as e:
-        logger.warning(f"Warning: Could not update refinements index: {e}")
+    refinement_status = "successful" if output_path and os.path.exists(output_path) else "no changes"
+    logger.info(f"Refinement outputs processing completed - Status: {refinement_status}")
+    if ctx.refinement_cost:
+        logger.info(f"Total refinement cost: ${ctx.refinement_cost:.3f}")
 
 
 def _get_relative_path(absolute_path: str, parent_run_id: str) -> str:
@@ -139,36 +85,48 @@ def _get_relative_path(absolute_path: str, parent_run_id: str) -> str:
         relative_path = abs_path.relative_to(run_dir)
         return str(relative_path)
     except ValueError:
-        # If can't make relative, return just the filename
-        return os.path.basename(absolute_path)
-
-
-def _get_parent_image_relative_path(ctx: PipelineContext) -> str:
-    """Get relative path to the parent image."""
-    if ctx.parent_image_type == "original":
-        if ctx.generation_index is not None:
-            # Images are stored directly in run directory, not in originals/
-            return f"edited_image_strategy_{ctx.generation_index}_*.png"
-        else:
-            return f"image_{ctx.parent_image_id}.png"
-    elif ctx.parent_image_type == "refinement":
-        return f"refinements/{ctx.parent_image_id}_from_*.png"
-    else:
-        return f"unknown/{ctx.parent_image_id}.png"
+        # If can't make relative, return just the filename with refinements prefix
+        return f"refinements/{os.path.basename(absolute_path)}"
 
 
 def _generate_summary(ctx: PipelineContext) -> str:
-    """Generate a brief summary of the refinement for the index."""
+    """Generate a detailed summary of the refinement for the index."""
     refinement_type = ctx.refinement_type
+    refinement_status = ctx.refinement_result.get("status", "unknown") if ctx.refinement_result else "unknown"
     
-    if refinement_type == "subject":
-        return f"Subject repair: {ctx.instructions or 'Replace main subject'}"
-    elif refinement_type == "text":
-        return f"Text repair: {ctx.instructions or 'Fix text elements'}"
-    elif refinement_type == "prompt":
-        return f"Prompt refinement: {ctx.prompt or ctx.instructions or 'Refine image'}"
+    # Check if refinement was successful based on output
+    has_output = (ctx.refinement_result and 
+                  ctx.refinement_result.get("output_path") and 
+                  os.path.exists(ctx.refinement_result.get("output_path", "")))
+    
+    # Get error context for better messaging
+    error_context = ctx.refinement_result.get("error_context") if ctx.refinement_result else None
+    
+    type_labels = {
+        "subject": "Subject Enhancement",
+        "text": "Text Enhancement", 
+        "prompt": "Style Enhancement"
+    }
+    type_label = type_labels.get(refinement_type, "Refinement")
+    
+    if refinement_status == "completed" and has_output:
+        return f"{type_label}: Successful"
+    elif refinement_status == "no_changes_needed":
+        return f"{type_label}: No changes needed"
+    elif refinement_status == "failed" and error_context:
+        error_type = error_context.get("error_type", "unknown")
+        if error_type == "connection_error":
+            return f"{type_label}: Connection failed"
+        elif error_type == "rate_limit":
+            return f"{type_label}: Rate limit exceeded"
+        elif error_type == "api_error":
+            return f"{type_label}: API error"
+        elif error_type == "auth_error":
+            return f"{type_label}: Authentication failed"
+        else:
+            return f"{type_label}: Failed"
     else:
-        return f"Unknown refinement: {ctx.instructions or 'No description'}"
+        return f"{type_label}: {'Successful' if has_output else 'Failed'}"
 
 
 def _prepare_database_updates(ctx: PipelineContext) -> None:
@@ -181,19 +139,46 @@ def _prepare_database_updates(ctx: PipelineContext) -> None:
     
     # Set the final image path (relative to make it portable)
     output_path = ctx.refinement_result.get("output_path", "")
-    if output_path:
-        relative_path = _get_relative_path(output_path, ctx.parent_run_id)
+    relative_path = None
+    
+    if output_path and os.path.exists(output_path):
+        try:
+            # Try to make path relative to parent run directory
+            relative_path = _get_relative_path(output_path, ctx.parent_run_id)
+        except Exception as e:
+            logger.warning(f"Could not create relative path for {output_path}: {e}")
+            # Fallback to just the filename
+            relative_path = f"refinements/{os.path.basename(output_path)}"
+    
+    # Extract error information from refinement result
+    error_message = None
+    refinement_status = ctx.refinement_result.get("status", "unknown") if ctx.refinement_result else "unknown"
+    error_context = ctx.refinement_result.get("error_context") if ctx.refinement_result else None
+    
+    if error_context:
+        # Use the user-friendly message from error context
+        error_message = error_context.get("user_message")
+        if error_context.get("suggestion"):
+            error_message += f" {error_context.get('suggestion')}"
+    elif refinement_status == "failed" and ctx.refinement_result:
+        # Fallback to basic error from modifications
+        modifications = ctx.refinement_result.get("modifications", {})
+        error_message = modifications.get("error", "Refinement failed for unknown reason")
+    
+    # Determine final status for database
+    if refinement_status in ["completed", "no_changes_needed"]:
+        db_status = "completed"
     else:
-        relative_path = None
+        db_status = "failed"
     
     # Store database update information in context
     ctx.database_updates = {
-        "status": "completed",
+        "status": db_status,
         "image_path": relative_path,
-        "cost_usd": ctx.refinement_cost,
+        "cost_usd": ctx.refinement_cost or 0.0,
         "completed_at": datetime.utcnow(),
         "refinement_summary": _generate_summary(ctx),
-        "error_message": None
+        "error_message": error_message
     }
     
     logger.info("Prepared database updates for final commit")
@@ -212,15 +197,24 @@ def _cleanup_temporary_files(ctx: PipelineContext) -> None:
     
     cleanup_performed = False
     
-    # Clean up reference image if it was temporary
+    # Clean up reference image ONLY if it was temporary AND we've preserved it
+    # With the new hybrid approach, reference images are preserved in refinement directories
     if ctx.reference_image_path and "temp" in ctx.reference_image_path:
-        try:
-            if os.path.exists(ctx.reference_image_path):
-                os.remove(ctx.reference_image_path)
-                logger.info(f"Cleaned up temporary reference image: {ctx.reference_image_path}")
-                cleanup_performed = True
-        except Exception as e:
-            logger.warning(f"Warning: Could not clean up reference image: {e}")
+        # Check if we have successfully preserved the reference image
+        refinement_dir = Path(f"./data/runs/{ctx.parent_run_id}/refinements/{ctx.run_id}")
+        preserved_reference = refinement_dir / "reference.png"
+        
+        if preserved_reference.exists():
+            # Safe to clean up temp file since it's preserved
+            try:
+                if os.path.exists(ctx.reference_image_path):
+                    os.remove(ctx.reference_image_path)
+                    logger.info(f"Cleaned up temporary reference image (preserved in refinement dir): {ctx.reference_image_path}")
+                    cleanup_performed = True
+            except Exception as e:
+                logger.warning(f"Warning: Could not clean up temporary reference image: {e}")
+        else:
+            logger.info(f"Skipping cleanup of reference image - not preserved in refinement directory: {ctx.reference_image_path}")
     
     # Clean up any temporary mask files
     temp_mask_path = getattr(ctx, 'temp_mask_path', None)

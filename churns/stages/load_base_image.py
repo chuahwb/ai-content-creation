@@ -42,41 +42,47 @@ async def run(ctx: PipelineContext) -> None:
     
     logger.info("Loading base image and metadata for refinement...")
     
-    # Validate required context
-    if not ctx.parent_run_id:
-        raise ValueError("parent_run_id is required for refinement")
-    
-    if not ctx.parent_image_id:
-        raise ValueError("parent_image_id is required for refinement")
-    
-    # Determine base image path if not already set
-    if not ctx.base_image_path:
-        ctx.base_image_path = _resolve_base_image_path(ctx)
-    
-    # Validate image exists
-    if not os.path.exists(ctx.base_image_path):
-        raise FileNotFoundError(f"Base image not found: {ctx.base_image_path}")
-    
-    # Load and validate image
     try:
-        img = await asyncio.to_thread(Image.open, ctx.base_image_path)
-        with img:
-            logger.info(f"Loaded base image: {img.size[0]}x{img.size[1]} {img.mode}")
-            # Store basic image info
-            ctx.base_image_metadata = {
-                "width": img.size[0],
-                "height": img.size[1],
-                "mode": img.mode,
-                "format": img.format,
-                "size_bytes": os.path.getsize(ctx.base_image_path)
-            }
+        # Validate required context
+        if not getattr(ctx, 'parent_run_id', None):
+            raise ValueError("parent_run_id is required for refinement")
+    
+        if not getattr(ctx, 'parent_image_id', None):
+            raise ValueError("parent_image_id is required for refinement")
+    
+        # Determine base image path if not already set
+        if not getattr(ctx, 'base_image_path', None):
+            ctx.base_image_path = _resolve_base_image_path(ctx)
+    
+        # Validate image exists
+        if not os.path.exists(ctx.base_image_path):
+            raise FileNotFoundError(f"Base image not found: {ctx.base_image_path}")
+    
+        # Load and validate image
+        try:
+            img = await asyncio.to_thread(Image.open, ctx.base_image_path)
+            with img:
+                logger.info(f"Loaded base image: {img.size[0]}x{img.size[1]} {img.mode}")
+                # Store basic image info
+                ctx.base_image_metadata = {
+                    "width": img.size[0],
+                    "height": img.size[1],
+                    "mode": img.mode,
+                    "format": img.format,
+                    "size_bytes": os.path.getsize(ctx.base_image_path)
+                }
+        except Exception as e:
+            raise ValueError(f"Invalid image file: {e}")
+    
+        # Load original pipeline metadata
+        ctx.original_pipeline_data = _load_original_pipeline_metadata(ctx)
+    
+        logger.info(f"Successfully loaded base image: {ctx.base_image_path}")
+        
     except Exception as e:
-        raise ValueError(f"Invalid image file: {e}")
-    
-    # Load original pipeline metadata
-    ctx.original_pipeline_data = _load_original_pipeline_metadata(ctx)
-    
-    logger.info(f"Successfully loaded base image: {ctx.base_image_path}")
+        error_msg = f"Failed to load base image: {str(e)}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg) from e
 
 
 def _resolve_base_image_path(ctx: PipelineContext) -> str:

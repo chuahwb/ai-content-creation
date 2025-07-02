@@ -161,6 +161,9 @@ async def _perform_prompt_refinement_api(ctx: PipelineContext, base_image, mask_
     # Determine image size using shared utility
     image_size = determine_api_image_size(base_image.size)
     
+    # Store API image size in context for metadata
+    ctx._api_image_size = image_size
+    
     # Call OpenAI API using shared utility
     result_image_path = await call_openai_images_edit(
         ctx=ctx,

@@ -25,7 +25,8 @@ from .refinement_utils import (
     call_openai_images_edit,
     calculate_refinement_cost,
     track_refinement_cost,
-    get_image_ctx_and_main_object
+    get_image_ctx_and_main_object,
+    RefinementError
 )
 
 # Global variables for API clients are handled by refinement_utils and image_generation.py
@@ -45,49 +46,119 @@ async def run(ctx: PipelineContext) -> None:
     SETS CONTEXT OUTPUTS:
     - ctx.refinement_result: Dict with result information
     - ctx.refinement_cost: Cost of the operation
-    
-    IMPLEMENTATION REQUIREMENTS:
-    1. Load base image and reference image
-    2. Perform subject detection/segmentation
-    3. Replace/blend subject from reference into base
-    4. Maintain original background and lighting
-    5. Save result and update context
     """
     
     ctx.log("Starting subject repair stage...")
     
-    # Validate required inputs using shared utility
-    validate_refinement_inputs(ctx, "subject")
+    try:
+        # Validate required inputs using shared utility
+        validate_refinement_inputs(ctx, "subject")
+        
+        # Additional validation specific to subject repair
+        _validate_subject_repair_inputs(ctx)
+        
+        # Perform actual subject repair using OpenAI API
+        result_image_path = await _perform_subject_repair_api(ctx)
+        
+        # Check if we got a result
+        if result_image_path and os.path.exists(result_image_path):
+            # Successful refinement
+            ctx.refinement_result = {
+                "type": "subject_repair",
+                "status": "completed",
+                "output_path": result_image_path,
+                "modifications": {
+                    "subject_replaced": True,
+                    "background_preserved": True,
+                    "reference_image_used": ctx.reference_image_path,
+                    "instructions_applied": ctx.instructions
+                },
+                "error_context": None
+            }
+            ctx.log(f"Subject repair completed successfully: {result_image_path}")
+        else:
+            # This should not happen with the new error handling - if we get here, something unexpected occurred
+            ctx.refinement_result = {
+                "type": "subject_repair",
+                "status": "api_no_result",
+                "output_path": None,
+                "modifications": {
+                    "subject_replaced": False,
+                    "reason": "API call completed but no result was generated"
+                },
+                "error_context": {
+                    "error_type": "api_no_result",
+                    "user_message": "The AI was unable to make the requested changes to your image",
+                    "suggestion": "Try using different instructions or a different reference image",
+                    "is_retryable": True
+                }
+            }
+            ctx.log("Subject repair API call completed but no result was generated")
     
-    # Additional validation specific to subject repair
-    _validate_subject_repair_inputs(ctx)
-    
-    # Perform actual subject repair using OpenAI API
-    result_image_path = await _perform_subject_repair_api(ctx)
-    
-    # Update context with results
-    ctx.refinement_result = {
-        "type": "subject_repair",
-        "status": "completed",
-        "output_path": result_image_path,
-        "modifications": {
-            "subject_replaced": True,
-            "background_preserved": True,
-            "reference_image_used": ctx.reference_image_path,
-            "instructions_applied": ctx.instructions
+        # Calculate and track costs using shared utilities
+        ctx.refinement_cost = calculate_refinement_cost(
+            ctx, 
+            ctx.instructions or "", 
+            has_mask=False,
+            refinement_type="subject repair"
+        )
+        track_refinement_cost(ctx, "subject_repair", ctx.instructions or "", duration_seconds=5.0)
+        
+    except RefinementError as e:
+        # Handle our custom refinement errors with detailed context
+        error_msg = f"Subject repair failed: {e.message}"
+        ctx.log(error_msg)
+        
+        # Set detailed error result with user-friendly information
+        ctx.refinement_result = {
+            "type": "subject_repair",
+            "status": "failed",
+            "output_path": None,
+            "modifications": {
+                "subject_replaced": False,
+                "error": e.message
+            },
+            "error_context": {
+                "error_type": e.error_type,
+                "user_message": e.message,
+                "suggestion": e.suggestion or "Please try again with different settings",
+                "is_retryable": e.is_retryable
+            }
         }
-    }
-    
-    # Calculate and track costs using shared utilities
-    ctx.refinement_cost = calculate_refinement_cost(
-        ctx, 
-        ctx.instructions or "", 
-        has_mask=False,
-        refinement_type="subject repair"
-    )
-    track_refinement_cost(ctx, "subject_repair", ctx.instructions or "", duration_seconds=5.0)
-    
-    ctx.log(f"Subject repair completed: {result_image_path}")
+        
+        # Still track minimal cost for the attempt
+        ctx.refinement_cost = 0.001
+        
+        # Re-raise to be handled by the executor
+        raise
+        
+    except Exception as e:
+        # Handle unexpected errors
+        error_msg = f"Subject repair stage failed unexpectedly: {str(e)}"
+        ctx.log(error_msg)
+        
+        # Set generic error result
+        ctx.refinement_result = {
+            "type": "subject_repair",
+            "status": "failed",
+            "output_path": None,
+            "modifications": {
+                "subject_replaced": False,
+                "error": str(e)
+            },
+            "error_context": {
+                "error_type": "unexpected_error",
+                "user_message": "An unexpected error occurred during subject repair",
+                "suggestion": "Please try again. If the problem persists, contact support.",
+                "is_retryable": True
+            }
+        }
+        
+        # Still track minimal cost for the attempt
+        ctx.refinement_cost = 0.001
+        
+        # Re-raise to be handled by the executor
+        raise
 
 
 def _validate_subject_repair_inputs(ctx: PipelineContext) -> None:
@@ -120,6 +191,9 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
     # Determine image size using shared utility
     base_image = load_and_prepare_image(ctx, 'base')
     image_size = determine_api_image_size(base_image.size)
+    
+    # Store API image size in context for metadata
+    ctx._api_image_size = image_size
     
     # Call OpenAI API using shared utility (no mask for subject repair)
     result_image_path = await call_openai_images_edit(
@@ -165,7 +239,7 @@ def _prepare_subject_repair_prompt(ctx: PipelineContext) -> str:
         - Branding Visuals : {image_ctx_json['visual_concept']['branding_visuals']}
 
     3. Seamlessly match the lighting, texture, perspective, and depth of field of the base image so that the inserted object looks naturally integrated.
-    4. Align the inserted content with the image’s narrative and composition principles (e.g., rule of thirds, natural diagonals, balance of elements).
+    4. Align the inserted content with the image's narrative and composition principles (e.g., rule of thirds, natural diagonals, balance of elements).
     5. Ensure all elements in the edited image are visually coherent and logically consistent within the scene.
     6. Correct any visual or contextual inconsistencies introduced during the edit to maintain a believable and polished composition.
     7. Return only the edited base image, fully rendered and coherent. Do not include or concatenate the reference image.
