@@ -1,0 +1,654 @@
+[
+  {
+    "model_id": "openai/gpt-4.1",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T12:49:37.842237+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 6.576,
+    "analyst_usage": {
+      "completion_tokens": 340,
+      "prompt_tokens": 1517,
+      "total_tokens": 1857,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "brief": {
+      "core_message": "Handcrafted soy milk is a delicious, protein-rich way to boost your smoothies and support a balanced, health-focused lifestyle.",
+      "key_themes_to_include": [
+        "Health benefits of soy milk",
+        "Easy integration into daily wellness routines",
+        "Protein and creaminess for smoothies",
+        "Modern, minimalist nutrition tips",
+        "Motivational encouragement for healthy choices"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "protein smoothie tip",
+        "healthy beverage",
+        "wellness routine",
+        "Bauhaus design"
+      ],
+      "target_emotion": "Aspirational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook with a bold health claim or smoothie tip, followed by actionable value (why soy milk is beneficial and how to use it), ending with an engaging question or motivational CTA.",
+          "style_notes": "Keep the tone energetic, knowledgeable, and motivational. Use concise, punchy sentences. Integrate 1-2 relevant emojis for visual interest. Encourage users to save the post for future smoothie inspiration and to share their own tips in the comments."
+        }
+      },
+      "primary_call_to_action": "Save this tip for your next smoothie boost and share your favorite healthy add-ins below!",
+      "hashtags": [
+        "#SoyMilk",
+        "#SmoothieTip",
+        "#ProteinBoost",
+        "#WellnessRoutine",
+        "#HealthyDrinks",
+        "#BauhausInspired"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🥤",
+        "✨"
+      ]
+    },
+    "writer_latency": 5.636,
+    "writer_usage": {
+      "completion_tokens": 114,
+      "prompt_tokens": 709,
+      "total_tokens": 823,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "caption": "Want a creamier, protein-packed smoothie? 💪 Here’s your protein smoothie tip: swap in handcrafted soy milk for a healthy beverage that fuels your wellness routine and fits right into modern minimalist nutrition. \n\nThis plant-powered upgrade not only adds smooth texture but also supports balanced, health-focused living—think Bauhaus design, but for your breakfast. 🥤\n\nSave this tip for your next smoothie boost and share your favorite healthy add-ins below!  \n#SoyMilk #SmoothieTip #ProteinBoost #WellnessRoutine #HealthyDrinks #BauhausInspired",
+    "total_latency": 12.213,
+    "total_tokens": 2680
+  },
+  {
+    "model_id": "openai/gpt-4.1-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T12:49:52.059988+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 4.704,
+    "analyst_usage": {
+      "completion_tokens": 302,
+      "prompt_tokens": 1517,
+      "total_tokens": 1819,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "brief": {
+      "core_message": "Discover how handcrafted soy milk can boost your smoothies with added protein and creaminess for a healthier, balanced lifestyle.",
+      "key_themes_to_include": [
+        "Health benefits of soy milk",
+        "Smoothie enhancement tips",
+        "Protein and creaminess boost",
+        "Balanced diet integration",
+        "Modern minimalist wellness"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "protein smoothie tips",
+        "healthy beverage options",
+        "balanced diet drinks",
+        "natural wellness drinks"
+      ],
+      "target_emotion": "Motivational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value-driven tip + Engaging question + Clear CTA",
+          "style_notes": "Use an encouraging and knowledgeable tone with concise, impactful language. Include a question to prompt comments and encourage saves. Use emojis sparingly to enhance motivation and clarity."
+        }
+      },
+      "primary_call_to_action": "Try adding handcrafted soy milk to your next smoothie for a creamy protein boost—tag a friend who needs this wellness tip!",
+      "hashtags": [
+        "#SoyMilkBenefits",
+        "#ProteinSmoothie",
+        "#HealthyDrinks",
+        "#WellnessRoutine",
+        "#BalancedDiet",
+        "#NaturalBeverages",
+        "#FitnessFuel"
+      ],
+      "emoji_suggestions": [
+        "🥛",
+        "💪",
+        "🌿"
+      ]
+    },
+    "writer_latency": 3.338,
+    "writer_usage": {
+      "completion_tokens": 127,
+      "prompt_tokens": 673,
+      "total_tokens": 800,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 0
+      }
+    },
+    "caption": "Want to take your smoothies to the next level? 🥛 Handcrafted soy milk adds a creamy texture and a powerful protein boost that fits perfectly into a balanced diet. It’s one of the healthiest beverage options to fuel your day with natural wellness benefits. \n\nReady to elevate your smoothie game? What’s your favorite way to blend in extra nutrition? 💪\n\nTry adding handcrafted soy milk to your next smoothie for a creamy protein boost—tag a friend who needs this wellness tip! 🌿\n\n#SoyMilkBenefits #ProteinSmoothie #HealthyDrinks #WellnessRoutine #BalancedDiet #NaturalBeverages #FitnessFuel",
+    "total_latency": 8.043,
+    "total_tokens": 2619
+  },
+  {
+    "model_id": "openai/o4-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T12:50:02.105436+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 14.607,
+    "analyst_usage": {
+      "completion_tokens": 1706,
+      "prompt_tokens": 1516,
+      "total_tokens": 3222,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Handcrafted soy milk adds creamy, protein-packed nutrition to your smoothies, supporting your wellness and fitness goals.",
+      "key_themes_to_include": [
+        "Protein boost for smoothies",
+        "Plant-based nutrition",
+        "Handcrafted quality",
+        "Wellness routine integration",
+        "Creamy texture"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "protein smoothie tip",
+        "plant-based protein",
+        "health benefits soy milk",
+        "dairy-free beverage"
+      ],
+      "target_emotion": "Motivational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA",
+          "style_notes": "Keep copy concise with line breaks; start with a bold hook; state the key benefit; end with a clear CTA; use minimal emojis to match the modern, graphic minimal aesthetic."
+        }
+      },
+      "primary_call_to_action": "Save this tip for your next smoothie and fuel your fitness with a creamy protein boost.",
+      "hashtags": [
+        "#PlantBasedProtein",
+        "#SoyMilk",
+        "#ProteinSmoothie",
+        "#HandcraftedDrinks",
+        "#DairyFree",
+        "#WellnessTips",
+        "#HealthyLiving"
+      ],
+      "emoji_suggestions": [
+        "🥛",
+        "💪",
+        "🌱"
+      ]
+    },
+    "writer_latency": 11.842,
+    "writer_usage": {
+      "completion_tokens": 874,
+      "prompt_tokens": 658,
+      "total_tokens": 1532,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "CREAMY PROTEIN POWER 🥛\n\nHere’s a protein smoothie tip: swap in handcrafted soy milk—a dairy-free beverage loaded with plant-based protein for a velvety, protein-packed boost 💪. Feel the health benefits soy milk brings to your wellness routine.\n\nSave this tip for your next smoothie and fuel your fitness with a creamy protein boost.\n\n#PlantBasedProtein #SoyMilk #ProteinSmoothie #HandcraftedDrinks #DairyFree #WellnessTips #HealthyLiving",
+    "total_latency": 26.449,
+    "total_tokens": 4754
+  },
+  {
+    "model_id": "x-ai/grok-3",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T12:50:30.560849+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 3.987,
+    "analyst_usage": {
+      "completion_tokens": 263,
+      "prompt_tokens": 1494,
+      "total_tokens": 1757,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 5
+      }
+    },
+    "brief": {
+      "core_message": "Handcrafted soy milk is a nutritious, protein-packed addition to boost your smoothies and wellness routine.",
+      "key_themes_to_include": [
+        "health benefits of soy milk",
+        "smoothie enhancement",
+        "protein boost",
+        "wellness routine",
+        "minimalist modern design"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "smoothie protein boost",
+        "healthy drink options",
+        "wellness routine",
+        "Bauhaus design inspiration"
+      ],
+      "target_emotion": "Motivational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook with a bold statement about soy milk benefits, followed by a quick smoothie tip as value, and end with an engaging question as CTA.",
+          "style_notes": "Keep the tone energetic and encouraging, mirroring the clean, modern visual style. Use concise, punchy sentences to match the graphic minimalism of the image."
+        }
+      },
+      "primary_call_to_action": "How do you boost your smoothies? Share your favorite ingredients below!",
+      "hashtags": [
+        "#SoyMilkBenefits",
+        "#HealthySmoothies",
+        "#ProteinBoost",
+        "#WellnessDrinks",
+        "#HealthyLiving"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🥛",
+        "✨"
+      ]
+    },
+    "writer_latency": 2.323,
+    "writer_usage": {
+      "completion_tokens": 104,
+      "prompt_tokens": 653,
+      "total_tokens": 757,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 6
+      }
+    },
+    "caption": "Looking for a game-changer in your wellness routine? Handcrafted soy milk is your new best friend for a smoothie protein boost that’s packed with nutrition! 💪 Add a splash to your next blend for a creamy, healthy drink option that fuels your day. Inspired by Bauhaus design inspiration, even our packaging keeps things sleek and simple. ✨ How do you boost your smoothies? Share your favorite ingredients below! 🥛 #SoyMilkBenefits #HealthySmoothies #ProteinBoost #WellnessDrinks #HealthyLiving",
+    "total_latency": 6.309,
+    "total_tokens": 2514
+  },
+  {
+    "model_id": "google/gemini-2.5-pro",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T12:50:38.873439+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 17.521,
+    "analyst_usage": {
+      "completion_tokens": 1566,
+      "prompt_tokens": 1573,
+      "total_tokens": 3139,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Elevate your daily smoothie by adding our handcrafted soy milk for a natural boost of protein and a luxuriously creamy texture.",
+      "key_themes_to_include": [
+        "Smoothie enhancement tip",
+        "Natural protein source",
+        "Achieving a creamy texture",
+        "Easy wellness routine integration",
+        "Clean and simple ingredients"
+      ],
+      "seo_keywords": [
+        "soy milk smoothie",
+        "high protein smoothie",
+        "healthy drink ideas",
+        "plant based protein",
+        "wellness tips"
+      ],
+      "target_emotion": "Motivational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA. Start with a strong hook about upgrading smoothies. Deliver the value by explaining the protein and creaminess benefits. End with a clear call to action to save the post and engage.",
+          "style_notes": "Use a knowledgeable yet encouraging tone. Keep sentences clear and concise. Use line breaks to improve readability. Ask a direct question to encourage comments and boost engagement."
+        }
+      },
+      "primary_call_to_action": "Save this post for your next smoothie creation & let us know your favorite smoothie combo in the comments! 👇",
+      "hashtags": [
+        "#soymilk",
+        "#smoothietips",
+        "#plantbasedprotein",
+        "#highproteinsmoothie",
+        "#healthydrinks",
+        "#wellnessroutine",
+        "#cleaneating",
+        "#bauhausinspired"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🌱",
+        "🥤"
+      ]
+    },
+    "writer_latency": 13.375,
+    "writer_usage": {
+      "completion_tokens": 1128,
+      "prompt_tokens": 718,
+      "total_tokens": 1846,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "Level up your smoothie game with one simple swap. 💪\n\nTired of watery or gritty textures? Adding our handcrafted soy milk is one of our favorite wellness tips for an instant upgrade.\n\nIt blends into a luxuriously creamy soy milk smoothie and packs a serious punch of plant based protein 🌱, turning your daily drink into a truly satisfying high protein smoothie. It's one of the easiest healthy drink ideas to seamlessly integrate into your routine. 🥤\n\nSave this post for your next smoothie creation & let us know your favorite smoothie combo in the comments! 👇\n\n#soymilk #smoothietips #plantbasedprotein #highproteinsmoothie #healthydrinks #wellnessroutine #cleaneating #bauhausinspired",
+    "total_latency": 30.896,
+    "total_tokens": 4985
+  },
+  {
+    "model_id": "google/gemini-2.5-flash-preview-05-20",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T12:51:11.777177+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 3.902,
+    "analyst_usage": {
+      "completion_tokens": 361,
+      "prompt_tokens": 1573,
+      "total_tokens": 1934,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Discover how handcrafted soy milk can boost your smoothies with protein and creaminess, enhancing your health and wellness routine.",
+      "key_themes_to_include": [
+        "Health benefits of soy milk",
+        "Versatility in smoothies",
+        "Protein and creaminess boost",
+        "Balanced diet integration",
+        "Modern wellness lifestyle"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "protein smoothie",
+        "healthy drinks",
+        "plant-based nutrition",
+        "wellness routine"
+      ],
+      "target_emotion": "Motivated & Informed",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA. Start with an engaging question or statement, provide clear benefits and tips, then end with a direct call to action.",
+          "style_notes": "Maintain an encouraging, knowledgeable, and motivational tone. Use emojis sparingly to enhance readability and visual appeal, aligning with the clean, modern aesthetic of the visual. Emphasize the 'tip' aspect of the content."
+        }
+      },
+      "primary_call_to_action": "Share your favorite smoothie recipe in the comments!",
+      "hashtags": [
+        "#SoyMilkBenefits",
+        "#SmoothieBoost",
+        "#PlantBasedProtein",
+        "#HealthyLifestyle",
+        "#WellnessJourney",
+        "#HandcraftedGoodness",
+        "#NutritionTips"
+      ],
+      "emoji_suggestions": [
+        "🥛",
+        "✨",
+        "💪"
+      ]
+    },
+    "writer_latency": 3.045,
+    "writer_usage": {
+      "completion_tokens": 158,
+      "prompt_tokens": 698,
+      "total_tokens": 856,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "Ready to supercharge your morning routine? ☀️\n\nAdding handcrafted soy milk to your smoothies isn't just a trend; it's a game-changer for your wellness routine! This simple swap packs a protein punch 💪 and delivers an incredible creaminess that elevates any blend. Think of it as your secret ingredient for healthy drinks that truly nourish.\n\nIntegrating plant-based nutrition like our soy milk into your daily protein smoothie is an easy way to support a balanced diet and keep you feeling fueled and fantastic. It's all about making small, impactful choices for a healthier, more vibrant you ✨.\n\nShare your favorite smoothie recipe in the comments!\n\n#SoyMilkBenefits #SmoothieBoost #PlantBasedProtein #HealthyLifestyle #WellnessJourney #HandcraftedGoodness #NutritionTips",
+    "total_latency": 6.947,
+    "total_tokens": 2790
+  },
+  {
+    "model_id": "qwen/qwen3-30b-a3b",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T12:51:20.728358+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 6.316,
+    "analyst_usage": {
+      "completion_tokens": 596,
+      "prompt_tokens": 1537,
+      "total_tokens": 2133,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Elevate your wellness routine with handcrafted soy milk's protein-packed versatility and clean, minimalist design.",
+      "key_themes_to_include": [
+        "Health benefits of plant-based protein",
+        "Bauhaus-inspired minimalism",
+        "Smoothie innovation",
+        "Wellness integration",
+        "Natural beverage craftsmanship"
+      ],
+      "seo_keywords": [
+        "handcrafted soy milk",
+        "plant-based protein",
+        "smoothie tips",
+        "wellness routine",
+        "Bauhaus design"
+      ],
+      "target_emotion": "Motivational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook (health hack) + Value (nutritional benefits) + CTA (try now)",
+          "style_notes": "Use bold, energetic language with strategic emojis to mirror the graphic design. Keep sentences punchy and scannable."
+        }
+      },
+      "primary_call_to_action": "Try our soy milk in your next smoothie - your body will thank you! 💚",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#SmoothieTips",
+        "#PlantBasedProtein",
+        "#WellnessRoutine",
+        "#BauhausDesign"
+      ],
+      "emoji_suggestions": [
+        "🌱",
+        "🥛",
+        "✨"
+      ]
+    },
+    "writer_latency": 7.771,
+    "writer_usage": {
+      "completion_tokens": 711,
+      "prompt_tokens": 669,
+      "total_tokens": 1380,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "🌱 Power up your wellness routine with handcrafted soy milk—where plant-based protein meets Bauhaus-inspired minimalism. 🥛✨ Smoothie innovation never looked this good. Swap your usual blend for a nutrient-packed twist that’s as clean as it is chic. Try our soy milk in your next smoothie—your body will thank you! 💚 #HandcraftedSoyMilk #SmoothieTips #PlantBasedProtein #WellnessRoutine #BauhausDesign",
+    "total_latency": 14.087,
+    "total_tokens": 3513
+  },
+  {
+    "model_id": "x-ai/grok-3-mini",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T13:03:38.032117+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 13.917,
+    "analyst_usage": {
+      "completion_tokens": 247,
+      "prompt_tokens": 1495,
+      "total_tokens": 3253,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 1511,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 5
+      }
+    },
+    "brief": {
+      "core_message": "Enhance your daily smoothies with handcrafted soy milk to boost protein, creaminess, and overall health benefits for a balanced wellness routine.",
+      "key_themes_to_include": [
+        "Health Benefits of Soy Milk",
+        "Smoothie Enhancement Tips",
+        "Integrating into a Balanced Diet",
+        "Motivational Wellness Advice"
+      ],
+      "seo_keywords": [
+        "soy milk",
+        "smoothie boost",
+        "health benefits",
+        "protein rich",
+        "wellness drinks"
+      ],
+      "target_emotion": "Motivational",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA",
+          "style_notes": "Encourage engagement with questions to spark comments and saves; keep caption concise, energetic, and modern to align with the visual's minimalist aesthetic, using emojis sparingly for emphasis."
+        }
+      },
+      "primary_call_to_action": "Try adding handcrafted soy milk to your next smoothie and share your experience in the comments!",
+      "hashtags": [
+        "#SoyMilk",
+        "#SmoothieBoost",
+        "#HealthBenefits",
+        "#Wellness",
+        "#Fitness"
+      ],
+      "emoji_suggestions": [
+        "💪",
+        "🥤",
+        "🌿"
+      ]
+    },
+    "writer_latency": 8.018,
+    "writer_usage": {
+      "completion_tokens": 119,
+      "prompt_tokens": 640,
+      "total_tokens": 1597,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": null,
+        "audio_tokens": null,
+        "reasoning_tokens": 838,
+        "rejected_prediction_tokens": null
+      },
+      "prompt_tokens_details": {
+        "audio_tokens": null,
+        "cached_tokens": 6
+      }
+    },
+    "caption": "Want to supercharge your morning smoothie? 💪 Let's talk about how handcrafted soy milk can take it to the next level—adding a protein-rich boost, extra creaminess, and serious health benefits that fit perfectly into your balanced diet. 🌿 Whether you're blending for energy or wellness, it's an easy swap that makes every sip count towards your goals. Quick question: What's your go-to smoothie ingredient?  \nTry adding handcrafted soy milk to your next smoothie and share your experience in the comments! 🥤  \n#SoyMilk #SmoothieBoost #HealthBenefits #Wellness #Fitness",
+    "total_latency": 21.935,
+    "total_tokens": 4850
+  },
+  {
+    "model_id": "google/gemini-2.5-flash",
+    "provider": "OpenRouter",
+    "timestamp": "2025-06-25T13:04:01.971586+00:00",
+    "success": true,
+    "error": null,
+    "retry_count": 0,
+    "analyst_latency": 10.419,
+    "analyst_usage": {
+      "completion_tokens": 1427,
+      "prompt_tokens": 1573,
+      "total_tokens": 3000,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "brief": {
+      "core_message": "Handcrafted soy milk is the perfect addition to boost your smoothies with protein and creaminess for a healthier, more vibrant lifestyle.",
+      "key_themes_to_include": [
+        "Handcrafted Soy Milk",
+        "Protein Boost",
+        "Smoothie Enhancement",
+        "Balanced Diet",
+        "Wellness Routine"
+      ],
+      "seo_keywords": [
+        "Handcrafted soy milk",
+        "protein smoothie",
+        "healthy drinks",
+        "plant-based nutrition",
+        "wellness tips"
+      ],
+      "target_emotion": "Empowered",
+      "platform_optimizations": {
+        "Instagram": {
+          "caption_structure": "Hook + Value + CTA",
+          "style_notes": "Encourage engagement with questions to earn comments and saves. Maintain an encouraging, knowledgeable, and motivational tone, reflecting the clean, modern, and Bauhaus-inspired aesthetic."
+        }
+      },
+      "primary_call_to_action": "Ready to boost your smoothie game? Try adding our handcrafted soy milk and share your favorite healthy smoothie recipes below!",
+      "hashtags": [
+        "#HandcraftedSoyMilk",
+        "#SmoothieBoost",
+        "#PlantBasedProtein",
+        "#HealthySmoothie",
+        "#WellnessDrinks",
+        "#NutritionTips",
+        "#CleanEating",
+        "#SoyMilkBenefits"
+      ],
+      "emoji_suggestions": [
+        "🥛",
+        "✨",
+        "💪"
+      ]
+    },
+    "writer_latency": 8.47,
+    "writer_usage": {
+      "completion_tokens": 967,
+      "prompt_tokens": 677,
+      "total_tokens": 1644,
+      "completion_tokens_details": null,
+      "prompt_tokens_details": null
+    },
+    "caption": "Ready to supercharge your mornings and feel amazing all day? ✨\n\nDiscover the secret to a truly vibrant lifestyle with our handcrafted soy milk. It's not just any milk; it's your new go-to for an incredible protein boost, transforming any smoothie into a creamy, nutritious powerhouse. 💪 Imagine a delicious, healthy drink that supports your wellness routine and fuels your balanced diet. Our handcrafted soy milk makes plant-based nutrition effortless and delicious. What's your favorite way to enjoy a protein smoothie?\n\nReady to boost your smoothie game? Try adding our handcrafted soy milk 🥛 and share your favorite healthy smoothie recipes below!\n\n#HandcraftedSoyMilk #SmoothieBoost #PlantBasedProtein #HealthySmoothie #WellnessDrinks #NutritionTips #CleanEating #SoyMilkBenefits",
+    "total_latency": 18.889,
+    "total_tokens": 4644
+  }
+]
