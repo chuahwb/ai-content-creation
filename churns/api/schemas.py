@@ -218,3 +218,11 @@ class WebSocketMessage(BaseModel):
     run_id: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     data: Dict[str, Any] = Field(default_factory=dict) 
+
+
+class ImageAnalysisResult(BaseModel):  
+    main_text: str
+    secondary_texts: List[str]
+    object_description: str
+    brand_name: str
+    corrections: Dict
