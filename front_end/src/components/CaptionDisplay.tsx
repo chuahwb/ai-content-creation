@@ -25,8 +25,8 @@ import toast from 'react-hot-toast';
 
 interface CaptionDisplayProps {
   captions: CaptionResult[];
-  onRegenerate: (settings?: CaptionSettings) => void;
-  onOpenSettingsDialog: (currentSettings: CaptionSettings) => void;
+  onRegenerate: (settings?: CaptionSettings, modelId?: string) => void;
+  onOpenSettingsDialog: (currentSettings: CaptionSettings, currentModelId?: string) => void;
   isRegenerating?: boolean;
 }
 
@@ -68,13 +68,13 @@ export default function CaptionDisplay({
 
   const handleQuickRegenerate = () => {
     handleMenuClose();
-    onRegenerate(); // Writer-only regeneration with same settings
+    onRegenerate(undefined, currentCaption.model_id); // Writer-only regeneration with same settings and model
   };
 
   const handleRegenerateWithNewSettings = () => {
     handleMenuClose();
     // Open the settings dialog with current settings pre-populated
-    onOpenSettingsDialog(currentCaption.settings_used);
+    onOpenSettingsDialog(currentCaption.settings_used, currentCaption.model_id);
   };
 
   const formatSettingsDisplay = (settings: CaptionSettings) => {
@@ -82,7 +82,7 @@ export default function CaptionDisplay({
     if (settings.tone) parts.push(`${settings.tone} tone`);
     if (settings.hashtag_strategy) parts.push(`${settings.hashtag_strategy} hashtags`);
     if (settings.include_emojis === false) parts.push('no emojis');
-    if (settings.cta) parts.push('custom CTA');
+    if (settings.call_to_action) parts.push('custom CTA');
     return parts.length > 0 ? parts.join(', ') : 'auto settings';
   };
 

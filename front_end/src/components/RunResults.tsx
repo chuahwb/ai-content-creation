@@ -952,13 +952,18 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     setCaptionInitialSettings(undefined); // Clear settings when closing
   };
 
-  const handleOpenCaptionSettingsDialog = (imageIndex: number, currentSettings: CaptionSettings) => {
+  const handleOpenCaptionSettingsDialog = (imageIndex: number, currentSettings: CaptionSettings, currentModelId?: string) => {
     setCaptionImageIndex(imageIndex);
     setCaptionInitialSettings(currentSettings); // Pre-populate with current settings
+    // Store the current model ID for the dialog (will be used to populate initialModelId)
+    if (currentModelId) {
+      // We can store this in a state variable or pass it directly to the dialog
+      // For now, the dialog will get it from the caption data when it's opened
+    }
     setCaptionDialogOpen(true);
   };
 
-  const handleCaptionGenerate = async (settings: CaptionSettings) => {
+  const handleCaptionGenerate = async (settings: CaptionSettings, modelId?: string) => {
     const imageId = `image_${captionImageIndex}`;
     
     try {
@@ -966,7 +971,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       setCaptionErrors(prev => ({ ...prev, [captionImageIndex]: '' })); // Clear any previous error
       closeCaptionDialog();
       
-      const response = await PipelineAPI.generateCaption(runId, imageId, settings);
+      const request = { settings, model_id: modelId };
+      const response = await PipelineAPI.generateCaption(runId, imageId, request);
       addLog('info', `Caption generation started for Option ${captionImageIndex + 1}`);
       toast.success('Caption generation started! Check progress in real-time.');
       
@@ -982,7 +988,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     }
   };
 
-  const handleCaptionRegenerate = async (imageIndex: number, version?: number, settings?: CaptionSettings) => {
+  const handleCaptionRegenerate = async (imageIndex: number, version?: number, settings?: CaptionSettings, modelId?: string) => {
     const imageId = `image_${imageIndex}`;
     
     try {
@@ -994,12 +1000,14 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       const currentCaptions = imageCaptions[imageIndex] || [];
       const latestVersion = currentCaptions.length > 0 ? Math.max(...currentCaptions.map(c => c.version)) : -1;
       
+      const request = { settings, model_id: modelId };
+      
       if (version !== undefined) {
         // Regenerate specific version - use the provided version
-        response = await PipelineAPI.regenerateCaption(runId, imageId, version, settings);
+        response = await PipelineAPI.regenerateCaption(runId, imageId, version, request);
       } else {
         // Generate new caption - use the latest version for incrementing
-        response = await PipelineAPI.regenerateCaption(runId, imageId, latestVersion, settings);
+        response = await PipelineAPI.regenerateCaption(runId, imageId, latestVersion, request);
       }
       
       addLog('info', `Caption regeneration started for Option ${imageIndex + 1}`);
@@ -1402,8 +1410,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                               {imageCaptions[result.strategy_index] && imageCaptions[result.strategy_index].length > 0 && (
                                 <CaptionDisplay
                                   captions={imageCaptions[result.strategy_index]}
-                                  onRegenerate={() => handleCaptionRegenerate(result.strategy_index)}
-                                  onOpenSettingsDialog={(currentSettings) => handleOpenCaptionSettingsDialog(result.strategy_index, currentSettings)}
+                                  onRegenerate={(settings, modelId) => handleCaptionRegenerate(result.strategy_index, undefined, settings, modelId)}
+                                  onOpenSettingsDialog={(currentSettings, currentModelId) => handleOpenCaptionSettingsDialog(result.strategy_index, currentSettings, currentModelId)}
                                   isRegenerating={captionGenerating[result.strategy_index]}
                                 />
                               )}
@@ -1556,6 +1564,44 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                       </Typography>
                     </Grid>
                   )}
+                  
+                  <Grid item xs={12}>
+                    <Typography variant="caption" color="textSecondary">Output Language</Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {(() => {
+                        const lang = runDetails.language || 'en';
+                        const languageNames: Record<string, string> = {
+                          'en': 'English',
+                          'zh': '中文 / Chinese', 
+                          'es': 'Español / Spanish',
+                          'fr': 'Français / French',
+                          'de': 'Deutsch / German',
+                          'it': 'Italiano / Italian',
+                          'ja': '日本語 / Japanese',
+                          'ko': '한국어 / Korean',
+                          'pt': 'Português / Portuguese',
+                          'ru': 'Русский / Russian'
+                        };
+                        const displayName = languageNames[lang] || `${lang.toUpperCase()} (Custom)`;
+                        return (
+                          <>
+                            {displayName}
+                            <Chip 
+                              label={lang.toUpperCase()} 
+                              size="small" 
+                              variant="outlined"
+                              sx={{ 
+                                fontSize: '0.7rem', 
+                                height: 22,
+                                fontFamily: 'monospace',
+                                fontWeight: 600
+                              }} 
+                            />
+                          </>
+                        );
+                      })()}
+                    </Typography>
+                  </Grid>
                   
                   {/* User Prompt */}
                   {runDetails.prompt && (
@@ -2142,6 +2188,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       isGenerating={captionGenerating[captionImageIndex] || false}
       imageIndex={captionImageIndex}
       initialSettings={captionInitialSettings}
+      initialModelId={captionInitialSettings ? (imageCaptions[captionImageIndex]?.[imageCaptions[captionImageIndex].length - 1]?.model_id || undefined) : undefined}
       error={captionErrors[captionImageIndex]} // Pass error for display
     />
   </motion.div>

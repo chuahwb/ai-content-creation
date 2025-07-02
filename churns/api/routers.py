@@ -20,11 +20,15 @@ from churns.api.schemas import (
     RunListResponse, RunListItem, PipelineResults,
     ImageReferenceInput, MarketingGoalsInput, GeneratedImageResult,
     RefinementResponse, RefinementListResponse, RefinementResult,
-    CaptionRequest, CaptionResponse, CaptionRegenerateRequest, CaptionSettings
+    CaptionRequest, CaptionResponse, CaptionRegenerateRequest, CaptionSettings,
+    CaptionModelsResponse, CaptionModelOption
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
-from churns.core.constants import SOCIAL_MEDIA_PLATFORMS, TASK_TYPES
+from churns.core.constants import (
+    SOCIAL_MEDIA_PLATFORMS, TASK_TYPES, PLATFORM_DISPLAY_NAMES,
+    CAPTION_MODEL_OPTIONS, CAPTION_MODEL_ID
+)
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -63,6 +67,9 @@ async def create_pipeline_run(
     render_text: bool = Form(False, description="Render text flag"),
     apply_branding: bool = Form(False, description="Apply branding flag"),
     
+    # Language control
+    language: Optional[str] = Form('en', description="Output language ISO-639-1 code"),
+    
     # Marketing goals (optional)
     marketing_audience: Optional[str] = Form(None, description="Marketing audience"),
     marketing_objective: Optional[str] = Form(None, description="Marketing objective"),
@@ -97,6 +104,23 @@ async def create_pipeline_run(
     
     if task_type and task_type not in TASK_TYPES:
         raise HTTPException(status_code=400, detail=f"Invalid task type: {task_type}")
+    
+    # Language validation
+    if language:
+        # Common ISO-639-1 language codes
+        VALID_LANGUAGE_CODES = {
+            'en', 'zh', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 
+            'ar', 'hi', 'th', 'vi', 'nl', 'sv', 'no', 'da', 'fi', 'pl',
+            'tr', 'he', 'cs', 'hu', 'ro', 'bg', 'hr', 'sk', 'sl', 'et',
+            'lv', 'lt', 'mt', 'ga', 'cy', 'eu', 'ca', 'gl', 'is', 'fo'
+        }
+        if len(language) != 2 or language.lower() not in VALID_LANGUAGE_CODES:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid language code: '{language}'. Must be a valid 2-letter ISO-639-1 code (e.g., es, fr, ja, de, it)"
+            )
+        # Normalize to lowercase
+        language = language.lower()
     
     # Basic validation for required inputs
     if mode in ["easy_mode", "custom_mode"] and not prompt and not image_file:
@@ -145,7 +169,8 @@ async def create_pipeline_run(
         image_reference=image_reference,
         render_text=render_text,
         apply_branding=apply_branding,
-        marketing_goals=marketing_goals
+        marketing_goals=marketing_goals,
+        language=language
     )
     
     # Create database record
@@ -166,7 +191,8 @@ async def create_pipeline_run(
         marketing_audience=marketing_goals.target_audience if marketing_goals else None,
         marketing_objective=marketing_goals.objective if marketing_goals else None,
         marketing_voice=marketing_goals.voice if marketing_goals else None,
-        marketing_niche=marketing_goals.niche if marketing_goals else None
+        marketing_niche=marketing_goals.niche if marketing_goals else None,
+        language=language or 'en'
     )
     
     session.add(run)
@@ -392,6 +418,7 @@ def _generate_refinement_summary(refinement_type: RefinementType, prompt: Option
 
 
 @runs_router.get("", response_model=RunListResponse)
+@runs_router.get("/", response_model=RunListResponse)
 async def list_pipeline_runs(
     page: int = 1,
     page_size: int = 20,
@@ -519,7 +546,8 @@ async def get_pipeline_run(
         marketing_audience=run.marketing_audience,
         marketing_objective=run.marketing_objective,
         marketing_voice=run.marketing_voice,
-        marketing_niche=run.marketing_niche
+        marketing_niche=run.marketing_niche,
+        language=run.language
     )
 
 
@@ -768,12 +796,33 @@ async def get_platforms():
 
 @api_router.get("/config/task-types")
 async def get_task_types():
-    """Get available task types"""
-    task_types = []
-    for task_type in TASK_TYPES:
-        if not task_type.startswith("Select"):  # Skip placeholder
-            task_types.append(task_type)
-    return {"task_types": task_types}
+    """Get available task types for the frontend"""
+    return {
+        "task_types": TASK_TYPES,
+        "message": "Available task types for pipeline runs"
+    }
+
+
+@api_router.get("/config/caption-models", response_model=CaptionModelsResponse)
+async def get_caption_models():
+    """Get available caption models with their characteristics"""
+    models = [
+        CaptionModelOption(
+            id=model_info["id"],
+            name=model_info["name"],
+            description=model_info["description"],
+            strengths=model_info["strengths"],
+            best_for=model_info["best_for"],
+            latency=model_info["latency"],
+            creativity=model_info["creativity"]
+        )
+        for model_info in CAPTION_MODEL_OPTIONS.values()
+    ]
+    
+    return CaptionModelsResponse(
+        models=models,
+        default_model_id=CAPTION_MODEL_ID
+    )
 
 
 @api_router.get("/status")
@@ -854,6 +903,14 @@ async def generate_caption(
     if run.status != RunStatus.COMPLETED:
         raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
     
+    # Validate and set model_id
+    model_id = request.model_id or CAPTION_MODEL_ID
+    if model_id not in CAPTION_MODEL_OPTIONS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid model ID: {model_id}. Available models: {list(CAPTION_MODEL_OPTIONS.keys())}"
+        )
+    
     # Validate image exists in run results
     # This would normally check against generated images, but for now we'll trust the image_id
     
@@ -870,7 +927,8 @@ async def generate_caption(
         "image_id": image_id,
         "caption_id": caption_id,
         "settings": request.settings.model_dump() if request.settings else {},
-        "version": next_version
+        "version": next_version,
+        "model_id": model_id
     }
     
     # Start background caption generation
@@ -906,6 +964,42 @@ async def regenerate_caption(
     if run.status != RunStatus.COMPLETED:
         raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
     
+    # Determine model_id to use
+    model_id = request.model_id or CAPTION_MODEL_ID
+    previous_model_id = None
+    
+    # If no model specified, try to use the model from the previous version
+    if not request.model_id:
+        try:
+            previous_caption_file = Path(f"./data/runs/{run_id}/captions/{image_id}/v{caption_version}_result.json")
+            if previous_caption_file.exists():
+                with open(previous_caption_file, 'r', encoding='utf-8') as f:
+                    previous_data = json.load(f)
+                    previous_model = previous_data.get("model_id")
+                    if previous_model and previous_model in CAPTION_MODEL_OPTIONS:
+                        model_id = previous_model
+                        previous_model_id = previous_model
+        except Exception as e:
+            logger.warning(f"Could not load previous model from caption {caption_version}: {e}")
+    else:
+        # If model was explicitly specified, also load the previous model for comparison
+        try:
+            previous_caption_file = Path(f"./data/runs/{run_id}/captions/{image_id}/v{caption_version}_result.json")
+            if previous_caption_file.exists():
+                with open(previous_caption_file, 'r', encoding='utf-8') as f:
+                    previous_data = json.load(f)
+                    previous_model_id = previous_data.get("model_id", CAPTION_MODEL_ID)
+        except Exception as e:
+            logger.warning(f"Could not load previous model for comparison: {e}")
+            previous_model_id = CAPTION_MODEL_ID
+    
+    # Validate model_id
+    if model_id not in CAPTION_MODEL_OPTIONS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid model ID: {model_id}. Available models: {list(CAPTION_MODEL_OPTIONS.keys())}"
+        )
+    
     # Generate new caption ID and calculate next version
     import uuid
     new_caption_id = str(uuid.uuid4())
@@ -913,14 +1007,23 @@ async def regenerate_caption(
     # Calculate the next version by checking existing files
     new_version = _get_next_caption_version(run_id, image_id)
     
+    # Check if model has changed
+    model_has_changed = previous_model_id and (model_id != previous_model_id)
+    
     # DEBUG: Log the request parameters
     logger.info(f"DEBUG: Regenerate request - writer_only={request.writer_only}, settings={request.settings}")
+    logger.info(f"DEBUG: Model comparison - previous: {previous_model_id}, current: {model_id}, changed: {model_has_changed}")
     if request.settings:
         logger.info(f"DEBUG: Settings dump: {request.settings.model_dump()}")
     is_empty = _is_settings_empty(request.settings)
     logger.info(f"DEBUG: _is_settings_empty result: {is_empty}")
-    writer_only_result = request.writer_only and is_empty
-    logger.info(f"DEBUG: Final writer_only logic: {request.writer_only} and {is_empty} = {writer_only_result}")
+    
+    # Determine if we should run writer-only:
+    # - Must be requested as writer_only=True
+    # - Settings must be empty (no changes to caption settings)
+    # - Model must NOT have changed (if model changed, run full pipeline)
+    writer_only_result = request.writer_only and is_empty and not model_has_changed
+    logger.info(f"DEBUG: Final writer_only logic: {request.writer_only} and {is_empty} and not {model_has_changed} = {writer_only_result}")
     
     # Prepare caption regeneration data
     caption_data = {
@@ -929,8 +1032,9 @@ async def regenerate_caption(
         "caption_id": new_caption_id,
         "settings": request.settings.model_dump() if request.settings else {},
         "version": new_version,
-        "writer_only": writer_only_result,  # Only writer if no new settings
-        "previous_version": caption_version
+        "writer_only": writer_only_result,  # Only writer if no settings change AND no model change
+        "previous_version": caption_version,
+        "model_id": model_id
     }
     
     logger.info(f"DEBUG: Caption data being sent: {caption_data}")
