@@ -30,7 +30,7 @@ from .refinement_utils import (
 )
 
 # Global variables for API clients are handled by refinement_utils and image_generation.py
-image_gen_client = get_configured_clients().get('image_gen_client')
+image_gen_client = None
 
 async def run(ctx: PipelineContext) -> None:
     """
@@ -194,6 +194,11 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
     
     # Store API image size in context for metadata
     ctx._api_image_size = image_size
+    
+    # Initialize client if not already done (lazy initialization)
+    global image_gen_client
+    if image_gen_client is None:
+        image_gen_client = get_configured_clients().get('image_gen_client')
     
     # Call OpenAI API using shared utility (no mask for subject repair)
     result_image_path = await call_openai_images_edit(

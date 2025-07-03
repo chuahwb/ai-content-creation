@@ -47,10 +47,10 @@ def get_image_ctx_and_main_object(ctx: PipelineContext):
     main_obj = image_ctx_json.get('main_subject')
     if not main_obj:
         if analysis_main_obj:
-            ctx.log(f"Setting Main Object of Visual Context to Analysis Main Object - {analysis_main_obj}")
+            ctx.log(f"Setting main object from image analysis: {analysis_main_obj}")
             main_obj = analysis_main_obj
     else:
-        ctx.log(f"Main Object of Visual Context - {main_obj}")
+        ctx.log(f"Main object identified: {main_obj}")
     return image_ctx_json, main_obj
 
 def validate_refinement_inputs(ctx: PipelineContext, refinement_type: str) -> None:
@@ -69,10 +69,10 @@ def load_and_prepare_image(ctx: PipelineContext, type: str) -> Image.Image:
     try:
         if type=='base':
             image = Image.open(ctx.base_image_path)
-            ctx.log(f"Loaded base image: {image.size} {image.mode} from {ctx.base_image_path}")
+            ctx.log(f"Loaded base image: {image.size} {image.mode}")
         elif type=='reference':
             image = Image.open(ctx.reference_image_path)
-            ctx.log(f"Loaded reference image: {image.size} {image.mode} from {ctx.reference_image_path}")
+            ctx.log(f"Loaded reference image: {image.size} {image.mode}")
         
         # Ensure RGB mode for processing
         if image.mode != 'RGB':
@@ -128,12 +128,10 @@ async def call_openai_images_edit(
     model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"
     
     operation_type = "regional editing" if mask_path else "global editing"
-    ctx.log(f"--- Calling OpenAI Images Edit API ({model_id}) ---")
-    ctx.log(f"   Base Image: {ctx.base_image_path}")
-    ctx.log(f"   Reference Image: {ctx.reference_image_path}")
-    ctx.log(f"   Size: {image_size}")
+    ctx.log(f"Calling OpenAI Images Edit API ({model_id})")
+    ctx.log(f"Operation: {operation_type}, Size: {image_size}")
     if mask_path:
-        ctx.log(f"   Mask Image: {mask_path}")
+        ctx.log("Using mask for regional editing")
     
     try:
         # Prepare API call parameters
@@ -147,7 +145,6 @@ async def call_openai_images_edit(
         # Call OpenAI images.edit API
         if mask_path:
             # Regional editing with mask
-            ctx.log("Calling OpenAI Images Edit API for regional editing with mask")
             response = await asyncio.to_thread(
                 image_gen_client.images.edit,
                 image=[
@@ -170,7 +167,6 @@ async def call_openai_images_edit(
                 image_list = [
                     open(ctx.base_image_path, "rb")
                 ]
-            ctx.log("Calling OpenAI Images Edit API for global editing without mask")
             response = await asyncio.to_thread(
                 image_gen_client.images.edit,
                 image=image_list,
@@ -204,7 +200,10 @@ async def call_openai_images_edit(
                 is_retryable=True
             )
         
-        ctx.log(f"✅ {operation_type.title()} successful (received base64 data)")
+        # Calculate size for logging without exposing data
+        b64_size = len(image_data.b64_json)
+        data_size_mb = b64_size / (1024 * 1024)
+        ctx.log(f"API call successful (received {data_size_mb:.2f}MB image data)")
         
         # Decode and save the result image
         try:
@@ -232,7 +231,7 @@ async def call_openai_images_edit(
     except Exception as e:
         # Handle specific OpenAI exceptions with enhanced error messages
         error_type = type(e).__name__
-        ctx.log(f"❌ ERROR: {error_type} during {operation_type}: {e}")
+        ctx.log(f"API error ({error_type}): {str(e)}")
         
         if "APIConnectionError" in error_type:
             raise RefinementError(
@@ -284,7 +283,7 @@ async def call_openai_images_edit(
                 is_retryable=False
             )
         else:
-            ctx.log(traceback.format_exc())
+            ctx.log(f"Unexpected error details: {traceback.format_exc()}")
             raise RefinementError(
                 "unexpected_error", 
                 f"Unexpected error during image processing: {str(e)}",
@@ -320,7 +319,7 @@ def save_refinement_result(ctx: PipelineContext, image_bytes: bytes) -> str:
         reference_source = Path(ctx.reference_image_path)
         # Check if the reference image is already in the correct job directory
         if str(refinement_dir) in str(reference_source):
-            ctx.log(f"Reference image already in correct location: {reference_source}")
+            ctx.log("Reference image already in correct location")
         else:
             # Copy reference image to preserve it (legacy behavior)
             try:
@@ -328,7 +327,7 @@ def save_refinement_result(ctx: PipelineContext, image_bytes: bytes) -> str:
                 original_extension = reference_source.suffix or ".png"
                 reference_dest = refinement_dir / f"reference{original_extension}"
                 shutil.copy2(ctx.reference_image_path, reference_dest)
-                ctx.log(f"Preserved reference image: {reference_dest}")
+                ctx.log("Preserved reference image")
             except Exception as e:
                 ctx.log(f"Warning: Could not preserve reference image: {e}")
     
@@ -354,11 +353,11 @@ def save_refinement_result(ctx: PipelineContext, image_bytes: bytes) -> str:
             # Use relative symlink if possible
             relative_output = os.path.relpath(output_path, legacy_dir)
             os.symlink(relative_output, legacy_path)
-            ctx.log(f"Created legacy symlink: {legacy_path} -> {relative_output}")
+            ctx.log("Created legacy compatibility symlink")
         else:
             # Fallback to copy on systems without symlink support
             shutil.copy2(output_path, legacy_path)
-            ctx.log(f"Created legacy copy: {legacy_path}")
+            ctx.log("Created legacy compatibility copy")
     except Exception as e:
         ctx.log(f"Warning: Could not create legacy compatibility file: {e}")
         # Return the new path if legacy creation fails
@@ -403,7 +402,8 @@ def _save_refinement_metadata(ctx: PipelineContext, refinement_dir: Path) -> Non
         "inputs": {
             "instructions": getattr(ctx, 'instructions', None),
             "prompt": getattr(ctx, 'prompt', None),
-            "mask_coordinates": getattr(ctx, 'mask_coordinates', None),
+            "mask_coordinates": getattr(ctx, 'mask_coordinates', None),  # Legacy
+            "mask_file_path": getattr(ctx, 'mask_file_path', None),  # New approach
             "creativity_level": getattr(ctx, 'creativity_level', None),
         },
         "processing": {
@@ -437,7 +437,7 @@ def _save_refinement_metadata(ctx: PipelineContext, refinement_dir: Path) -> Non
     try:
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2, default=str)
-        ctx.log(f"Saved refinement metadata: {metadata_path}")
+        ctx.log("Saved refinement metadata")
     except Exception as e:
         ctx.log(f"Warning: Could not save refinement metadata: {e}")
 
@@ -454,7 +454,7 @@ def save_temporary_mask(ctx: PipelineContext, mask: Image.Image) -> str:
     
     # Save mask as PNG
     mask.save(mask_path, format='PNG')
-    ctx.log(f"Saved temporary mask: {mask_path}")
+    ctx.log("Saved temporary mask file")
     
     # Track for cleanup
     if not hasattr(ctx, 'temp_files'):
@@ -471,9 +471,10 @@ def cleanup_temporary_files(temp_file_paths: list) -> None:
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
-                print(f"Cleaned up temporary file: {temp_path}")
+                # Use print for cleanup as ctx is not available
+                print(f"Cleaned up temporary file: {os.path.basename(temp_path)}")
             except Exception as e:
-                print(f"Warning: Could not clean up temporary file {temp_path}: {e}")
+                print(f"Warning: Could not clean up temporary file {os.path.basename(temp_path)}: {e}")
 
 
 def calculate_refinement_cost(
@@ -568,9 +569,6 @@ def track_refinement_cost(
         ctx.log(f"Warning: Could not track cost for {stage_name} stage: {e}")
 
 
-
-
-
 def create_mask_from_coordinates(
     mask_data: Dict[str, Any], 
     image_size: Tuple[int, int],
@@ -586,7 +584,6 @@ def create_mask_from_coordinates(
         return None
     
     try:
-        
         # Create blank mask (black = preserve, white = edit)
         mask = Image.new('L', image_size, 0)
         draw = ImageDraw.Draw(mask)
@@ -629,7 +626,11 @@ def create_mask_from_coordinates(
             draw.polygon(points, fill=255)
             
         else:
-            print(f"Warning: Unsupported mask type: {mask_data.get('type')}")
+            # Use ctx.log if available, otherwise fallback to print
+            try:
+                ctx.log(f"Warning: Unsupported mask type: {mask_data.get('type')}")
+            except:
+                print(f"Warning: Unsupported mask type: {mask_data.get('type')}")
             return None
         
         # Save mask to temporary file
@@ -644,5 +645,9 @@ def create_mask_from_coordinates(
         return str(mask_path)
         
     except Exception as e:
-        print(f"Warning: Failed to create mask from coordinates: {e}")
+        # Use ctx.log if available, otherwise fallback to print
+        try:
+            ctx.log(f"Warning: Failed to create mask from coordinates: {e}")
+        except:
+            print(f"Warning: Failed to create mask from coordinates: {e}")
         return None 

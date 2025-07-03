@@ -5,20 +5,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      target: production
     ports:
       - "8000:8000"
     volumes:
-      - ./churns:/app/churns
       - ./data:/app/data
       - ./.env:/app/.env
     environment:
       - PYTHONPATH=/app
-      - ENV=development
-    command: uvicorn churns.api.main:app --host 0.0.0.0 --port 8000 --reload
+      - ENV=production
     depends_on:
       - redis
     networks:
       - churns_net
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -28,6 +28,7 @@ services:
       - redis_data:/data
     networks:
       - churns_net
+    restart: unless-stopped
 
   frontend:
     build:
@@ -44,6 +45,7 @@ services:
       - api
     networks:
       - churns_net
+    restart: unless-stopped
 
 volumes:
   redis_data:

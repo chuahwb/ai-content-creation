@@ -63,6 +63,7 @@ import { PipelineAPI, WebSocketManager } from '@/lib/api';
 import RefinementModal from './RefinementModal';
 import CaptionDialog from './CaptionDialog';
 import CaptionDisplay from './CaptionDisplay';
+import ImageCompareSlider from './ImageCompareSlider';
 
 interface RunResultsProps {
   runId: string;
@@ -529,6 +530,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [wsManager, setWsManager] = useState<WebSocketManager | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImageContext, setSelectedImageContext] = useState<{
+    type: 'original' | 'refinement';
+    refinementData?: any;
+    parentImagePath?: string;
+  } | null>(null);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
   const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
   const [optionDetails, setOptionDetails] = useState<{marketingGoals?: any, finalPrompt?: string, visualConcept?: any} | null>(null);
@@ -714,16 +720,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           addLog('success', `Image refinement completed: ${message.data.summary || 'Refinement successful'}`);
           toast.success('Image refinement completed! The refined image is now available.');
           // Refresh refinements list immediately
-          setTimeout(() => {
-            (async () => {
-              try {
-                const data = await PipelineAPI.getRefinements(runId);
-                setRefinements(data.refinements || []);
-              } catch (error) {
-                console.error('Failed to refresh refinements after completion:', error);
-              }
-            })();
-          }, 500);
+          setTimeout(() => loadRefinements(false), 500);
         } else {
           // This is a pipeline completion
           addLog('success', 'Pipeline run completed successfully!');
@@ -741,16 +738,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           addLog('error', `Image refinement failed: ${errorMessage}`);
           toast.error(`Image refinement failed: ${errorMessage}`);
           // Refresh refinements list to update status
-          setTimeout(() => {
-            (async () => {
-              try {
-                const data = await PipelineAPI.getRefinements(runId);
-                setRefinements(data.refinements || []);
-              } catch (error) {
-                console.error('Failed to refresh refinements after error:', error);
-              }
-            })();
-          }, 500);
+          setTimeout(() => loadRefinements(false), 500);
         } else {
           // This is a pipeline error
           addLog('error', `Pipeline run failed: ${message.data.error_message}`);
@@ -1156,11 +1144,6 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     };
   }, [runId]);
 
-  // Load refinements once and rely on WebSocket for updates
-  useEffect(() => {
-    loadRefinements();
-  }, [runId]);
-
   // Additional effect to handle page visibility changes for robustness
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -1406,6 +1389,57 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     }
   };
 
+  // Helper function to get the correct immediate parent image path for comparison
+  const getImmediateParentImagePath = (refinement: any): string => {
+    if (refinement.parent_image_type === 'original') {
+      // Parent is an original generated image
+      const originalImage = generatedImages[refinement.generation_index || 0];
+      return originalImage?.image_path || '';
+    } else {
+      // Parent is another refinement - find it in the refinements list
+      const parentRefinement = refinements.find(r => r.job_id === refinement.parent_image_id);
+      if (parentRefinement && parentRefinement.image_path) {
+        return parentRefinement.image_path;
+      } else {
+        // Fallback: try to get from the ultimate parent
+        const ultimateParent = refinement.ultimateParent;
+        if (ultimateParent && ultimateParent.generationIndex !== undefined) {
+          const originalImage = generatedImages[ultimateParent.generationIndex];
+          return originalImage?.image_path || '';
+        }
+        return '';
+      }
+    }
+  };
+
+  // Helper function to set selected image with context
+  const setSelectedImageWithContext = (
+    imageUrl: string, 
+    type: 'original' | 'refinement', 
+    refinementData?: any
+  ) => {
+    setSelectedImage(imageUrl);
+    
+    if (type === 'refinement' && refinementData) {
+      const parentImagePath = getImmediateParentImagePath(refinementData);
+      setSelectedImageContext({
+        type: 'refinement',
+        refinementData,
+        parentImagePath
+      });
+    } else {
+      setSelectedImageContext({
+        type: 'original'
+      });
+    }
+  };
+
+  // Helper function to clear selected image and context
+  const clearSelectedImage = () => {
+    setSelectedImage(null);
+    setSelectedImageContext(null);
+  };
+
   // Helper function to get chain refinement name
   const getChainRefinementName = (refinement: any, index: number, group: Array<any>): string => {
     if (refinement.parent_image_type === 'original') {
@@ -1566,7 +1600,10 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                   boxShadow: 2,
                                 }
                               }}
-                              onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
+                              onClick={() => result.image_path && setSelectedImageWithContext(
+                                PipelineAPI.getFileUrl(runId, result.image_path),
+                                'original'
+                              )}
                             />
                           </Box>
                           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
@@ -1598,7 +1635,10 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                               <Button
                                 size="small"
                                 startIcon={<ZoomInIcon />}
-                                onClick={() => result.image_path && setSelectedImage(PipelineAPI.getFileUrl(runId, result.image_path))}
+                                onClick={() => result.image_path && setSelectedImageWithContext(
+                                  PipelineAPI.getFileUrl(runId, result.image_path),
+                                  'original'
+                                )}
                                 color="primary"
                                 variant="outlined"
                                 sx={{ fontWeight: 500, fontSize: '0.75rem' }}
@@ -1871,7 +1911,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                                       boxShadow: 2,
                                                     }
                                                   }}
-                                                  onClick={() => setSelectedImage(PipelineAPI.getFileUrl(runId, refinement.image_path))}
+                                                  onClick={() => setSelectedImageWithContext(
+                                                    PipelineAPI.getFileUrl(runId, refinement.image_path),
+                                                    'refinement',
+                                                    refinement
+                                                  )}
                                                 />
                                                 <Chip
                                                   label={getRefinementTypeLabel(refinement.refinement_type)}
@@ -1899,7 +1943,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                                 <Button
                                                   size="small"
                                                   startIcon={<ZoomInIcon />}
-                                                  onClick={() => setSelectedImage(PipelineAPI.getFileUrl(runId, refinement.image_path))}
+                                                  onClick={() => setSelectedImageWithContext(
+                                                    PipelineAPI.getFileUrl(runId, refinement.image_path),
+                                                    'refinement',
+                                                    refinement
+                                                  )}
                                                   color="primary"
                                                   variant="outlined"
                                                   sx={{ fontSize: '0.75rem' }}
@@ -2371,7 +2419,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       {/* Image Dialog */}
       <Dialog
         open={!!selectedImage}
-        onClose={() => setSelectedImage(null)}
+        onClose={clearSelectedImage}
         maxWidth={false}
         fullWidth={false}
         sx={{
@@ -2394,9 +2442,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           borderColor: 'divider'
         }}>
           <Typography variant="h6" component="div">
-            Generated Image - Full Size
+            {selectedImageContext?.type === 'refinement' 
+              ? `Refined Image - ${selectedImageContext.refinementData?.refinement_type} Enhancement` 
+              : 'Generated Image - Full Size'}
           </Typography>
-          <IconButton onClick={() => setSelectedImage(null)} sx={{ color: 'grey.500' }}>
+          <IconButton onClick={clearSelectedImage} sx={{ color: 'grey.500' }}>
             <CloseIcon />
           </IconButton>
         </DialogTitle>
@@ -2411,21 +2461,43 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           maxHeight: 'calc(100vh - 140px)'
         }}>
           {selectedImage && (
-            <Box
-              component="img"
-              src={selectedImage}
-              sx={{
-                maxWidth: 'calc(100vw - 32px)',
-                maxHeight: 'calc(100vh - 160px)',
-                width: 'auto',
-                height: 'auto',
-                objectFit: 'contain',
-                borderRadius: 1,
-                backgroundColor: 'white',
-                boxShadow: 3,
-                display: 'block'
-              }}
-            />
+            <>
+              {selectedImageContext?.type === 'refinement' && selectedImageContext.parentImagePath ? (
+                // Show comparison slider for refined images
+                <Box sx={{ 
+                  maxWidth: 'calc(100vw - 32px)',
+                  maxHeight: 'calc(100vh - 160px)',
+                  width: 'auto',
+                  height: 'auto',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <ImageCompareSlider
+                    beforeImageUrl={PipelineAPI.getFileUrl(runId, selectedImageContext.parentImagePath)}
+                    afterImageUrl={selectedImage}
+                    height={Math.min(window.innerHeight - 200, 800)}
+                  />
+                </Box>
+              ) : (
+                // Show regular image for original images or when parent path is not available
+                <Box
+                  component="img"
+                  src={selectedImage}
+                  sx={{
+                    maxWidth: 'calc(100vw - 32px)',
+                    maxHeight: 'calc(100vh - 160px)',
+                    width: 'auto',
+                    height: 'auto',
+                    objectFit: 'contain',
+                    borderRadius: 1,
+                    backgroundColor: 'white',
+                    boxShadow: 3,
+                    display: 'block'
+                  }}
+                />
+              )}
+            </>
           )}
         </DialogContent>
         <DialogActions sx={{ 

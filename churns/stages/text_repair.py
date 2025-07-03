@@ -42,7 +42,7 @@ logging.basicConfig(
 logger = logging.getLogger("text_repair")
 
 # Setup Image Generation Client
-image_gen_client = get_configured_clients().get('image_gen_client')
+image_gen_client = None
 
 async def run(ctx: PipelineContext) -> None:
     """
@@ -459,6 +459,11 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
     # Call OpenAI API using shared utility (no mask for global text repair)
     # Only call if prompt exists 
     if final_prompt.strip():
+        # Initialize client if not already done (lazy initialization)
+        global image_gen_client
+        if image_gen_client is None:
+            image_gen_client = get_configured_clients().get('image_gen_client')
+        
         result_image_path = await call_openai_images_edit(
             ctx=ctx,
             enhanced_prompt=final_prompt,

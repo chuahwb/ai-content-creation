@@ -230,10 +230,11 @@ async def create_refinement(
     # Optional refinement inputs
     prompt: Optional[str] = Form(None, description="Refinement prompt"),
     instructions: Optional[str] = Form(None, description="Specific instructions"),
-    mask_data: Optional[str] = Form(None, description="JSON string of mask coordinates"),
+    mask_data: Optional[str] = Form(None, description="JSON string of mask coordinates (legacy)"),
     
-    # File upload for subject repair
+    # File uploads
     reference_image: Optional[UploadFile] = File(None, description="Reference image for subject repair"),
+    mask_file: Optional[UploadFile] = File(None, description="Mask PNG file for regional editing"),
     
     session: Session = Depends(get_session)
 ):
@@ -265,6 +266,49 @@ async def create_refinement(
         if len(reference_image_data) > 10 * 1024 * 1024:  # 10MB limit
             raise HTTPException(status_code=400, detail="Reference image file too large (max 10MB)")
     
+    # Process mask file if provided
+    mask_file_data = None
+    if mask_file:
+        # Validate mask file
+        if not mask_file.content_type or mask_file.content_type != 'image/png':
+            raise HTTPException(status_code=400, detail="Mask file must be a PNG image")
+        
+        # Read mask data
+        mask_file_data = await mask_file.read()
+        if len(mask_file_data) > 4 * 1024 * 1024:  # 4MB limit
+            raise HTTPException(status_code=400, detail="Mask file too large (max 4MB)")
+        
+        # Validate mask dimensions match the base image
+        try:
+            from PIL import Image
+            import io
+            
+            # Load mask image to validate
+            mask_image = Image.open(io.BytesIO(mask_file_data))
+            
+            # Load base image to compare dimensions (use parent run_id, not current run_id)
+            base_image_path = _get_base_image_path(run_id, parent_image_id, parent_image_type, generation_index)
+            if not base_image_path or not os.path.exists(base_image_path):
+                raise HTTPException(status_code=400, detail="Base image not found for mask validation")
+            
+            base_image = Image.open(base_image_path)
+            
+            # Check dimensions match
+            if mask_image.size != base_image.size:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Mask dimensions {mask_image.size} must match base image dimensions {base_image.size}"
+                )
+            
+            # Validate mask is grayscale or RGB (can be converted to grayscale)
+            if mask_image.mode not in ['L', 'RGB', 'RGBA']:
+                raise HTTPException(status_code=400, detail="Mask must be grayscale or RGB format")
+                
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise
+            raise HTTPException(status_code=400, detail=f"Invalid mask file: {str(e)}")
+    
     # Generate refinement summary
     refinement_summary = _generate_refinement_summary(refinement_type, prompt, instructions)
     
@@ -291,8 +335,9 @@ async def create_refinement(
         "refinement_type": refinement_type,
         "prompt": prompt,
         "instructions": instructions,
-        "mask_coordinates": mask_data,
-        "reference_image_data": reference_image_data
+        "mask_coordinates": mask_data,  # Legacy support
+        "reference_image_data": reference_image_data,
+        "mask_file_data": mask_file_data
     }
     
     # Save reference image if provided (updated for hybrid structure)
@@ -315,10 +360,27 @@ async def create_refinement(
         # Store path relative to job directory for the refinement utilities
         refinement_data["reference_image_path"] = str(ref_image_path)
     
-    # DEBUG: Log refinement data received from frontend
+    # Save mask file if provided
+    if mask_file_data:
+        parent_run_dir = Path(f"./data/runs/{run_id}")
+        
+        # Create job-specific directory for hybrid structure
+        job_refinement_dir = parent_run_dir / "refinements" / refinement_job.id
+        job_refinement_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Store mask file directly in job-specific directory
+        mask_file_path = job_refinement_dir / "mask.png"
+        
+        with open(mask_file_path, "wb") as f:
+            f.write(mask_file_data)
+        
+        # Store path for the refinement utilities
+        refinement_data["mask_file_path"] = str(mask_file_path)
+        logger.info(f"Saved mask file: {mask_file_path}")
+    
     logger.info(f"Refinement request received - Job ID: {refinement_job.id}")
-    logger.info(f"Refinement data from frontend: {refinement_data}")
-    logger.info(f"Parent image details - ID: {parent_image_id}, Type: {parent_image_type}, Index: {generation_index}")
+    logger.debug(f"Refinement data: {refinement_data}")
+    logger.debug(f"Parent image details - ID: {parent_image_id}, Type: {parent_image_type}, Index: {generation_index}")
     
     # Start background refinement execution
     await task_processor.start_refinement_job(refinement_job.id, refinement_data)
@@ -413,6 +475,82 @@ async def cancel_refinement(
             return {"message": "Stalled refinement marked as cancelled"}
         else:
             return {"message": "Refinement is not currently running"}
+
+
+def _get_base_image_path(run_id: str, parent_image_id: str, parent_image_type: str, generation_index: Optional[int]) -> Optional[str]:
+    """Get the path to the base image for mask validation"""
+    try:
+        base_run_dir = Path(f"./data/runs/{run_id}")
+        
+        if parent_image_type == "original":
+            # Original generated images are stored directly in the run directory
+            # with patterns like: generated_image_strategy_{index}_{timestamp}.png or edited_image_strategy_{index}_{timestamp}.png
+            if generation_index is not None:
+                # Look for generated images with this index
+                patterns = [
+                    f"generated_image_strategy_{generation_index}_*.png",
+                    f"edited_image_strategy_{generation_index}_*.png",
+                    f"image_{generation_index}*.png",  # Fallback pattern
+                ]
+                
+                for pattern in patterns:
+                    matches = list(base_run_dir.glob(pattern))
+                    if matches:
+                        # Sort by modification time (newest first) and return the first match
+                        matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                        image_path = matches[0]
+                        if image_path.exists():
+                            logger.info(f"Found original image: {image_path}")
+                            return str(image_path)
+                
+                logger.warning(f"No original image found for generation_index {generation_index} in {base_run_dir}")
+                return None
+            else:
+                # Try to parse generation index from parent_image_id (e.g., "image_0" -> 0)
+                if parent_image_id.startswith("image_"):
+                    try:
+                        index = int(parent_image_id.split("_")[1])
+                        return _get_base_image_path(run_id, parent_image_id, parent_image_type, index)
+                    except (IndexError, ValueError):
+                        pass
+                
+                logger.warning(f"Cannot determine generation index from parent_image_id: {parent_image_id}")
+                return None
+        else:
+            # Refinement image - look in refinements directory
+            refinements_dir = base_run_dir / "refinements"
+            
+            # Look for the refinement image (could be in various formats)
+            possible_patterns = [
+                f"{parent_image_id}_from_*.png",
+                f"{parent_image_id}.png",
+                f"refinement_{parent_image_id}.png",
+            ]
+            
+            for pattern in possible_patterns:
+                if '*' in pattern:
+                    # Use glob for wildcard patterns
+                    matches = list(refinements_dir.glob(pattern))
+                    if matches:
+                        # Sort by modification time (newest first)
+                        matches.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                        image_path = matches[0]
+                        if image_path.exists():
+                            logger.info(f"Found refinement image: {image_path}")
+                            return str(image_path)
+                else:
+                    # Direct path check
+                    image_path = refinements_dir / pattern
+                    if image_path.exists():
+                        logger.info(f"Found refinement image: {image_path}")
+                        return str(image_path)
+            
+            logger.warning(f"No refinement image found for parent_image_id {parent_image_id} in {refinements_dir}")
+            return None
+        
+    except Exception as e:
+        logger.error(f"Error getting base image path: {e}")
+        return None
 
 
 def _generate_refinement_summary(refinement_type: RefinementType, prompt: Optional[str], instructions: Optional[str]) -> str:

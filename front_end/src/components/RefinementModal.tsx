@@ -213,6 +213,53 @@ export default function RefinementModal({
     setMaskCoordinates(null);
   };
 
+  const generateMaskFile = async (): Promise<File | null> => {
+    if (!maskCoordinates || !imageRef.current) return null;
+    
+    try {
+      const img = imageRef.current;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        throw new Error('Could not get canvas context');
+      }
+      
+      // Set canvas size to match the actual image dimensions
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      
+      // Fill with black (preserve area)
+      ctx.fillStyle = 'black';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw white rectangle for edit area
+      ctx.fillStyle = 'white';
+      const x = maskCoordinates.x * canvas.width;
+      const y = maskCoordinates.y * canvas.height;
+      const width = maskCoordinates.width * canvas.width;
+      const height = maskCoordinates.height * canvas.height;
+      
+      ctx.fillRect(x, y, width, height);
+      
+      // Convert canvas to blob
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const file = new File([blob], 'mask.png', { type: 'image/png' });
+            resolve(file);
+          } else {
+            resolve(null);
+          }
+        }, 'image/png');
+      });
+    } catch (error) {
+      console.error('Error generating mask file:', error);
+      toast.error('Failed to generate mask file');
+      return null;
+    }
+  };
+
   const handleSubmit = async () => {
     setIsSubmitting(true);
     
@@ -245,8 +292,15 @@ export default function RefinementModal({
       } else if (tabValue === 2) { // Prompt Refinement
         formData.append('refine_type', 'prompt');
         formData.append('prompt', promptInstructions || 'Enhance the overall image quality');
+        
+        // Generate and attach mask file if coordinates are provided
         if (maskCoordinates) {
-          formData.append('mask_data', JSON.stringify(maskCoordinates));
+          const maskFile = await generateMaskFile();
+          if (maskFile) {
+            formData.append('mask_file', maskFile);
+          } else {
+            toast.error('Failed to generate mask file. Proceeding with global enhancement.');
+          }
         }
       }
 

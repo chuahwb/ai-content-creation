@@ -543,9 +543,8 @@ class PipelineTaskProcessor:
     async def _execute_refinement(self, job_id: str, refinement_data: Dict[str, Any]):
         """Execute the refinement pipeline with progress updates"""
         try:
-            # DEBUG: Log refinement data being processed in background task
             logger.info(f"Starting refinement execution - Job ID: {job_id}")
-            logger.info(f"Refinement data in background processor: {refinement_data}")
+            logger.debug(f"Refinement data: {refinement_data}")
             
             # Get job details from database
             with Session(engine) as session:
@@ -602,7 +601,8 @@ class PipelineTaskProcessor:
                 context.instructions = refinement_data.get("instructions")
             elif job.refinement_type == "prompt":
                 context.prompt = refinement_data.get("prompt")
-                context.mask_coordinates = refinement_data.get("mask_coordinates")
+                context.mask_coordinates = refinement_data.get("mask_coordinates")  # Legacy support
+                context.mask_file_path = refinement_data.get("mask_file_path")  # New mask file support
             
             # Load parent run metadata for context enhancement
             metadata_path = parent_run_dir / "pipeline_metadata.json"

@@ -49,7 +49,8 @@ class PipelineContext:
     
     # Refinement specifics
     refinement_type: Optional[str] = None  # "subject", "text", "prompt"
-    mask_coordinates: Optional[List] = None
+    mask_coordinates: Optional[List] = None  # Legacy support
+    mask_file_path: Optional[str] = None  # New mask file support
     reference_image_path: Optional[str] = None
     instructions: Optional[str] = None
     
@@ -131,6 +132,7 @@ class PipelineContext:
         base_image_path: str,
         generation_index: Optional[int] = None,
         mask_coordinates: Optional[List] = None,
+        mask_file_path: Optional[str] = None,
         reference_image_path: Optional[str] = None,
         instructions: Optional[str] = None
     ) -> None:
@@ -143,6 +145,7 @@ class PipelineContext:
         self.base_image_path = base_image_path
         self.generation_index = generation_index
         self.mask_coordinates = mask_coordinates
+        self.mask_file_path = mask_file_path
         self.reference_image_path = reference_image_path
         self.instructions = instructions
     
@@ -201,6 +204,7 @@ class PipelineContext:
                 "base_image_path": self.base_image_path,
                 "refinement_type": self.refinement_type,
                 "mask_coordinates": self.mask_coordinates,
+                "mask_file_path": self.mask_file_path,
                 "reference_image_path": self.reference_image_path,
                 "instructions": self.instructions,
                 "refinement_result": self.refinement_result,
@@ -254,6 +258,7 @@ class PipelineContext:
             ctx.base_image_path = refinement_context.get("base_image_path")
             ctx.refinement_type = refinement_context.get("refinement_type")
             ctx.mask_coordinates = refinement_context.get("mask_coordinates")
+            ctx.mask_file_path = refinement_context.get("mask_file_path")
             ctx.reference_image_path = refinement_context.get("reference_image_path")
             ctx.instructions = refinement_context.get("instructions")
             ctx.refinement_result = refinement_context.get("refinement_result")
