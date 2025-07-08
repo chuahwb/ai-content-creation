@@ -226,11 +226,11 @@ class WebSocketMessage(BaseModel):
 
 class ImageAnalysisResult(BaseModel):  
     """Image analysis result from text repair stage"""
-    main_text: str
-    secondary_texts: List[str]
-    object_description: str
-    brand_name: str
-    corrections: Dict
+    main_text: Optional[str]
+    secondary_texts: Optional[List[str]]
+    object_description: Optional[str]
+    brand_name: Optional[str]
+    corrections: Optional[Dict]
 
 
 # Caption-related schemas

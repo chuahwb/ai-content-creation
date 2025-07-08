@@ -25,6 +25,15 @@ from ..models import CostDetail
 # Global variables for API clients and configuration (injected by pipeline executor)
 # These will be set by the pipeline executor before stage execution
 
+def get_reference_image_path(ctx: PipelineContext):
+    if ctx.reference_image_path:
+        return ctx.reference_image_path
+    else:
+        user_inputs = ctx.original_pipeline_data.get('user_inputs')
+        image_reference = user_inputs.get('image_reference')
+        if image_reference:
+            return image_reference['saved_image_path_in_run_dir']
+
 def get_image_ctx_and_main_object(ctx: PipelineContext):
     processing_ctx = ctx.original_pipeline_data.get('processing_context')
     
@@ -167,6 +176,7 @@ async def call_openai_images_edit(
                 image_list = [
                     open(ctx.base_image_path, "rb")
                 ]
+            print(f"Image List Length for API Image Edit Call: {len(image_list)}")
             response = await asyncio.to_thread(
                 image_gen_client.images.edit,
                 image=image_list,
