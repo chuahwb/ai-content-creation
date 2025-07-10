@@ -2256,35 +2256,181 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
                   Form Input
                 </Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary">Mode</Typography>
-                    <Typography variant="body2" sx={{ textTransform: 'capitalize', fontWeight: 500, mt: 0.5 }}>
-                      {runDetails.mode?.replace('_', ' ') || 'N/A'}
-                    </Typography>
-                  </Grid>
-                  
-                  <Grid item xs={6}>
-                    <Typography variant="caption" color="textSecondary">Creativity</Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                      Level {runDetails.creativity_level}/3
-                    </Typography>
-                  </Grid>
-                  
+                <Grid container spacing={3}>
+                  {/* Basic Configuration Section */}
                   <Grid item xs={12}>
-                    <Typography variant="caption" color="textSecondary">Platform</Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
-                      {runDetails.platform_name || 'N/A'}
+                    <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
+                      Basic Configuration
                     </Typography>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Typography variant="caption" color="textSecondary">Mode</Typography>
+                        <Typography variant="body2" sx={{ textTransform: 'capitalize', fontWeight: 500, mt: 0.5 }}>
+                          {runDetails.mode?.replace('_', ' ') || 'N/A'}
+                        </Typography>
+                      </Grid>
+                      
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Typography variant="caption" color="textSecondary">Target Platform</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                          {runDetails.platform_name || 'N/A'}
+                        </Typography>
+                      </Grid>
+                      
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Typography variant="caption" color="textSecondary">Creativity Level</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                          Level {runDetails.creativity_level}/3
+                        </Typography>
+                      </Grid>
+
+                      {runDetails.task_type && (
+                        <Grid item xs={12} sm={6} md={4}>
+                          <Typography variant="caption" color="textSecondary">Task Type</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                            {runDetails.task_type}
+                          </Typography>
+                        </Grid>
+                      )}
+
+                      {runDetails.language && (
+                        <Grid item xs={12} sm={6} md={4}>
+                          <Typography variant="caption" color="textSecondary">Language</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                            {runDetails.language}
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
                   </Grid>
 
-                  {runDetails.prompt && (
-                    <Grid item xs={12}>
-                      <Typography variant="caption" color="textSecondary">User Prompt</Typography>
-                      <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider' }}>
-                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
-                          {runDetails.prompt}
+                  {/* Content Input Section */}
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
+                      Content Input
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {runDetails.prompt && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="textSecondary">User Prompt</Typography>
+                          <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                              {runDetails.prompt}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                      )}
+
+                      {runDetails.task_description && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="textSecondary">Task Description</Typography>
+                          <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                              {runDetails.task_description}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                      )}
+
+                      {runDetails.has_image_reference && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="textSecondary">Image Reference</Typography>
+                          <Box sx={{ mt: 1 }}>
+                            <Grid container spacing={2} alignItems="center">
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                  📎 {runDetails.image_filename || 'Uploaded image'}
+                                </Typography>
+                              </Grid>
+                            </Grid>
+                            {runDetails.image_instruction && (
+                              <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                                <Typography variant="caption" color="textSecondary">Image Instruction:</Typography>
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', mt: 0.5 }}>
+                                  {runDetails.image_instruction}
+                                </Typography>
+                              </Paper>
+                            )}
+                          </Box>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Grid>
+
+                  {/* Processing Options Section */}
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
+                      Processing Options
+                    </Typography>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Typography variant="caption" color="textSecondary">Render Text</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5, color: runDetails.render_text ? 'success.main' : 'text.secondary' }}>
+                          {runDetails.render_text ? '✓ Yes' : '✗ No'}
                         </Typography>
+                      </Grid>
+
+                      <Grid item xs={12} sm={6} md={4}>
+                        <Typography variant="caption" color="textSecondary">Apply Branding</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5, color: runDetails.apply_branding ? 'success.main' : 'text.secondary' }}>
+                          {runDetails.apply_branding ? '✓ Yes' : '✗ No'}
+                        </Typography>
+                      </Grid>
+
+                      {runDetails.branding_elements && (
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="textSecondary">Branding Elements</Typography>
+                          <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                              {runDetails.branding_elements}
+                            </Typography>
+                          </Paper>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Grid>
+
+                  {/* Marketing Goals Section */}
+                  {(runDetails.marketing_audience || runDetails.marketing_objective || runDetails.marketing_voice || runDetails.marketing_niche) && (
+                    <Grid item xs={12}>
+                      <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
+                        Marketing Goals
+                      </Typography>
+                      <Paper sx={{ p: 3, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2 }}>
+                        <Grid container spacing={2}>
+                          {runDetails.marketing_audience && (
+                            <Grid item xs={12} sm={6}>
+                              <Typography variant="caption" color="textSecondary">Target Audience</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                                {runDetails.marketing_audience}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {runDetails.marketing_objective && (
+                            <Grid item xs={12} sm={6}>
+                              <Typography variant="caption" color="textSecondary">Objective</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                                {runDetails.marketing_objective}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {runDetails.marketing_voice && (
+                            <Grid item xs={12} sm={6}>
+                              <Typography variant="caption" color="textSecondary">Voice & Tone</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                                {runDetails.marketing_voice}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {runDetails.marketing_niche && (
+                            <Grid item xs={12} sm={6}>
+                              <Typography variant="caption" color="textSecondary">Target Niche</Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                                {runDetails.marketing_niche}
+                              </Typography>
+                            </Grid>
+                          )}
+                        </Grid>
                       </Paper>
                     </Grid>
                   )}

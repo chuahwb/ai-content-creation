@@ -100,10 +100,10 @@ Your goal is to provide concepts that are significantly value-added, pushing bey
     # Language control instruction
     language_display = "SIMPLIFIED CHINESE" if language == 'zh' else language.upper()
     lang_note = (
-        f"\n**Language Control (IMPORTANT):** "
-        f"Write the following JSON fields **only** in {language_display}: "
-        "`promotional_text_visuals`, `branding_visuals`, `suggested_alt_text`. "
-        "Keep all other fields (e.g., composition_and_framing, background_environment) in ENGLISH to optimize LLM comprehension.\n"
+        f"\n**Language Control (VERY IMPORTANT):**\n"
+        f"- The `suggested_alt_text` field's entire content MUST be written in {language_display}.\n"
+        f"- For `promotional_text_visuals` and `branding_visuals` fields: The description of *how* the text/logo should look (e.g., 'A bold, sans-serif font placed at the top', 'A subtle watermark in the corner') MUST remain in ENGLISH. Only the actual text content to be displayed in the image (e.g., the headline '夏日特惠' or brand name '元気森林') should be written in {language_display}.\n"
+        f"- All other fields MUST be in ENGLISH to optimize LLM comprehension.\n"
     )
     
     input_refinement_ce = """
@@ -112,89 +112,87 @@ Your goal is to provide concepts that are significantly value-added, pushing bey
     
     core_task_ce = """
 **Core Task:** Embody maximum creativity and imagination, coupled with a deep understanding of visual design principles (color, composition, lighting, typography), F&B marketing trends, and image generation capabilities. Generate diverse, high-impact visual concepts tailored to the specific task type and marketing goals.
-**You will be provided with specific `Style Guidance` (keywords, description, marketing impact) for this concept. Your `visual_style` field MUST be a detailed and rich elaboration of this provided style, adhering to its artistic boundaries and constraint.** Use it as your primary stylistic foundation and creatively build upon it, ensuring all other visual elements (composition, lighting, color, main_subject description) harmonize with and bring this specific style to life in a way that is relevant to the task type and marketing strategy.
-**Style and Task Synthesis:** The `Style Guidance` dictates the primary artistic treatment. You must creatively adapt the specific visual elements mentioned in the `Task Type Adaptation` guidance to fit *within* this overarching artistic style. For example, if the style is 'surrealist illustration' and the task is 'Product Photography' (which typically calls for clear product focus), interpret this to mean clear, dramatic, or stylized elements that enhance the surrealist illustration while still ensuring the product is recognizable and appealing, as guided by the task's Creativity Guardrail. The goal is a harmonious blend where the artistic style is paramount but is applied to meet the functional needs of the task type.
-Fill in all the fields of the requested Pydantic JSON output format (`ImageGenerationPrompt` containing `VisualConceptDetails`). Be extremely specific, descriptive, and justify design choices implicitly through the descriptions. The `main_subject` field should describe all key subjects and their interaction clearly (unless instructed otherwise for default edits).
+You will be provided with specific `Style Guidance` for this concept. Your `visual_style` field MUST be a detailed and rich elaboration of this provided style, adhering to its artistic boundaries and constraints. Use it as your primary stylistic foundation and creatively build upon it, ensuring all other visual elements harmonize with and bring this specific style to life. The goal is a harmonious blend where the artistic style is paramount but is applied to meet the functional needs of the task type.
 """
     
-    # Task Type Guidance Map (simplified version for this stage)
+    # Task Type Guidance Map (distilled for clarity)
     task_type_guidance_map = {
         "1. Product Photography": {
-            "description": "Create visuals with exceptional clarity to showcase the product's details, textures, and qualities for menu spotlight or sales.",
-            "platform_optimization": f"For {clean_platform_name}, use compositions with vibrant product focus",
-            "text_guidance": "If text is enabled, place promotional text in a clear, bold sans-serif font",
-            "branding_guidance": "If branding is enabled, integrate branding elements subtly"
+            "keywords": ["Exceptional Clarity", "Product Details", "Textures", "Menu Spotlight", "Sales-Focused"],
+            "platform_focus": "Vibrant product focus",
+            "text_style": "Clear, bold sans-serif font",
+            "branding_style": "Subtle integration"
         },
         "2. Promotional Graphics & Announcements": {
-            "description": "Design for immediate visual impact and attention-grabbing power to drive engagement.",
-            "platform_optimization": f"For {clean_platform_name}, ensure bold, centered compositions for shareability",
-            "text_guidance": "If text is enabled, use large, bold headlines with clear hierarchy",
-            "branding_guidance": "If branding is enabled, integrate branding without cluttering the promotional message"
+            "keywords": ["Immediate Visual Impact", "Attention-Grabbing", "High Engagement", "Shareable"],
+            "platform_focus": "Bold, centered compositions for shareability",
+            "text_style": "Large, bold headlines with clear hierarchy",
+            "branding_style": "Integrated without clutter"
         },
         "3. Store Atmosphere & Decor": {
-            "description": "Focus on immersive environmental storytelling to capture the unique mood and ambiance.",
-            "platform_optimization": f"For {clean_platform_name}, capture dynamic ambiance suitable for the platform",
-            "text_guidance": "If text is enabled, place taglines in an elegant serif font as subtle overlay",
-            "branding_guidance": "If branding is enabled, integrate branding subtly within the scene"
+            "keywords": ["Immersive", "Environmental Storytelling", "Unique Mood", "Ambiance"],
+            "platform_focus": "Dynamic ambiance suitable for the platform",
+            "text_style": "Elegant serif font, subtle overlay",
+            "branding_style": "Subtle integration within the scene"
         },
         "4. Menu Spotlights": {
-            "description": "Favor close-up or medium shots to highlight a specific menu item with appetizing appeal.",
-            "platform_optimization": f"For {clean_platform_name}, create contextual lifestyle shots that make the dish look appealing",
-            "text_guidance": "If text is enabled, suggest bold promotional text positioned to enhance the dish",
-            "branding_guidance": "If branding is enabled, integrate branding on tableware or as subtle elements"
+            "keywords": ["Appetizing Appeal", "Close-up or Medium Shots", "Specific Menu Item"],
+            "platform_focus": "Contextual lifestyle shots",
+            "text_style": "Bold promotional text positioned to enhance the dish",
+            "branding_style": "Integrated on tableware or as subtle elements"
         },
         "5. Cultural & Community Content": {
-            "description": "Favor compositions with symbolic elements and culturally inspired color palettes.",
-            "platform_optimization": f"For {clean_platform_name}, create lifestyle-oriented visuals with cultural significance",
-            "text_guidance": "If text is enabled, suggest elegant script taglines that harmonize with visual elements",
-            "branding_guidance": "If branding is enabled, integrate branding in a way that honors the cultural context"
+            "keywords": ["Symbolic Elements", "Culturally Inspired Palettes", "Lifestyle-Oriented"],
+            "platform_focus": "Lifestyle visuals with cultural significance",
+            "text_style": "Elegant script taglines that harmonize",
+            "branding_style": "Integrated respectfully within cultural context"
         },
         "6. Recipes & Food Tips": {
-            "description": "Prioritize clarity, visual instruction, and appetite appeal for educational content.",
-            "platform_optimization": f"For {clean_platform_name}, use detailed compositions suitable for instructional content",
-            "text_guidance": "If text is enabled, use concise, bold text for step titles and clear instructions",
-            "branding_guidance": "If branding is enabled, integrate branding to tie to brand identity without distraction"
+            "keywords": ["Clarity", "Visual Instruction", "Appetite Appeal", "Educational"],
+            "platform_focus": "Detailed compositions for instructional content",
+            "text_style": "Concise, bold text for titles and instructions",
+            "branding_style": "Integrated to tie to brand without distraction"
         },
         "7. Brand Story & Milestones": {
-            "description": "Create evocative, narrative, or celebratory visuals to resonate emotionally.",
-            "platform_optimization": f"For {clean_platform_name}, create cinematic visuals with narrative flow",
-            "text_guidance": "If text is enabled, place taglines in elegant serif font as focal point",
-            "branding_guidance": "If branding is enabled, integrate branding to reinforce identity within storytelling"
+            "keywords": ["Evocative", "Narrative", "Celebratory", "Emotional Resonance"],
+            "platform_focus": "Cinematic visuals with narrative flow",
+            "text_style": "Elegant serif font as a focal point",
+            "branding_style": "Integrated to reinforce identity in storytelling"
         },
         "8. Behind the Scenes Imagery": {
-            "description": "Convey authenticity, process, and human element with professional yet candid visuals.",
-            "platform_optimization": f"For {clean_platform_name}, use authentic compositions suitable for the platform",
-            "text_guidance": "If text is enabled, place captions in playful or clean font authentically",
-            "branding_guidance": "If branding is enabled, integrate branding naturally within the scene"
+            "keywords": ["Authenticity", "Process", "Human Element", "Candid Visuals"],
+            "platform_focus": "Authentic compositions",
+            "text_style": "Playful or clean font, placed authentically",
+            "branding_style": "Integrated naturally within the scene"
         }
     }
     
     # Get task guidance or use default
     task_key = task_type.split('.', 1)[-1].strip() if '.' in task_type else task_type
     task_guidance = task_type_guidance_map.get(task_type, {
-        "description": f"Adapt the visual concept appropriately for '{task_type}'",
-        "platform_optimization": f"Optimize for {clean_platform_name}",
-        "text_guidance": "Handle text rendering as appropriate",
-        "branding_guidance": "Handle branding as appropriate"
+        "keywords": [f"Adapt appropriately for '{task_type}'"],
+        "platform_focus": f"Optimize for {clean_platform_name}",
+        "text_style": "Handle text rendering as appropriate",
+        "branding_style": "Handle branding as appropriate"
     })
     
     task_type_awareness_ce = f"""
 **Task Type Adaptation (CRUCIAL):** The specified Task Type is '{task_type}'. Your visual concept must be expertly tailored to this task.
-- {task_guidance['description']}
-- Platform Optimization: {task_guidance['platform_optimization']}
+- Core Concepts: {', '.join(task_guidance['keywords'])}.
+- Platform Optimization: {task_guidance['platform_focus']}.
 """
     
     # Add text and branding guidance based on flags
-    text_branding_field_instruction_ce = "**Text & Branding (JSON Output Fields):**\n"
+    text_branding_field_instruction_ce = "**Text & Branding Fields:**\n"
     if render_text_flag:
-        text_branding_field_instruction_ce += f"- For `promotional_text_visuals` field: {task_guidance['text_guidance']}. Describe text content, visual style, font characteristics, placement hierarchy, and integration with the visual.\n"
+        text_branding_field_instruction_ce += f"- `promotional_text_visuals`: {task_guidance['text_style']}. Describe text content, style, font, placement, and integration with the visual.\n"
     else:
-        text_branding_field_instruction_ce += "- The `promotional_text_visuals` field in the JSON output MUST be omitted (set to null) as text rendering is disabled.\n"
+        text_branding_field_instruction_ce += "- `promotional_text_visuals`: This field MUST be omitted (set to null) as text rendering is disabled.\n"
     
     if apply_branding_flag:
-        text_branding_field_instruction_ce += f"- For `branding_visuals` field: {task_guidance['branding_guidance']}. If no guidelines are provided, derive branding style from strategy and task.\n"
+        text_branding_field_instruction_ce += f"- `branding_visuals`: {task_guidance['branding_style']}. If no guidelines are provided, derive branding style from the marketing strategy and task.\n"
     else:
-        text_branding_field_instruction_ce += "- The `branding_visuals` field in the JSON output MUST be omitted (set to null) as branding application is disabled.\n"
+        text_branding_field_instruction_ce += "- `branding_visuals`: This field MUST be omitted (set to null) as branding application is disabled.\n"
     
     # Creativity level instructions
     creativity_instruction_ce = ""
@@ -236,16 +234,17 @@ Ensure concepts are memorable while aligning with the marketing strategy and tas
     image_ref_handling_ce = "**Handling Image Reference (CRITICAL):**\n"
     if has_reference:
         if has_instruction:
-            image_ref_handling_ce += "- An image reference IS provided AND a specific user `instruction` IS given: Interpret the instruction and apply it when describing the concept. Populate all fields including `main_subject`.\n"
+            image_ref_handling_ce += "- An image reference IS provided WITH a specific user `instruction`: Interpret the instruction and apply it when describing the new concept. Populate all fields including `main_subject`.\n"
         else:
-            image_ref_handling_ce += "- An image reference IS provided BUT NO specific user `instruction` is given: The **primary subject** of the visual concept MUST be the analyzed subject from the reference image. Your main creative task is to design the *context* around this subject aligned with the marketing strategy. **Crucially, you MUST OMIT the `main_subject` field entirely (set it to null) in your JSON output.** Focus ONLY on describing the context fields.\n"
+            image_ref_handling_ce += "- An image reference IS provided BUT has NO specific user `instruction`: The primary subject of the visual concept MUST be the one from the reference image. Your main creative task is to design the *context* around this subject. **Crucially, you MUST OMIT the `main_subject` field entirely (set to null) in your JSON output.** Focus ONLY on describing the context fields (background, lighting, etc.).\n"
     else:
-        image_ref_handling_ce += "- NO image reference is provided: Generate the entire visual concept based on the marketing strategy and other inputs, including the `main_subject`.\n"
+        image_ref_handling_ce += "- NO image reference is provided: Generate the entire visual concept from scratch based on the marketing strategy and other inputs, including the `main_subject`.\n"
     
-    reasoning_ce = "**Creative Reasoning:** After defining the visual concept, provide a brief explanation in the `creative_reasoning` field, connecting the key visual choices (style, mood, composition, subject focus, color palette) back to the core marketing strategy (audience, niche, objective, voice), the specific Task Type, the provided Style Guidance, and any significant user inputs or refinements made, especially noting how the image reference was handled. **Justify why the chosen creative direction is effective and aligns with the overall marketing objectives from the strategy.**"
+    reasoning_ce = "**Creative Reasoning:** In the `creative_reasoning` field, briefly explain how your key visual choices (style, composition, color) connect back to the marketing strategy, task type, and style guidance. Justify why this creative direction is effective for the marketing objectives."
     
     alt_text_ce = """
-**Alt Text Generation:** Based on the final visual concept, you MUST generate a concise, descriptive alt text (100-125 characters) in the `suggested_alt_text` field. This text is crucial for SEO and accessibility. It should clearly describe the image's subject, setting, and any important visual elements, naturally incorporating primary keywords from the marketing strategy. **IMPORTANT: Do NOT include hashtags, emojis, or promotional language - focus purely on accurate visual description.**
+**Alt Text Generation:** Based on the final visual concept, you MUST generate a concise, descriptive alt text (100-125 characters) in the `suggested_alt_text` field for SEO and accessibility.
+**IMPORTANT:** This text must describe the image's subject, setting, and key elements. Do NOT include hashtags, emojis, or promotional language.
 """
     
     # Output format instructions
@@ -370,7 +369,10 @@ def _get_creative_expert_user_prompt(
         "Instagram Story/Reel": f"Optimize for Instagram Story/Reel: Focus on dynamic, attention-grabbing visuals for {aspect_ratio_for_prompt} vertical format. **Describe the visual as if it were a single, high-impact frame from a video Reel.** Incorporate a sense of motion or action in the `composition_and_framing` description (e.g., 'dynamic motion blur,' 'subject captured mid-action,' 'cinematic freeze-frame effect').",
         "Facebook Post": f"Optimize for Facebook Feed: Design for broad appeal and shareability in {aspect_ratio_for_prompt} format. Ensure clear branding and messaging for potential ad use.",
         "Pinterest Pin": f"Optimize for Pinterest: Create visually striking, informative vertical images in {aspect_ratio_for_prompt} format. **If text is enabled, the concept MUST include a prominent text overlay.** As per Pinterest best practices, the description in `promotional_text_visuals` should specify text that is **large, highly legible (e.g., bold sans-serif fonts), and contains primary keywords from the marketing strategy.**",
-        "Xiaohongshu (Red Note)": f"Optimize for Xiaohongshu: Focus on an **authentic, User-Generated Content (UGC) aesthetic** in {aspect_ratio_for_prompt} format. The concept should resemble a high-quality photo from a peer, not a polished ad. When describing the `visual_style`, favor terms like 'natural lighting' or 'candid shot.' **The concept should feature real people** interacting with the product or in the scene. If text is enabled, the `promotional_text_visuals` description must detail a **catchy, keyword-rich title overlay to act as a strong hook.**",
+        "Xiaohongshu (Red Note)": f"""Optimize for Xiaohongshu: Create a concept embodying **'elevated reality'**—a blend of high-quality aesthetics and genuine authenticity for the {aspect_ratio_for_prompt} format. The visual style should feel like a polished but relatable post from a top creator, not a corporate ad.
+- **Visual Style & Composition:** Favor natural lighting, clean backgrounds, and dynamic angles. Describe a clear, engaging visual story (e.g., 'a mini-tutorial in one frame,' 'the satisfying end result of a recipe'). The `visual_style` could be 'effortless chic', 'clean and minimalist', or 'vibrant and bold'.
+- **Human Element:** The concept **must feature relatable people** interacting naturally with the product or scene.
+- **Text Overlay (if enabled):** The `promotional_text_visuals` description is CRITICAL. It must detail a **catchy, keyword-rich title overlay**. Specify that the text should use **high-contrast, bold, and easily readable fonts** to create a strong visual hook for the feed.""",
     }
     platform_guidance_text = platform_guidance_map.get(clean_platform_name, f"Adapt the concept for the target platform '{clean_platform_name}' using {aspect_ratio_for_prompt} aspect ratio.")
     user_prompt_parts.append(f"\n**Platform Optimization (General Reminder):** {platform_guidance_text} (Detailed task-specific platform optimization is in system prompt).")
@@ -378,51 +380,49 @@ def _get_creative_expert_user_prompt(
     # Language reminder  
     language_display = "Simplified Chinese" if language == 'zh' else language.upper()
     lang_reminder = (
-        f"\n**Language Reminder:** When filling `promotional_text_visuals`, `branding_visuals`, and `suggested_alt_text`, use {language_display}. All other descriptions stay in English.\n"
+        f"\n**Language Reminder (CRITICAL):**\n"
+        f"For the text-based fields, follow these rules precisely:\n"
+        f"- `suggested_alt_text`: Write the entire description in **{language_display}**.\n"
+        f"- `promotional_text_visuals` & `branding_visuals`: Describe the visual style (font, color, placement) in **ENGLISH**. Write the actual text content (e.g., a headline) in **{language_display}**.\n"
+        f"- All other fields must be in English.\n"
     )
     user_prompt_parts.append(lang_reminder)
 
     final_instruction = f"""
-\nBased on ALL the above context (especially the core marketing strategy, the provided Style Direction, and the task-specific guidance from the system prompt) and your expertise (refining user inputs as needed), generate the `ImageGenerationPrompt` JSON object.
-Ensure the nested `VisualConceptDetails` object is fully populated with rich, descriptive details suitable for guiding a text-to-image model.
-"""
-    
-    if is_default_edit:
-        final_instruction += "- **IMPORTANT REMINDER: Since this is a default edit scenario (reference image provided, no specific user instruction), OMIT the `main_subject` field (set to null) in your JSON response. Focus ONLY on describing the context fields.**\n"
-    else:
-        final_instruction += "- Describe the `main_subject` clearly (following image reference logic from system prompt if applicable). This field should encompass all key subjects in the scene and their interactions.\n"
+As the expert Creative Director, your final task is to synthesize ALL of the above context—especially the core marketing strategy, the provided Style Direction, and the task-specific guidance—and generate the complete `ImageGenerationPrompt` JSON object.
+Ensure the nested `VisualConceptDetails` object is fully populated with rich, descriptive details to guide the image model effectively.
 
-    final_instruction += """
-- Detail the `composition_and_framing`.
-- Describe the `background_environment`.
-- Mention any important `foreground_elements`.
-- Specify the `lighting_and_mood`.
-- Define the `color_palette`.
-- Articulate the `visual_style`. This field MUST comprehensively describe the desired aesthetic, being a detailed and creative elaboration of the provided Style Guidance. If no style guidance was given, invent a style according to the creativity level set in the system prompt.
+- `main_subject`: Describe the main subject clearly (unless this is a default edit on a reference image).
+- `composition_and_framing`: Detail the composition and camera framing.
+- `background_environment`: Describe the background environment.
+- `foreground_elements`: Mention any important foreground elements.
+- `lighting_and_mood`: Specify the lighting and overall mood.
+- `color_palette`: Define the key colors.
+- `visual_style`: Articulate the final visual style, ensuring it's a creative elaboration of the provided Style Guidance.
 """
     
     if render_text_flag:
-        final_instruction += "- If text is being rendered, ensure your description for `promotional_text_visuals` is detailed and creative, following any task-specific text guidance provided in the system prompt.\n"
+        final_instruction += "- `promotional_text_visuals`: Describe the text content, style, and placement in detail.\n"
     else:
-        final_instruction += "- Omit `promotional_text_visuals` field (set to null) in JSON as text rendering is disabled.\n"
+        final_instruction += "- `promotional_text_visuals`: This field MUST be omitted (set to null) as text rendering is disabled.\n"
     
     if apply_branding_flag:
-        final_instruction += "- If branding is being applied, ensure your description for `branding_visuals` is detailed and creative, following any task-specific branding guidance provided in the system prompt. Handle the case where no branding guidelines were provided.\n"
+        final_instruction += "- `branding_visuals`: Describe the branding elements and their integration.\n"
     else:
-        final_instruction += "- Omit `branding_visuals` field (set to null) in JSON as branding application is disabled.\n"
+        final_instruction += "- `branding_visuals`: This field MUST be omitted (set to null) as branding application is disabled.\n"
     
     final_instruction += """
-- Add notes on `texture_and_details` if relevant.
-- List any `negative_elements` to avoid.
-- **Provide a brief `creative_reasoning` explaining how the main visual choices connect to the core marketing strategy (especially the `target_objective`), user inputs, task type, and style guidance.**
-- **Generate a concise and descriptive `suggested_alt_text` for SEO and accessibility (descriptive text only, no hashtags or promotional language).**
+- `texture_and_details`: Add notes on texture and fine details if relevant.
+- `negative_elements`: List any elements to strictly avoid.
 
-Ensure the overall visual concept aligns strongly with the core marketing strategy, task type '{task_type}', and incorporates the image reference context as instructed in the system prompt.
-The `source_strategy_index` field in the JSON will be added programmatically later.
+**CRITICAL FINAL CHECKS:**
+- **Provide `creative_reasoning`:** Briefly explain how the visual choices support the marketing goals.
+- **Generate `suggested_alt_text`:** Provide concise, descriptive alt text for SEO (no promotional language).
+- **Follow Image Reference Rules:** If a reference image was used, ensure you have correctly handled the `main_subject` field based on whether there was a specific instruction.
 """
     
     if not use_instructor_parsing or CREATIVE_EXPERT_MODEL_ID in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS:
-        final_instruction += "\nVERY IMPORTANT: Your entire response MUST be only the JSON object described in the system prompt (Creative Expert section), starting with `{` and ending with `}`. Do not include any other text or formatting."
+        final_instruction += "\nREMEMBER: Your entire response MUST be only the JSON object, starting with `{` and ending with `}`. Do not include any other text."
 
     user_prompt_parts.append(final_instruction)
     return "\n".join(user_prompt_parts)

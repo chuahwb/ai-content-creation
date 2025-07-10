@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 import mimetypes
 import logging
+import time
+import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from sqlalchemy import desc
@@ -200,7 +202,7 @@ async def create_pipeline_run(
     session.refresh(run)
     
     # Start background pipeline execution
-    await task_processor.start_pipeline_run(run.id, request, image_data)
+    asyncio.create_task(task_processor.start_pipeline_run(run.id, request, image_data))
     
     return PipelineRunResponse(
         id=run.id,

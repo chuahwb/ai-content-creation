@@ -185,3 +185,7 @@ out/
 # Benchmarking files (should not be tracked)
 scripts/benchmark_caption_models.py
 scripts/caption_benchmark_results_*.json 
+
+# Dummy/testing files
+churns/stages/creative_expert_1.py
+churns/stages/creative_expert_2.py 

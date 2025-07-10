@@ -138,15 +138,8 @@ class PipelineTaskProcessor:
             if run_id in self.active_tasks:
                 logger.warning(f"Pipeline run {run_id} is already running")
                 return
-            
-            # Start the run
-            run.status = RunStatus.RUNNING
-            run.started_at = datetime.utcnow()
-            run.error_message = None  # Clear any previous error
-            session.add(run)
-            session.commit()
         
-        # Create and start the background task
+        # Create and start the background task (don't update status to RUNNING here)
         task = asyncio.create_task(self._execute_pipeline(run_id, request, image_data))
         self.active_tasks[run_id] = task
         
@@ -917,18 +910,16 @@ class PipelineTaskProcessor:
             }
         }
         
-        # Add image reference if provided
-        if request.image_reference and image_path and image_data:
-            # Convert image data to base64 for VLM analysis
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
-            
+        # Add image reference if provided (defer base64 encoding)
+        if request.image_reference and image_path:
             pipeline_data["user_inputs"]["image_reference"] = {
                 "filename": request.image_reference.filename,
                 "content_type": request.image_reference.content_type,
                 "size_bytes": request.image_reference.size_bytes,
                 "instruction": request.image_reference.instruction,
                 "saved_image_path_in_run_dir": str(image_path),
-                "image_content_base64": image_base64  # This is what VLM analysis needs!
+                "image_content_base64": None,  # Will be populated when needed
+                "_image_data_bytes": image_data  # Store raw bytes temporarily
             }
         
         # Add marketing goals if provided
