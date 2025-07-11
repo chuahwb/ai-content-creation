@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { ReactCompareSlider, ReactCompareSliderImage } from 'react-compare-slider';
-import { Box, Typography, Chip, Stack } from '@mui/material';
+import { Box, Chip } from '@mui/material';
 import { CompareArrows as CompareArrowsIcon } from '@mui/icons-material';
 
 interface ImageCompareSliderProps {

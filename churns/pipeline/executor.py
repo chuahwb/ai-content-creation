@@ -230,12 +230,15 @@ class PipelineExecutor:
                     continue
             
             # Send stage starting notification
-            
             if progress_callback:
                 await progress_callback(
                     actual_stage_name, stage_order, StageStatus.RUNNING, 
                     f"Starting stage {actual_stage_name}...", None, None, None
                 )
+                
+                # Small delay to ensure database update is committed before stage execution
+                import asyncio
+                await asyncio.sleep(0.05)
             
             try:
                 # Dynamically import stage module

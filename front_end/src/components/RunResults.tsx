@@ -64,6 +64,7 @@ import RefinementModal from './RefinementModal';
 import CaptionDialog from './CaptionDialog';
 import CaptionDisplay from './CaptionDisplay';
 import ImageCompareSlider from './ImageCompareSlider';
+import ImageWithAuth from './ImageWithAuth';
 
 interface RunResultsProps {
   runId: string;
@@ -797,7 +798,14 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   }, [addLog, fetchRunDetails]);
 
   const initializeWebSocket = useCallback(() => {
+    // Prevent multiple connections for the same run ID
+    if (wsManager && wsManager.readyState === WebSocket.OPEN) {
+      console.log('WebSocket already connected for run:', runId);
+      return wsManager;
+    }
+
     if (wsManager) {
+      console.log('Closing existing WebSocket connection before creating new one');
       wsManager.disconnect();
     }
 
@@ -826,7 +834,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       });
 
     return newWsManager;
-  }, [runId, handleWebSocketMessage, addLog]);
+  }, [runId, handleWebSocketMessage, addLog, wsManager]);
 
   const handleCancelRun = async () => {
     try {
@@ -1135,14 +1143,22 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   useEffect(() => {
     fetchRunDetails();
-    const ws = initializeWebSocket();
     
+    // Only initialize WebSocket if we don't already have one for this run
+    if (!wsManager || wsManager.readyState !== WebSocket.OPEN) {
+      initializeWebSocket();
+    }
+  }, [runId, fetchRunDetails, initializeWebSocket]);
+
+  // Cleanup effect for WebSocket
+  useEffect(() => {
     return () => {
-      if (ws) {
-        ws.disconnect();
+      if (wsManager) {
+        console.log('Cleaning up WebSocket connection for run:', runId);
+        wsManager.disconnect();
       }
     };
-  }, [runId]);
+  }, [wsManager, runId]);
 
   // Additional effect to handle page visibility changes for robustness
   useEffect(() => {
@@ -1413,23 +1429,35 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   };
 
   // Helper function to set selected image with context
-  const setSelectedImageWithContext = (
-    imageUrl: string, 
+  const setSelectedImageWithContext = async (
+    runId: string,
+    imagePath: string,
     type: 'original' | 'refinement', 
     refinementData?: any
   ) => {
-    setSelectedImage(imageUrl);
-    
-    if (type === 'refinement' && refinementData) {
-      const parentImagePath = getImmediateParentImagePath(refinementData);
+    try {
+      // Get blob URL for the image
+      const blobUrl = await PipelineAPI.getImageBlobUrl(runId, imagePath);
+      setSelectedImage(blobUrl);
+      
+      if (type === 'refinement' && refinementData) {
+        const parentImagePath = getImmediateParentImagePath(refinementData);
+        setSelectedImageContext({
+          type: 'refinement',
+          refinementData,
+          parentImagePath
+        });
+      } else {
+        setSelectedImageContext({
+          type: 'original'
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load image for modal:', error);
+      // Fallback to direct URL (might not work with ngrok but better than nothing)
+      setSelectedImage(PipelineAPI.getFileUrl(runId, imagePath));
       setSelectedImageContext({
-        type: 'refinement',
-        refinementData,
-        parentImagePath
-      });
-    } else {
-      setSelectedImageContext({
-        type: 'original'
+        type: type
       });
     }
   };
@@ -1582,9 +1610,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                       {result.status === 'success' && result.image_path ? (
                         <Box>
                           <Box sx={{ position: 'relative', mb: 2 }}>
-                            <Box
-                              component="img"
-                              src={PipelineAPI.getFileUrl(runId, result.image_path)}
+                            <ImageWithAuth
+                              runId={runId}
+                              imagePath={result.image_path}
                               sx={{
                                 width: '100%',
                                 maxHeight: 350,
@@ -1601,9 +1629,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 }
                               }}
                               onClick={() => result.image_path && setSelectedImageWithContext(
-                                PipelineAPI.getFileUrl(runId, result.image_path),
+                                runId,
+                                result.image_path,
                                 'original'
                               )}
+                              alt={`Generated image option ${result.strategy_index + 1}`}
                             />
                           </Box>
                           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
@@ -1636,7 +1666,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 size="small"
                                 startIcon={<ZoomInIcon />}
                                 onClick={() => result.image_path && setSelectedImageWithContext(
-                                  PipelineAPI.getFileUrl(runId, result.image_path),
+                                  runId,
+                                  result.image_path,
                                   'original'
                                 )}
                                 color="primary"
@@ -1840,9 +1871,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                   {/* Parent Image Thumbnail */}
                                   {originalImage?.image_path && (
-                                    <Box
-                                      component="img"
-                                      src={PipelineAPI.getFileUrl(runId, originalImage.image_path)}
+                                    <ImageWithAuth
+                                      runId={runId}
+                                      imagePath={originalImage.image_path}
                                       sx={{
                                         width: 48,
                                         height: 48,
@@ -1851,6 +1882,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                         border: 1,
                                         borderColor: 'divider'
                                       }}
+                                      alt={`Original image option ${originalImageIndex + 1}`}
                                     />
                                   )}
                                   
@@ -1896,9 +1928,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                           {refinement.image_path ? (
                                             <Box>
                                               <Box sx={{ position: 'relative', mb: 2 }}>
-                                                <Box
-                                                  component="img"
-                                                  src={PipelineAPI.getFileUrl(runId, refinement.image_path)}
+                                                <ImageWithAuth
+                                                  runId={runId}
+                                                  imagePath={refinement.image_path}
                                                   sx={{
                                                     width: '100%',
                                                     height: 200,
@@ -1912,10 +1944,12 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                                     }
                                                   }}
                                                   onClick={() => setSelectedImageWithContext(
-                                                    PipelineAPI.getFileUrl(runId, refinement.image_path),
+                                                    runId,
+                                                    refinement.image_path,
                                                     'refinement',
                                                     refinement
                                                   )}
+                                                  alt={`Refined image - ${refinementName}`}
                                                 />
                                                 <Chip
                                                   label={getRefinementTypeLabel(refinement.refinement_type)}
@@ -1944,7 +1978,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                                   size="small"
                                                   startIcon={<ZoomInIcon />}
                                                   onClick={() => setSelectedImageWithContext(
-                                                    PipelineAPI.getFileUrl(runId, refinement.image_path),
+                                                    runId,
+                                                    refinement.image_path,
                                                     'refinement',
                                                     refinement
                                                   )}
@@ -2122,9 +2157,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                             }}
                             onClick={() => openRefinementModal(index, image.image_path || '')}
                           >
-                            <Box
-                              component="img"
-                              src={PipelineAPI.getFileUrl(runId, image.image_path || '')}
+                            <ImageWithAuth
+                              runId={runId}
+                              imagePath={image.image_path || ''}
                               sx={{
                                 width: '100%',
                                 height: 120,
@@ -2132,6 +2167,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 borderRadius: 1,
                                 mb: 1
                               }}
+                              alt={`Option ${index + 1} for refinement`}
                             />
                             <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'primary.main', mb: 1 }}>
                               Option {index + 1}

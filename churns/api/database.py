@@ -1,7 +1,9 @@
 from typing import Optional
-from sqlalchemy import create_engine, Column, DateTime, Text
+from sqlalchemy import Column, DateTime, Text
 from sqlalchemy.sql import func
-from sqlmodel import SQLModel, Field, Session
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import SQLModel, Field
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -141,17 +143,43 @@ class PipelineStage(SQLModel, table=True):
     error_traceback: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
-# Database configuration
-DATABASE_URL = "sqlite:///./data/runs.db"
-engine = create_engine(DATABASE_URL, echo=False)
+# Database configuration - Updated to use async
+DATABASE_URL = "sqlite+aiosqlite:///./data/runs.db"
+engine = create_async_engine(DATABASE_URL, echo=False)
+
+# Create async session factory
+async_session_factory = sessionmaker(
+    engine, 
+    class_=AsyncSession, 
+    expire_on_commit=False
+)
 
 
-def create_db_and_tables():
-    """Create database tables"""
-    SQLModel.metadata.create_all(engine)
+async def create_db_and_tables():
+    """Create database tables asynchronously"""
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
 
 
-def get_session():
-    """Get database session"""
-    with Session(engine) as session:
+async def get_session():
+    """Get async database session"""
+    async with async_session_factory() as session:
+        yield session
+
+
+# Backward compatibility function for scripts that need sync access
+def get_sync_session():
+    """Get synchronous database session for scripts/utilities"""
+    import warnings
+    from sqlalchemy import create_engine
+    from sqlmodel import Session
+    
+    warnings.warn(
+        "get_sync_session is deprecated. Use get_session() with async/await instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
+    sync_engine = create_engine("sqlite:///./data/runs.db", echo=False)
+    with Session(sync_engine) as session:
         yield session 

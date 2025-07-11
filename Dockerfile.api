@@ -15,9 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install production dependencies only
-COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir -e . && \
+WORKDIR /app
+
+# Copy requirements and install production dependencies
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt && \
     # Remove build tools after installation
     apt-get remove -y build-essential && \
     apt-get autoremove -y && \
@@ -31,9 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install all dependencies including dev
-COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir -e .[dev]
+WORKDIR /app
+
+# Copy both requirements files (dev requirements includes production requirements)
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Production stage
 FROM base AS production
@@ -41,17 +45,17 @@ FROM base AS production
 # Create non-root user first
 RUN adduser --disabled-password --gecos '' appuser
 
-# Copy installed packages from production deps stage only
+# Copy installed packages from production deps stage
 COPY --from=prod-deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=prod-deps /usr/local/bin /usr/local/bin
 
 # Set working directory
 WORKDIR /app
 
-# Copy only necessary source code
+# Copy source code
 COPY churns/ ./churns/
 
-# Create minimal data directory structure (don't copy actual data)
+# Create minimal data directory structure
 RUN mkdir -p ./data/runs && chown -R appuser:appuser /app
 
 # Switch to non-root user
@@ -60,7 +64,11 @@ USER appuser
 # Expose port
 EXPOSE 8000
 
-# Production command (no reload)
+# Add health check using Python
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
+
+# Production command
 CMD ["uvicorn", "churns.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
 
 # Development stage
@@ -83,4 +91,4 @@ USER appuser
 EXPOSE 8000
 
 # Development command (with reload)
-CMD ["uvicorn", "churns.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] 
+CMD ["uvicorn", "churns.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "info"] 

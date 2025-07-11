@@ -72,9 +72,11 @@ class ConnectionManager:
         # Convert message to JSON
         message_data = message.model_dump_json()
         
-        # Send to all connections for this run
+        # Send to all connections for this run (create a copy to avoid iteration issues)
         disconnected_connections = []
-        for connection in self.active_connections[run_id]:
+        connections_copy = list(self.active_connections[run_id])
+        
+        for connection in connections_copy:
             try:
                 await connection.send_text(message_data)
             except Exception as e:

@@ -10,8 +10,8 @@ RUN apk add --no-cache libc6-compat
 # Copy package files first for better caching
 COPY package.json package-lock.json* ./
 
-# Install dependencies
-RUN npm ci --only=production=false
+# Install all dependencies (including dev dependencies)
+RUN npm ci && npm cache clean --force
 
 # Copy source code
 COPY . .
@@ -22,6 +22,10 @@ EXPOSE 3000
 # Set environment variables
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" || exit 1
 
 # Start development server
 CMD ["npm", "run", "dev"] 

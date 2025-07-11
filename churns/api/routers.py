@@ -10,13 +10,15 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
-from sqlmodel import Session, select
+from sqlmodel import select
 from sqlalchemy import desc
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from churns.api.database import (
     get_session, PipelineRun, PipelineStage, RefinementJob, RefinementType,
     RunStatus, StageStatus, create_db_and_tables
 )
+from churns.api.dependencies import get_executor
 from churns.api.schemas import (
     PipelineRunRequest, PipelineRunResponse, PipelineRunDetail, 
     RunListResponse, RunListItem, PipelineResults,
@@ -27,6 +29,7 @@ from churns.api.schemas import (
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
+from churns.pipeline.executor import PipelineExecutor
 from churns.core.constants import (
     SOCIAL_MEDIA_PLATFORMS, TASK_TYPES, PLATFORM_DISPLAY_NAMES,
     CAPTION_MODEL_OPTIONS, CAPTION_MODEL_ID
@@ -45,7 +48,7 @@ ws_router = APIRouter(prefix="/ws", tags=["WebSocket"])
 @api_router.on_event("startup")
 async def startup_event():
     """Initialize database on startup"""
-    create_db_and_tables()
+    await create_db_and_tables()
     # Ensure data directories exist
     os.makedirs("./data/runs", exist_ok=True)
 
@@ -84,7 +87,8 @@ async def create_pipeline_run(
     # File upload
     image_file: Optional[UploadFile] = File(None, description="Reference image"),
     
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    executor: PipelineExecutor = Depends(get_executor)
 ):
     """Create a new pipeline run"""
     
@@ -198,11 +202,11 @@ async def create_pipeline_run(
     )
     
     session.add(run)
-    session.commit()
-    session.refresh(run)
+    await session.commit()
+    await session.refresh(run)
     
     # Start background pipeline execution
-    asyncio.create_task(task_processor.start_pipeline_run(run.id, request, image_data))
+    asyncio.create_task(task_processor.start_pipeline_run(run.id, request, image_data, executor))
     
     return PipelineRunResponse(
         id=run.id,
@@ -238,12 +242,12 @@ async def create_refinement(
     reference_image: Optional[UploadFile] = File(None, description="Reference image for subject repair"),
     mask_file: Optional[UploadFile] = File(None, description="Mask PNG file for regional editing"),
     
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Create a new image refinement job"""
     
     # Validate parent run exists
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Parent pipeline run not found")
     
@@ -329,8 +333,8 @@ async def create_refinement(
     )
     
     session.add(refinement_job)
-    session.commit()
-    session.refresh(refinement_job)
+    await session.commit()
+    await session.refresh(refinement_job)
     
     # Prepare refinement data for background processing
     refinement_data = {
@@ -344,7 +348,7 @@ async def create_refinement(
     
     # Save reference image if provided (updated for hybrid structure)
     if reference_image_data:
-        parent_run_dir = Path(f"./data/runs/{run_id}")
+        parent_run_dir = Path(f"./data/runs/{run_id}").resolve()  # Make absolute
         
         # Create job-specific directory for hybrid structure
         job_refinement_dir = parent_run_dir / "refinements" / refinement_job.id
@@ -359,12 +363,12 @@ async def create_refinement(
         with open(ref_image_path, "wb") as f:
             f.write(reference_image_data)
         
-        # Store path relative to job directory for the refinement utilities
+        # Store absolute path for the refinement utilities
         refinement_data["reference_image_path"] = str(ref_image_path)
     
     # Save mask file if provided
     if mask_file_data:
-        parent_run_dir = Path(f"./data/runs/{run_id}")
+        parent_run_dir = Path(f"./data/runs/{run_id}").resolve()  # Make absolute
         
         # Create job-specific directory for hybrid structure
         job_refinement_dir = parent_run_dir / "refinements" / refinement_job.id
@@ -376,7 +380,7 @@ async def create_refinement(
         with open(mask_file_path, "wb") as f:
             f.write(mask_file_data)
         
-        # Store path for the refinement utilities
+        # Store absolute path for the refinement utilities
         refinement_data["mask_file_path"] = str(mask_file_path)
         logger.info(f"Saved mask file: {mask_file_path}")
     
@@ -400,12 +404,12 @@ async def create_refinement(
 @runs_router.get("/{run_id}/refinements", response_model=RefinementListResponse)
 async def list_refinements(
     run_id: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """List all refinements for a pipeline run"""
     
     # Validate parent run exists
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
@@ -414,7 +418,8 @@ async def list_refinements(
         RefinementJob.parent_run_id == run_id
     ).order_by(RefinementJob.created_at)
     
-    refinements = session.exec(refinements_query).all()
+    result = await session.execute(refinements_query)
+    refinements = result.scalars().all()
     
     # Convert to response format
     refinement_results = []
@@ -450,11 +455,11 @@ async def list_refinements(
 @api_router.post("/refinements/{job_id}/cancel")
 async def cancel_refinement(
     job_id: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Cancel a refinement job"""
     
-    refinement = session.get(RefinementJob, job_id)
+    refinement = await session.get(RefinementJob, job_id)
     if not refinement:
         raise HTTPException(status_code=404, detail="Refinement job not found")
     
@@ -473,7 +478,7 @@ async def cancel_refinement(
             refinement.completed_at = datetime.now(timezone.utc)
             refinement.error_message = "Refinement execution was cancelled (stalled job)"
             session.add(refinement)
-            session.commit()
+            await session.commit()
             return {"message": "Stalled refinement marked as cancelled"}
         else:
             return {"message": "Refinement is not currently running"}
@@ -574,7 +579,7 @@ async def list_pipeline_runs(
     page_size: int = 20,
     status: Optional[RunStatus] = None,
     mode: Optional[str] = None,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """List pipeline runs with pagination and filtering"""
     
@@ -594,13 +599,15 @@ async def list_pipeline_runs(
     if mode:
         total_query = total_query.where(PipelineRun.mode == mode)
     
-    total = len(session.exec(total_query).all())
+    total_result = await session.execute(total_query)
+    total = len(total_result.scalars().all())
     
     # Apply pagination
     offset = (page - 1) * page_size
     query = query.offset(offset).limit(page_size)
     
-    runs = session.exec(query).all()
+    result = await session.execute(query)
+    runs = result.scalars().all()
     
     # Convert to response format
     run_items = [
@@ -628,11 +635,11 @@ async def list_pipeline_runs(
 @runs_router.get("/{run_id}", response_model=PipelineRunDetail)
 async def get_pipeline_run(
     run_id: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Get detailed information about a specific pipeline run"""
     
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
@@ -641,30 +648,32 @@ async def get_pipeline_run(
         PipelineStage.run_id == run_id
     ).order_by(PipelineStage.stage_order)
     
-    stages = session.exec(stages_query).all()
+    stages_result = await session.execute(stages_query)
+    stages = stages_result.scalars().all()
     
     # Convert stages to response format
     stage_updates = []
     for stage in stages:
-        # Parse output data if present
+        # Parse output data if present - use getattr for safe access
         output_data = None
-        if stage.output_data:
+        stage_output_data = getattr(stage, 'output_data', None)
+        if stage_output_data:
             try:
                 import json
-                output_data = json.loads(stage.output_data)
+                output_data = json.loads(stage_output_data)
             except:
                 pass
         
         stage_updates.append({
-            "stage_name": stage.stage_name,
-            "stage_order": stage.stage_order,
-            "status": stage.status,
-            "started_at": stage.started_at,
-            "completed_at": stage.completed_at,
-            "duration_seconds": stage.duration_seconds,
-            "message": f"Stage {stage.stage_name} {stage.status.value}",
+            "stage_name": getattr(stage, 'stage_name', ''),
+            "stage_order": getattr(stage, 'stage_order', 0),
+            "status": getattr(stage, 'status', StageStatus.PENDING),
+            "started_at": getattr(stage, 'started_at', None),
+            "completed_at": getattr(stage, 'completed_at', None),
+            "duration_seconds": getattr(stage, 'duration_seconds', None),
+            "message": f"Stage {getattr(stage, 'stage_name', 'unknown')} {getattr(stage, 'status', StageStatus.PENDING).value if hasattr(getattr(stage, 'status', StageStatus.PENDING), 'value') else getattr(stage, 'status', StageStatus.PENDING)}",
             "output_data": output_data,
-            "error_message": stage.error_message
+            "error_message": getattr(stage, 'error_message', None)
         })
     
     return PipelineRunDetail(
@@ -704,10 +713,10 @@ async def get_pipeline_run(
 @runs_router.get("/{run_id}/status", response_model=dict)
 async def get_run_status(
     run_id: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Get detailed status information about a pipeline run"""
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
@@ -716,7 +725,8 @@ async def get_run_status(
         PipelineStage.run_id == run_id
     ).order_by(PipelineStage.stage_order)
     
-    stages = session.exec(stages_query).all()
+    stages_result = await session.execute(stages_query)
+    stages = stages_result.scalars().all()
     
     # Check if run is actually running
     is_active = run_id in task_processor.active_tasks
@@ -733,7 +743,7 @@ async def get_run_status(
         if run.started_at:
             run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
         session.add(run)
-        session.commit()
+        await session.commit()
     
     return {
         "id": run.id,
@@ -744,20 +754,20 @@ async def get_run_status(
         "completed_at": run.completed_at,
         "error_message": run.error_message,
         "total_duration_seconds": run.total_duration_seconds,
-        "current_stage": stages[-1].stage_name if stages else None,
+        "current_stage": getattr(stages[-1], 'stage_name', None) if stages else None,
         "stage_count": len(stages),
-        "completed_stages": len([s for s in stages if s.status == StageStatus.COMPLETED]),
-        "failed_stages": len([s for s in stages if s.status == StageStatus.FAILED])
+        "completed_stages": len([s for s in stages if getattr(s, 'status', None) == StageStatus.COMPLETED]),
+        "failed_stages": len([s for s in stages if getattr(s, 'status', None) == StageStatus.FAILED])
     }
 
 
 @runs_router.post("/{run_id}/cancel")
 async def cancel_pipeline_run(
     run_id: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Cancel a running pipeline"""
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
@@ -765,7 +775,7 @@ async def cancel_pipeline_run(
         return {"message": f"Pipeline is already in final state: {run.status}"}
     
     # Attempt to cancel
-    cancelled = task_processor.cancel_run(run_id)
+    cancelled = await task_processor.cancel_run(run_id)
     
     if cancelled:
         return {"message": "Pipeline cancelled successfully"}
@@ -778,7 +788,7 @@ async def cancel_pipeline_run(
             if run.started_at:
                 run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
             session.add(run)
-            session.commit()
+            await session.commit()
             return {"message": "Stalled pipeline marked as cancelled"}
         else:
             return {"message": "Pipeline is not currently running"}
@@ -787,11 +797,11 @@ async def cancel_pipeline_run(
 @runs_router.get("/{run_id}/results", response_model=PipelineResults)
 async def get_pipeline_results(
     run_id: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Get the final results of a completed pipeline run"""
     try:
-        run = session.get(PipelineRun, run_id)
+        run = await session.get(PipelineRun, run_id)
         if not run:
             raise HTTPException(status_code=404, detail="Pipeline run not found")
         
@@ -840,7 +850,8 @@ async def get_pipeline_results(
         refinements_query = select(RefinementJob).where(
             RefinementJob.parent_run_id == run_id
         ).order_by(RefinementJob.created_at)
-        refinements = session.exec(refinements_query).all()
+        refinements_result = await session.execute(refinements_query)
+        refinements = refinements_result.scalars().all()
         
         refinement_results = []
         for refinement in refinements:
@@ -896,13 +907,17 @@ async def get_pipeline_results(
 async def get_run_file(
     run_id: str,
     file_path: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Serve files from a pipeline run (images, metadata, etc.)"""
     
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
+    
+    # Handle empty file_path (directory access)
+    if not file_path or file_path.strip() == "":
+        raise HTTPException(status_code=404, detail="File path cannot be empty")
     
     # Construct file path safely - file_path can now include subdirectories
     full_file_path = Path(f"./data/runs/{run_id}") / file_path
@@ -917,6 +932,10 @@ async def get_run_file(
     
     if not full_file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
+    
+    # Ensure we're serving a file, not a directory
+    if full_file_path.is_dir():
+        raise HTTPException(status_code=404, detail="Cannot serve directory as file")
     
     # Determine media type
     media_type, _ = mimetypes.guess_type(str(full_file_path))
@@ -1044,12 +1063,12 @@ async def generate_caption(
     run_id: str,
     image_id: str,
     request: CaptionRequest,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Generate a caption for a specific image"""
     
     # Validate parent run exists and is completed
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
@@ -1105,12 +1124,12 @@ async def regenerate_caption(
     image_id: str,
     caption_version: int,
     request: CaptionRegenerateRequest,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """Regenerate a caption with new settings or just new creativity"""
     
     # Validate parent run exists and is completed
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
@@ -1211,12 +1230,12 @@ async def regenerate_caption(
 async def list_captions(
     run_id: str,
     image_id: str,
-    session: Session = Depends(get_session)
+    session: AsyncSession = Depends(get_session)
 ):
     """List all caption versions for a specific image"""
     
     # Validate parent run exists
-    run = session.get(PipelineRun, run_id)
+    run = await session.get(PipelineRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
