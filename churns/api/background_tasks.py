@@ -447,7 +447,7 @@ class PipelineTaskProcessor:
             # Send error notification
             await connection_manager.send_run_error(run_id, error_message, {"traceback": error_traceback})
 
-    async def start_refinement_job(self, job_id: str, refinement_data: Dict[str, Any]):
+    async def start_refinement_job(self, job_id: str, refinement_data: Dict[str, Any], executor: Optional[PipelineExecutor] = None):
         """Start a refinement job in the background"""
         # Check if there's a stalled refinement job
         async with async_session_factory() as session:
@@ -484,7 +484,7 @@ class PipelineTaskProcessor:
             await session.commit()
         
         # Create and start the background task
-        task = asyncio.create_task(self._execute_refinement(job_id, refinement_data))
+        task = asyncio.create_task(self._execute_refinement(job_id, refinement_data, executor))
         self.active_tasks[job_id] = task
         
         # Start timeout monitor (shorter timeout for refinements)
@@ -538,7 +538,7 @@ class PipelineTaskProcessor:
                 {"type": "timeout"}
             )
 
-    async def _execute_refinement(self, job_id: str, refinement_data: Dict[str, Any]):
+    async def _execute_refinement(self, job_id: str, refinement_data: Dict[str, Any], executor: Optional[PipelineExecutor] = None):
         """Execute the refinement pipeline with progress updates"""
         try:
             logger.info(f"Starting refinement execution - Job ID: {job_id}")
@@ -661,10 +661,11 @@ class PipelineTaskProcessor:
                 )
             
             # Execute refinement pipeline - use shared executor if available
-            # Note: For now, create a new refinement executor since refinements
-            # need mode="refinement" and we don't want to modify the shared instance
-            # TODO: Future enhancement could pass shared executor and temporarily switch mode
-            executor = PipelineExecutor(mode="refinement")
+            if executor is None:
+                logger.warning("No executor provided, creating new refinement instance (this should not happen in production)")
+                from churns.pipeline.executor import PipelineExecutor
+                executor = PipelineExecutor(mode="refinement")
+            
             await executor.run_async(context, refinement_progress_callback)
             
             # Update job with results using database_updates from save_outputs stage
@@ -1420,10 +1421,10 @@ class PipelineTaskProcessor:
         
         return durations
 
-    async def start_caption_generation(self, caption_id: str, caption_data: Dict[str, Any]):
+    async def start_caption_generation(self, caption_id: str, caption_data: Dict[str, Any], executor: Optional[PipelineExecutor] = None):
         """Start caption generation in the background"""
         # Create and start the background task
-        task = asyncio.create_task(self._execute_caption_generation(caption_id, caption_data))
+        task = asyncio.create_task(self._execute_caption_generation(caption_id, caption_data, executor))
         self.active_tasks[caption_id] = task
         
         # Clean up completed tasks
@@ -1434,7 +1435,7 @@ class PipelineTaskProcessor:
         
         logger.info(f"Started background caption generation task for {caption_id}")
 
-    async def _execute_caption_generation(self, caption_id: str, caption_data: Dict[str, Any]):
+    async def _execute_caption_generation(self, caption_id: str, caption_data: Dict[str, Any], executor: Optional[PipelineExecutor] = None):
         """Execute caption generation with real-time updates"""
         try:
             run_id = caption_data["run_id"]
@@ -1517,26 +1518,40 @@ class PipelineTaskProcessor:
             )
             await connection_manager.send_message_to_run(run_id, message)
             
-            # Import and run the caption stage
-            from churns.stages.caption import run as run_caption_stage
+            # Execute caption pipeline using shared executor if available
+            if executor is None:
+                logger.warning("No executor provided, creating new caption instance (this should not happen in production)")
+                from churns.pipeline.executor import PipelineExecutor
+                executor = PipelineExecutor(mode="caption")
             
-            # Set up global variables for caption stage (same pattern as other stages)
-            import churns.stages.caption as caption_module
-            from churns.core.client_config import get_configured_clients
+            # Set up progress callback for caption generation
+            async def caption_progress_callback(stage_name: str, stage_order: int, status: StageStatus, 
+                                              message: str, output_data: Optional[Dict] = None, 
+                                              error_message: Optional[str] = None,
+                                              duration_seconds: Optional[float] = None):
+                
+                # Send WebSocket progress update
+                from churns.api.websocket import WebSocketMessage, WSMessageType
+                progress_message = WebSocketMessage(
+                    type=WSMessageType.CAPTION_UPDATE,
+                    run_id=run_id,
+                    data={
+                        "caption_id": caption_id,
+                        "image_id": image_id,
+                        "status": status.value if hasattr(status, 'value') else str(status),
+                        "message": message,
+                        "stage_name": stage_name,
+                        "stage_order": stage_order,
+                        "duration_seconds": duration_seconds
+                    }
+                )
+                await connection_manager.send_message_to_run(run_id, progress_message)
             
-            # Get configured clients
-            clients = get_configured_clients()
+            # Set the selected model ID in context for the caption stage to use
+            context.caption_model_id = model_id
             
-            # Configure caption stage globals using the selected model
-            caption_module.instructor_client_caption = clients.get('instructor_client_caption')
-            caption_module.base_llm_client_caption = clients.get('base_llm_client_caption')
-            caption_module.CAPTION_MODEL_ID = model_id  # Use the selected model
-            caption_module.CAPTION_MODEL_PROVIDER = CAPTION_MODEL_PROVIDER
-            caption_module.FORCE_MANUAL_JSON_PARSE = clients.get('force_manual_json_parse', False)
-            caption_module.INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = clients.get('instructor_tool_mode_problem_models', [])
-            
-            # Run the caption stage
-            await run_caption_stage(context)
+            # Run the caption stage through the executor
+            await executor.run_async(context, caption_progress_callback)
             
             # Extract the generated caption
             if hasattr(context, 'generated_captions') and context.generated_captions:

@@ -1,14 +1,12 @@
 import os
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from churns.api.routers import api_router
-from churns.api.database import create_db_and_tables
-from churns.pipeline.executor import PipelineExecutor
+from churns.api.lifespan import lifespan
 
 
 # Configure logging
@@ -17,43 +15,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    # Startup
-    logger.info("Starting Churns API...")
-    
-    # Create database tables
-    await create_db_and_tables()
-    logger.info("Database tables created/verified")
-    
-    # Ensure data directories exist
-    os.makedirs("./data/runs", exist_ok=True)
-    logger.info("Data directories created/verified")
-    
-    # Initialize the shared PipelineExecutor instance
-    try:
-        logger.info("🔧 Initializing shared PipelineExecutor...")
-        app.state.executor = PipelineExecutor()
-        logger.info("✅ PipelineExecutor initialized successfully")
-        
-        # Log executor configuration summary
-        client_summary = app.state.executor.get_client_summary()
-        configured_count = sum(1 for status in client_summary.values() if "✅" in status)
-        total_count = len(client_summary)
-        logger.info(f"📊 Executor ready: {configured_count}/{total_count} clients configured")
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize PipelineExecutor: {e}")
-        raise  # Fail fast - don't start the app if executor can't be created
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down Churns API...")
-    logger.info("✅ Application shutdown completed")
 
 
 # Create FastAPI application

@@ -18,7 +18,7 @@ from churns.api.database import (
     get_session, PipelineRun, PipelineStage, RefinementJob, RefinementType,
     RunStatus, StageStatus, create_db_and_tables
 )
-from churns.api.dependencies import get_executor
+from churns.api.dependencies import get_executor, get_refinement_executor, get_caption_executor
 from churns.api.schemas import (
     PipelineRunRequest, PipelineRunResponse, PipelineRunDetail, 
     RunListResponse, RunListItem, PipelineResults,
@@ -242,7 +242,8 @@ async def create_refinement(
     reference_image: Optional[UploadFile] = File(None, description="Reference image for subject repair"),
     mask_file: Optional[UploadFile] = File(None, description="Mask PNG file for regional editing"),
     
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    executor: PipelineExecutor = Depends(get_refinement_executor)
 ):
     """Create a new image refinement job"""
     
@@ -389,7 +390,7 @@ async def create_refinement(
     logger.debug(f"Parent image details - ID: {parent_image_id}, Type: {parent_image_type}, Index: {generation_index}")
     
     # Start background refinement execution
-    await task_processor.start_refinement_job(refinement_job.id, refinement_data)
+    await task_processor.start_refinement_job(refinement_job.id, refinement_data, executor)
     
     return RefinementResponse(
         job_id=refinement_job.id,
@@ -1063,7 +1064,8 @@ async def generate_caption(
     run_id: str,
     image_id: str,
     request: CaptionRequest,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    executor: PipelineExecutor = Depends(get_caption_executor)
 ):
     """Generate a caption for a specific image"""
     
@@ -1104,7 +1106,7 @@ async def generate_caption(
     }
     
     # Start background caption generation
-    await task_processor.start_caption_generation(caption_id, caption_data)
+    await task_processor.start_caption_generation(caption_id, caption_data, executor)
     
     # Return immediate response (actual generation happens in background)
     return CaptionResponse(
@@ -1124,7 +1126,8 @@ async def regenerate_caption(
     image_id: str,
     caption_version: int,
     request: CaptionRegenerateRequest,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    executor: PipelineExecutor = Depends(get_caption_executor)
 ):
     """Regenerate a caption with new settings or just new creativity"""
     
@@ -1212,7 +1215,7 @@ async def regenerate_caption(
     logger.info(f"DEBUG: Caption data being sent: {caption_data}")
     
     # Start background caption regeneration
-    await task_processor.start_caption_generation(new_caption_id, caption_data)
+    await task_processor.start_caption_generation(new_caption_id, caption_data, executor)
     
     # Return immediate response
     return CaptionResponse(

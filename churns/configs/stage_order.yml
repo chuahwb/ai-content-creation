@@ -16,6 +16,9 @@ refinement:
   - conditional_stage    # Execute specific refinement (subject_repair, text_repair, or prompt_refine)
   - save_outputs         # Persist PNG + update refinement list
 
+caption:
+  - caption              # Generate context-aware social media captions
+
 # Legacy support - 'stages' key defaults to 'generation'
 stages:
   - image_eval    # Vision-LLM subject analysis  

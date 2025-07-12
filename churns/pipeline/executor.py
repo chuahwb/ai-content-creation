@@ -84,7 +84,7 @@ class PipelineExecutor:
         
         return summary
     
-    def _inject_clients_into_stage(self, stage_module) -> None:
+    def _inject_clients_into_stage(self, stage_module, ctx: Optional[PipelineContext] = None) -> None:
         """Inject clients and configuration into a specific stage module."""
         # Inject image evaluation clients
         if hasattr(stage_module, 'instructor_client_img_eval'):
@@ -120,6 +120,12 @@ class PipelineExecutor:
         if hasattr(stage_module, 'base_llm_client_image_assessment'):
             stage_module.base_llm_client_image_assessment = self.clients.get('base_llm_client_image_assessment')
         
+        # Inject caption clients
+        if hasattr(stage_module, 'instructor_client_caption'):
+            stage_module.instructor_client_caption = self.clients.get('instructor_client_caption')
+        if hasattr(stage_module, 'base_llm_client_caption'):
+            stage_module.base_llm_client_caption = self.clients.get('base_llm_client_caption')
+        
         # Inject model configuration and parsing flags
         model_config = self.clients.get('model_config', {})
         if hasattr(stage_module, 'IMG_EVAL_MODEL_ID'):
@@ -139,6 +145,18 @@ class PipelineExecutor:
             stage_module.IMAGE_ASSESSMENT_MODEL_PROVIDER = model_config.get('IMAGE_ASSESSMENT_MODEL_PROVIDER')
         if hasattr(stage_module, 'IMAGE_GENERATION_MODEL_ID'):
             stage_module.IMAGE_GENERATION_MODEL_ID = model_config.get('IMAGE_GENERATION_MODEL_ID')
+        if hasattr(stage_module, 'CAPTION_MODEL_ID'):
+            # Use dynamic model from context if available, otherwise use default from config
+            if ctx and hasattr(ctx, 'caption_model_id') and ctx.caption_model_id:
+                stage_module.CAPTION_MODEL_ID = ctx.caption_model_id
+                # Extract provider from model ID (e.g., "openai/gpt-4.1" -> "openai")
+                if "/" in ctx.caption_model_id:
+                    stage_module.CAPTION_MODEL_PROVIDER = ctx.caption_model_id.split("/")[0]
+                else:
+                    stage_module.CAPTION_MODEL_PROVIDER = model_config.get('CAPTION_MODEL_PROVIDER')
+            else:
+                stage_module.CAPTION_MODEL_ID = model_config.get('CAPTION_MODEL_ID')
+                stage_module.CAPTION_MODEL_PROVIDER = model_config.get('CAPTION_MODEL_PROVIDER')
         
         # Inject parsing configuration
         if hasattr(stage_module, 'FORCE_MANUAL_JSON_PARSE'):
@@ -171,7 +189,7 @@ class PipelineExecutor:
                     stage_module = importlib.import_module(f"churns.stages.{stage_name}")
                 
                 # Inject clients into stage
-                self._inject_clients_into_stage(stage_module)
+                self._inject_clients_into_stage(stage_module, ctx)
                 
                 # Execute stage
                 stage_module.run(ctx)
@@ -245,7 +263,7 @@ class PipelineExecutor:
                 stage_module = importlib.import_module(f"churns.stages.{actual_stage_name}")
                 
                 # Inject clients into stage
-                self._inject_clients_into_stage(stage_module)
+                self._inject_clients_into_stage(stage_module, ctx)
                 
                 # Stage is async, call directly (all stages should be async)
                 
@@ -318,7 +336,7 @@ class PipelineExecutor:
         
         try:
             stage_module = importlib.import_module(f"churns.stages.{stage_name}")
-            self._inject_clients_into_stage(stage_module)
+            self._inject_clients_into_stage(stage_module, ctx)
             stage_module.run(ctx)
             ctx.log(f"Stage {stage_name} completed successfully")
         except Exception as e:

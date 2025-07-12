@@ -858,8 +858,14 @@ async def run(ctx: PipelineContext) -> None:
         # Validate we have the required data before proceeding
         try:
             strategy_data = _safe_extract_strategy_data(strategy)
-            main_subject = _extract_main_subject(ctx, visual_concept)
-            _validate_required_data(strategy_data, visual_data, main_subject)
+            # Remove duplicate call - _extract_main_subject is already called in _get_analyst_user_prompt
+            # main_subject = _extract_main_subject(ctx, visual_concept)
+            # Just validate strategy data here since main_subject validation happens in _get_analyst_user_prompt
+            if not strategy_data.get('target_audience'):
+                raise ValueError("Missing required target_audience in marketing strategy")
+            if not strategy_data.get('target_objective'):
+                raise ValueError("Missing required target_objective in marketing strategy")
+            # _validate_required_data(strategy_data, visual_data, main_subject)
         except ValueError as e:
             ctx.log(f"ERROR: Cannot generate caption for image {i+1}: {e}")
             continue
