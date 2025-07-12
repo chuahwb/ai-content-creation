@@ -179,6 +179,9 @@ yarn-error.log*
 .next/
 out/
 
+# TypeScript
+*.tsbuildinfo
+
 # Docker
 .dockerignore
 
