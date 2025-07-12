@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
         # Initialize the shared PipelineExecutor instances for all modes
         logger.info("🔧 Initializing shared PipelineExecutor instances...")
         
-        # Create executors for each mode
+        # Create executors for each mode (they will share the same client configuration)
         app.state.generation_executor = PipelineExecutor(mode="generation")
         logger.info("✅ Generation executor initialized successfully")
         
@@ -42,18 +42,13 @@ async def lifespan(app: FastAPI):
             "caption": app.state.caption_executor
         }
         
-        total_configured = 0
-        total_clients = 0
+        # Get client summary from the first executor (they all share the same clients)
+        client_summary = app.state.generation_executor.get_client_summary()
+        configured_count = sum(1 for status in client_summary.values() if "✅" in status)
+        total_clients_per_executor = len(client_summary)
         
-        for mode, executor in executors.items():
-            client_summary = executor.get_client_summary()
-            configured_count = sum(1 for status in client_summary.values() if "✅" in status)
-            mode_total = len(client_summary)
-            total_configured += configured_count
-            total_clients += mode_total
-            logger.info(f"📊 {mode.capitalize()} executor ready: {configured_count}/{mode_total} clients configured")
-        
-        logger.info(f"🎯 All executors ready: {total_configured}/{total_clients} total clients configured across 3 modes")
+        logger.info(f"📊 Shared client configuration: {configured_count}/{total_clients_per_executor} clients configured")
+        logger.info(f"🎯 All executors ready: {len(executors)} executors sharing {configured_count} configured clients")
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize PipelineExecutors: {e}")

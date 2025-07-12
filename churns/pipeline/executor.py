@@ -38,8 +38,17 @@ class PipelineExecutor:
         self.stages = self._load_stage_config()
         
         # Load and configure API clients
+        from ..core.client_config import _client_config
+        was_already_configured = _client_config is not None
+        
         self.clients = get_configured_clients(env_path)
-        print(f"🔧 Pipeline executor initialized for {mode} mode with {len(self.stages)} stages and {len([k for k, v in self.clients.items() if v is not None and k not in ['model_config', 'force_manual_json_parse', 'instructor_tool_mode_problem_models']])} configured clients")
+        
+        configured_count = len([k for k, v in self.clients.items() if v is not None and k not in ['model_config', 'force_manual_json_parse', 'instructor_tool_mode_problem_models']])
+        
+        if was_already_configured:
+            print(f"🔧 Pipeline executor initialized for {mode} mode with {len(self.stages)} stages (sharing {configured_count} configured clients)")
+        else:
+            print(f"🔧 Pipeline executor initialized for {mode} mode with {len(self.stages)} stages and {configured_count} configured clients")
     
     def _load_stage_config(self) -> List[str]:
         """Load stage execution order from YAML config based on mode."""
