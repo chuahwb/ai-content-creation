@@ -140,7 +140,7 @@ async def call_openai_images_edit(
     ctx.log(f"Calling OpenAI Images Edit API ({model_id})")
     ctx.log(f"Operation: {operation_type}, Size: {image_size}")
     if mask_path:
-        ctx.log("Using mask for regional editing")
+        ctx.log(f"Using mask for regional editing - {mask_path}")
     
     try:
         # Prepare API call parameters
@@ -149,6 +149,7 @@ async def call_openai_images_edit(
             "prompt": enhanced_prompt,
             "n": 1,
             "size": image_size,
+            "quality": 'high',
         }
         
         # Call OpenAI images.edit API
@@ -158,9 +159,6 @@ async def call_openai_images_edit(
                 image_gen_client.images.edit,
                 image=[
                     open(ctx.base_image_path, "rb"),
-                    open(ctx.reference_image_path, "rb")
-                ] if ctx.reference_image_path else [
-                    open(ctx.base_image_path, "rb")
                 ],
                 mask=open(mask_path, "rb"),
                 **api_params
@@ -366,6 +364,7 @@ def save_refinement_result(ctx: PipelineContext, image_bytes: bytes) -> str:
             ctx.log("Created legacy compatibility symlink")
         else:
             # Fallback to copy on systems without symlink support
+            ctx.log("Using fallback copy for symlink legacy compatibility")
             shutil.copy2(output_path, legacy_path)
             ctx.log("Created legacy compatibility copy")
     except Exception as e:
@@ -411,7 +410,8 @@ def _save_refinement_metadata(ctx: PipelineContext, refinement_dir: Path) -> Non
         },
         "inputs": {
             "instructions": getattr(ctx, 'instructions', None),
-            "prompt": getattr(ctx, 'prompt', None),
+            "original_prompt": getattr(ctx, 'prompt', None),
+            "refined_prompt": getattr(ctx, 'refined_prompt', None),
             "mask_coordinates": getattr(ctx, 'mask_coordinates', None),  # Legacy
             "mask_file_path": getattr(ctx, 'mask_file_path', None),  # New approach
             "creativity_level": getattr(ctx, 'creativity_level', None),

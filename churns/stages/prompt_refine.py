@@ -15,8 +15,9 @@ IMPLEMENTATION GUIDANCE:
 import os
 import asyncio
 from pathlib import Path
+from PIL import Image
 from typing import Dict, Any, Optional, List, Tuple
-
+import logging
 from ..pipeline.context import PipelineContext
 from ..core.client_config import get_configured_clients
 from .refinement_utils import (
@@ -31,10 +32,26 @@ from .refinement_utils import (
     get_image_ctx_and_main_object,
     RefinementError
 )
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, BinaryContent
 
-# Global variables for API clients (consistent with other stages)
-image_gen_client = None
+# Setup Logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(name)s] [%(levelname)s] [%(message)s]"
+)
+logger = logging.getLogger("prompt_refine")
 
+# Setup Image Generation Client
+image_gen_client = get_configured_clients().get('image_gen_client')
+
+
+class PromptRefinementAgentInput(BaseModel):
+    prompt: str = Field(..., description="The original user-written prompt that needs refinement.")
+    visual_concept: Dict = Field(
+        default_factory=dict,
+        description="Optional visual context or metadata related to the prompt. Used for contextual refinement if relevant."
+    )
 
 async def run(ctx: PipelineContext) -> None:
     """
@@ -54,7 +71,7 @@ async def run(ctx: PipelineContext) -> None:
     - ctx.refinement_cost: Cost of the operation
     """
     
-    ctx.log("Starting prompt refinement stage...")
+    logger.info("Starting prompt refinement stage...")
     
     try:
         # Validate required inputs using shared utility
@@ -66,26 +83,39 @@ async def run(ctx: PipelineContext) -> None:
         # Load and prepare image using shared utility
         base_image = load_and_prepare_image(ctx, type='base')
         
-        # Handle mask (either file or coordinates)
+        # Refine user prompt
+        refined_prompt = await _refine_user_prompt(ctx)
+        ctx.refined_prompt = refined_prompt
+        
+        # Handle mask (No coordinates will be passed)
         mask_path = None
-        editing_type = "global"
+        editing_type = "global" # Indicates the type of image editing region
+        
+        logger.info(f"Mask File Path = {ctx.mask_file_path}")
         
         # Prefer mask file over coordinates (new approach)
         if ctx.mask_file_path and os.path.exists(ctx.mask_file_path):
             mask_path = ctx.mask_file_path
             editing_type = "regional"
-            ctx.log(f"Using provided mask file: {mask_path}")
-        elif ctx.mask_coordinates:
-            # Legacy support: generate mask from coordinates
-            mask_path, editing_type = _prepare_regional_mask(ctx, base_image)
+            # Convert selected region to fully transparent areas (e.g. where alpha is zero)
+            _convert_region_alpha(mask_path)
+            logger.info(f"Using provided mask file: {mask_path}")
+
+        # TODO : Suggesestions - If the prompt is related to main subejct - maybe can pass the reference object in
         
         # Perform actual prompt refinement using OpenAI API
-        result_image_path = await _perform_prompt_refinement_api(ctx, base_image, mask_path)
+        # Determine image size using shared utility
+        image_size = determine_api_image_size(base_image.size)
+        ctx._api_image_size = image_size
         
-        # Cleanup mask file if it was generated from coordinates (legacy)
-        if mask_path and ctx.mask_coordinates and not ctx.mask_file_path:
-            cleanup_temporary_files([mask_path])
-            ctx.log(f"Cleaned up generated mask file: {mask_path}")
+        result_image_path = await call_openai_images_edit(
+            ctx=ctx,
+            enhanced_prompt=refined_prompt,
+            image_size=image_size,
+            mask_path=mask_path,
+            image_gen_client=image_gen_client
+        )
+        
         
         # Check if we got a result
         if result_image_path and os.path.exists(result_image_path):
@@ -98,11 +128,12 @@ async def run(ctx: PipelineContext) -> None:
                     "editing_type": editing_type,
                     "has_mask": mask_path is not None,
                     "prompt_applied": ctx.prompt,
+                    "refine_prompt": refined_prompt,
                     "enhancement_approach": "balanced"
                 },
                 "error_context": None
             }
-            ctx.log(f"Prompt refinement completed successfully: {result_image_path}")
+            logger.info(f"Prompt refinement completed successfully: {result_image_path}")
         else:
             # This should not happen with the new error handling - if we get here, something unexpected occurred
             ctx.refinement_result = {
@@ -120,7 +151,7 @@ async def run(ctx: PipelineContext) -> None:
                     "is_retryable": True
                 }
             }
-            ctx.log("Prompt refinement API call completed but no result was generated")
+            logger.info("Prompt refinement API call completed but no result was generated")
         
         # Calculate and track costs using shared utilities
         ctx.refinement_cost = calculate_refinement_cost(
@@ -129,12 +160,12 @@ async def run(ctx: PipelineContext) -> None:
             has_mask=mask_path is not None,
             refinement_type="prompt refinement"
         )
-        track_refinement_cost(ctx, "prompt_refinement", ctx.prompt or "", duration_seconds=6.0)
+        track_refinement_cost(ctx, "prompt_refinement", ctx.refined_prompt or "", duration_seconds=6.0)
         
     except RefinementError as e:
         # Handle our custom refinement errors with detailed context
         error_msg = f"Prompt refinement failed: {e.message}"
-        ctx.log(error_msg)
+        logger.error(error_msg)
         
         # Set detailed error result with user-friendly information
         ctx.refinement_result = {
@@ -166,7 +197,7 @@ async def run(ctx: PipelineContext) -> None:
     except Exception as e:
         # Handle unexpected errors
         error_msg = f"Prompt refinement stage failed unexpectedly: {str(e)}"
-        ctx.log(error_msg)
+        logger.error(error_msg)
         
         # Set generic error result
         ctx.refinement_result = {
@@ -201,145 +232,156 @@ def _validate_prompt_refinement_inputs(ctx: PipelineContext) -> None:
     
     if not ctx.prompt:
         ctx.prompt = "Enhance the overall image quality and appeal"
-        ctx.log("No prompt provided, using default enhancement prompt")
+        logger.warning("No prompt provided, using default enhancement prompt")
 
 
-def _prepare_regional_mask(ctx: PipelineContext, base_image) -> Tuple[Optional[str], str]:
+def _crop_image_with_mask(base_image_path: str, mask_path: str) -> Optional[Tuple[str, str]]:
     """
-    Prepare regional mask for targeted editing if coordinates are provided.
-    Returns mask path and editing type.
-    """
+    Process the base image with the mask to create a transparent version where only
+    the white regions from the mask are kept in the base image.
     
+    Args:
+        base_image_path: Path to the base image
+        mask_path: Path to the mask image (white pixels indicate region to keep)
+        
+    Returns:
+        Tuple of (result_image_path, overlay_path) or None if processing fails
+    """
     try:
-        import json
-        mask_data = json.loads(ctx.mask_coordinates)
+        # Open images
+        base_img = Image.open(base_image_path).convert('RGBA')
+        mask_img = Image.open(mask_path).convert('L')  # Convert mask to grayscale
         
-        ctx.log(f"Creating regional mask from coordinates: {mask_data}")
+        # Create output directory if it doesn't exist
+        output_dir = Path(mask_path).parent
+        output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create mask using shared utility
-        mask_path = create_mask_from_coordinates(
-            mask_data, 
-            base_image.size,
-            ctx.base_run_dir
-        )
+        # 1. Create a fully transparent version of the base image
+        result = Image.new('RGBA', base_img.size, (0, 0, 0, 0))
         
-        if mask_path and os.path.exists(mask_path):
-            ctx.log(f"Regional mask created: {mask_path}")
-            return mask_path, "regional"
-        else:
-            ctx.log("Failed to create mask, falling back to global editing")
-            return None, "global"
-            
+        # 2. Convert mask to binary (0 or 255) and use as alpha channel
+        # White in mask (255) becomes opaque, black (0) becomes transparent
+        mask = mask_img.point(lambda x: 255 if x > 200 else 0, '1')
+        
+        # 3. Paste the base image onto the transparent image, using the mask
+        result.paste(base_img, (0, 0), mask)
+        
+        # 4. Save the result
+        result_path = str(output_dir / 'masked_region.png')
+        result.save(result_path, 'PNG')
+        
+        logger.info(f"Saved masked region to {result_path}")
+        
+        return result_path
+        
     except Exception as e:
-        ctx.log(f"Error creating regional mask: {e}. Using global editing.")
-        return None, "global"
+        logger.error(f"Error in _crop_image_with_mask: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+    except Exception as e:
+        logger.error(f"Error cropping image with mask: {str(e)}")
+        return None
 
+async def _refine_user_prompt(ctx: PipelineContext) -> str:
+    logger.info("-----Performing prompt refinement-----")
+    
+    # Create Object Idenfitifaction Agent
+    prompt_identify_agent = Agent(
+        'openai:gpt-4.1-mini',
+        retries=3,
+        system_prompt="""
+        You are an object identification assistant with vision capabilities.
 
-async def _perform_prompt_refinement_api(ctx: PipelineContext, base_image, mask_path: Optional[str]) -> str:
-    """
-    Perform prompt refinement using OpenAI's images.edit API.
-    Supports both global and regional editing based on mask presence.
-    Uses shared utilities for consistency with other refinement stages.
-    """
-    
-    from ..core.constants import IMAGE_GENERATION_MODEL_ID
-    ctx.log(f"Performing prompt refinement using {IMAGE_GENERATION_MODEL_ID or 'gpt-image-1'}...")
-    ctx.log(f"Prompt: {ctx.prompt}")
-    ctx.log(f"Editing type: {'Regional' if mask_path else 'Global'}")
-    ctx.log("Starting prompt refinement with balanced enhancement approach")
-    
-    # Prepare enhanced prompt using shared utility
-    enhanced_prompt = _prepare_prompt_refinement_prompt(ctx)
-    
-    # Determine image size using shared utility
-    image_size = determine_api_image_size(base_image.size)
-    
-    # Store API image size in context for metadata
-    ctx._api_image_size = image_size
-    
-    # Initialize client if not already done (lazy initialization)
-    global image_gen_client
-    if image_gen_client is None:
-        image_gen_client = get_configured_clients().get('image_gen_client')
-    
-    # Call OpenAI API using shared utility
-    result_image_path = await call_openai_images_edit(
-        ctx=ctx,
-        enhanced_prompt=enhanced_prompt,
-        image_size=image_size,
-        mask_path=mask_path,  # None for global, path for regional editing
-        image_gen_client=image_gen_client
+        You will be provided with:
+        1. Visual context about the image
+        2. A cropped region of interest from the image 
+
+        Your task is to identify the objects in the image by:
+        - Identifying vague references (e.g., "this," "that," "the object") in the original prompt by analyzing the cropped region, if provided
+        - If there are no vague reference then return the main subject from the input caption
+                
+        Example:
+        Original prompt: “Replace this with a book”
+        Cropped image shows a cup
+        Identification: “cup”
+        """
     )
     
-    return result_image_path
+    # Create Prompt Refinement Agent
+    prompt_refinement_agent = Agent(
+        'openai:gpt-4.1-mini',
+        retries=3,
+        system_prompt="""
+        You are a prompt refinement assistant with vision capabilities.
+
+        You will be provided with:
+        1. The user's original prompt with a description of the subject to be edited
+        2. Visual context about the image
+
+        Your task is to refine the user's original prompt by:
+        - Resolve any vague references (e.g., “this,” “that,” “the object”) in the original prompt by substituting them with the explicit object description provided
+        - Preserving the original intent and any technical constraints
+        - Ensuring the refined prompt is clear, concise, and actionable, with specific references to objects or elements in the visual contex
+        - Keep the refined prompt concise and actionable
+        
+        Example:
+        Original prompt: “Replace this with a book”
+        Identified object: “a white ceramic mug”
+        Refined prompt: “Replace the white ceramic mug with a closed hardcover book”
+        """
+    )
+
+    
+    # Get Image Visualization Context
+    image_ctx, _ = get_image_ctx_and_main_object(ctx)
+    
+    # Get Object Identification
+    identification_input = [
+        f"Original Prompt: {ctx.prompt}",
+    ]
+    
+        # Add cropped region if mask is available
+    if ctx.mask_file_path and os.path.exists(ctx.mask_file_path):
+        cropped_path = _crop_image_with_mask(ctx.base_image_path, ctx.mask_file_path)
+        image_bytes = open(cropped_path, "rb").read()
+        binary_content = BinaryContent(data=image_bytes, media_type='image/png')
+        identification_input.append(binary_content)
+
+    object_identification = await prompt_identify_agent.run(identification_input)
+    logger.info(f"Refine Object Identification = {object_identification.output}")
+    
+    # Prepare user input with prompt and visual context
+    base_prompt = f"Original Prompt: {ctx.prompt}\nIdentified Object: {object_identification.output}\nVisual Context: {image_ctx}"
+    
+    # Refine Prompt with visual context
+    response = await prompt_refinement_agent.run(base_prompt)
+    logger.info(f"Refined Prompt = {response.output}")
+    return response.output
 
 
-def _prepare_prompt_refinement_prompt(ctx: PipelineContext) -> str:
+def _convert_region_alpha(mask_path: str) -> None:
     """
-    Prepare an enhanced prompt for refinement that incorporates
-    the user prompt and context-appropriate guidance.
+    Convert selected region to fully transparent areas (e.g. where alpha is zero) 
     """
+    image = Image.open(mask_path)
     
-    base_prompt = ctx.prompt
+    # Ensure image in RGBA mode
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
     
-    # Get image context and main object using shared utility
-    image_ctx_json, main_obj = get_image_ctx_and_main_object(ctx)
+    # Get pixel data
+    pixels = image.load()
+    width, height = image.size
     
-    # Load marketing context if available
-    marketing_context = _load_marketing_context(ctx)
+    # Iterate over pixels and convert selected region to transparent
+    for x in range(width):
+        for y in range(height):
+            r, g, b, a = pixels[x, y]
+            if r == 255 and g == 255 and b == 255:  # If pixel is black
+                pixels[x, y] = (255, 255, 255, 0)  # Set alpha to 0 (fully transparent)
     
-    # Enhance prompt with context
-    enhanced_prompt = f"{base_prompt}. Apply enhancements while maintaining the original image's quality and aesthetic appeal"
-    
-    # Add marketing context if available
-    if marketing_context:
-        platform = marketing_context.get('platform', 'social media')
-        enhanced_prompt += f". Ensure the result is optimized for {platform}"
-        
-        if marketing_context.get('audience'):
-            enhanced_prompt += f" and appealing to {marketing_context['audience']}"
-    
-    # Add visual concept context for consistency
-    if image_ctx_json and 'visual_concept' in image_ctx_json:
-        enhanced_prompt += f". The main subject is {main_obj}. Maintain consistency with the original visual style and composition."
-    
-    # Apply balanced enhancement approach (no creativity level needed)
-    enhanced_prompt += ". Use a balanced approach that enhances the image quality while preserving its original character and style."
-    
-    # ctx.log(f"Enhanced refinement prompt: {enhanced_prompt}")
-    return enhanced_prompt
+    # Save the modified image
+    image.save(mask_path)
+    logger.info(f"Converted mask to fully transparent regions: {mask_path}")
 
-
-def _load_marketing_context(ctx: PipelineContext) -> Optional[Dict[str, Any]]:
-    """Load marketing context from parent run for refinement guidance."""
-    
-    try:
-        # Use original pipeline data if available (consistent with other stages)
-        if hasattr(ctx, 'original_pipeline_data') and ctx.original_pipeline_data:
-            pipeline_data = ctx.original_pipeline_data
-        else:
-            # Fallback to loading from metadata file
-            metadata_path = Path(ctx.base_run_dir) / "pipeline_metadata.json"
-            if metadata_path.exists():
-                import json
-                with open(metadata_path, 'r') as f:
-                    pipeline_data = json.load(f)
-            else:
-                return None
-        
-        # Extract relevant marketing context
-        marketing_context = {}
-        if "run_inputs" in pipeline_data:
-            inputs = pipeline_data["run_inputs"]
-            marketing_context.update({
-                "platform": inputs.get("platform_name"),
-                "audience": inputs.get("marketing_audience"),
-                "objective": inputs.get("marketing_objective"),
-                "voice": inputs.get("marketing_voice")
-            })
-        
-        return marketing_context if any(marketing_context.values()) else None
-        
-    except Exception as e:
-        ctx.log(f"Could not load marketing context: {e}")
-        return None 
