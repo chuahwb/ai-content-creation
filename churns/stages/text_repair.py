@@ -16,6 +16,7 @@ import os
 import re
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from pydantic_ai import Agent, BinaryContent
@@ -30,6 +31,7 @@ from .refinement_utils import (
     calculate_refinement_cost,
     track_refinement_cost,
     get_image_ctx_and_main_object,
+    get_reference_image_path,
     RefinementError
 )
 from sentence_transformers import SentenceTransformer, util
@@ -40,6 +42,63 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("text_repair")
+
+# Async model loading machinery
+sentence_transformer_model = None
+# Event to signal when model loading is complete
+model_loaded_event = asyncio.Event()
+
+async def async_load_sentence_transformer():
+    """
+    Asynchronously load the SentenceTransformer model in a background thread.
+    This prevents blocking the event loop during model initialization.
+    """
+    global sentence_transformer_model
+    try:
+        model_path = './churns/stages/artifacts/model'
+        logger.info(f"(Background) Attempting to load model from: {os.path.abspath(model_path)}")
+        
+        if not os.path.exists(model_path):
+            logger.error(f"Model path does not exist: {os.path.abspath(model_path)}")
+            raise FileNotFoundError(f"Model directory not found: {os.path.abspath(model_path)}")
+            
+        sentence_transformer_model = await asyncio.to_thread(
+            SentenceTransformer, model_path
+        )
+        logger.info("(Background) SentenceTransformer model loaded successfully")
+    except Exception as e:
+        logger.exception(f"Failed to load SentenceTransformer model: {e}")
+        raise
+    finally:
+        model_loaded_event.set()
+
+async def get_sentence_transformer_model():
+    """
+    Await until the model is loaded and ready for inference.
+    Returns:
+        The loaded SentenceTransformer model.
+    """
+    global sentence_transformer_model
+    
+    if sentence_transformer_model is None:
+        if model_loaded_event.is_set():
+            # If event is set but model is None, there was an error loading
+            raise RuntimeError("Failed to load SentenceTransformer model")
+            
+        logger.info("(Background) SentenceTransformer model not loaded yet, loading now...")
+        # If we get here, we need to load the model
+        await async_load_sentence_transformer()
+        
+    return sentence_transformer_model
+
+# Initialize model loading in a way that works for both sync and async contexts
+try:
+    # If we're in an async context with a running loop
+    loop = asyncio.get_running_loop()
+    loop.create_task(async_load_sentence_transformer())
+except RuntimeError:
+    # If no running loop, we'll use lazy loading when first requested
+    logger.info("No running event loop - model will be loaded on first request")
 
 # Setup Image Generation Client
 image_gen_client = None
@@ -68,6 +127,7 @@ async def run(ctx: PipelineContext) -> None:
     
     try:
         logger.info("Starting text repair stage...")
+        start_time = time.time()
         
         # Validate required inputs using shared utility
         validate_refinement_inputs(ctx, "text")
@@ -82,10 +142,10 @@ async def run(ctx: PipelineContext) -> None:
         analysis_result = await _perform_text_analysis(ctx)
         
         # Perform Similarity Check
-        similarity_check = _perform_similarity_check(ctx, analysis_result)
+        similarity_check = await _perform_similarity_check(ctx, analysis_result)
         
         # Perform actual text repair using OpenAI API
-        result_image_path = await _perform_text_repair(
+        result_image_path, image_prompt = await _perform_text_repair(
             ctx=ctx,
             analysis_result_json=analysis_result,
             cosine_sim=similarity_check,
@@ -100,13 +160,15 @@ async def run(ctx: PipelineContext) -> None:
                 "status": "completed", 
                 "output_path": result_image_path,
                 "modifications": {
+                    "image_prompt": image_prompt,
                     "text_corrected": True,
                     "design_preserved": True,
                     "instructions_applied": ctx.instructions
                 },
                 "error_context": None
             }
-            logger.info(f"Text repair completed successfully: {result_image_path}")
+            logger.info(f"Text repair completed successfully with path : {result_image_path}")
+            logger.info(f"Refinement Result : {ctx.refinement_result}")
         else:
             # This should not happen with the new error handling - if we get here, something unexpected occurred
             ctx.refinement_result = {
@@ -114,6 +176,7 @@ async def run(ctx: PipelineContext) -> None:
                 "status": "api_no_result",
                 "output_path": None,
                 "modifications": {
+                    "image_prompt": "",
                     "text_corrected": False,
                     "reason": "API call completed but no result was generated"
                 },
@@ -134,6 +197,8 @@ async def run(ctx: PipelineContext) -> None:
             refinement_type="text repair"
         )
         track_refinement_cost(ctx, "text_repair", ctx.instructions or "", duration_seconds=4.0)
+        end_time = time.time()
+        logger.info(f"Text repair completed in {end_time - start_time:.2f} seconds")
         
     except RefinementError as e:
         # Handle our custom refinement errors with detailed context
@@ -235,7 +300,6 @@ async def _perform_text_analysis(ctx: PipelineContext):
         _, main_obj = get_image_ctx_and_main_object(ctx)
 
         # Prepare prompt
-        # TODO: If any part of the analysis is not englsih then suggest improvements under corrections section
         analysis_prompt = f"""
         You are analyzing an image to extract embedded textual and branding elements, with a specific distinction between background and object-based content.
         
@@ -255,13 +319,12 @@ async def _perform_text_analysis(ctx: PipelineContext):
 
        2. From the main object (e.g., {main_obj}), extract:
         - `brand_name`: the brand name as printed on the object
-        - `object_description`: visible text inside the reference object, but excluding the brand name itself. Do not include repeated instances of the brand name. 
+        - `object_description`: visible text inside the main object, but excluding the brand name itself. Do not include repeated instances of the brand name. 
         - If no text is found, return an empty string (`""`) for the text fields.
 
         3. Text Correction and Language Handling:
         - If any extracted text (from background or object) contains:
             - Spelling mistakes, grammatical errors, or broken phrasing
-            - Text that is not in English (either fully or partially)
         Then provide suggested corrections under:
             - `corrections`: a dictionary with keys corresponding to the related field, mapping to corrected or translated English versions.
         - Corrections must preserve the intended meaning and visual context of the image.
@@ -283,8 +346,8 @@ async def _perform_text_analysis(ctx: PipelineContext):
             ]
         )
 
-        logger.info(f"Text analysis result: {response.data.__dict__}")
-        return response.data.__dict__
+        logger.info(f"Text analysis result: {response.output.__dict__}")
+        return response.output.__dict__
 
     except Exception as e:
         error_msg = f"Error in text analysis: {str(e)}"
@@ -292,14 +355,14 @@ async def _perform_text_analysis(ctx: PipelineContext):
         raise Exception(error_msg) from e
 
 
-def _perform_similarity_check(ctx: PipelineContext, analysis_result: Dict):
-    
-    # Load Model
+async def _perform_similarity_check(ctx: PipelineContext, analysis_result: Dict):
     logger.info("-----Performing similarity check-----")
-    model = SentenceTransformer('distiluse-base-multilingual-cased-v2')
 
     detected_img_txt = analysis_result.get('main_text', '')
+    logger.info(f"Detected Main Text = {detected_img_txt}")
+    
     task_description = ctx.original_pipeline_data.get('user_inputs').get('task_description')
+    logger.info(f"Task Desc = {task_description}")
     
     # Pre processing before passing to embedding model
     task_description = task_description.lower() if task_description else ""
@@ -308,14 +371,17 @@ def _perform_similarity_check(ctx: PipelineContext, analysis_result: Dict):
     # Remove special characters
     task_description = re.sub(r'[^a-z0-9\s]', '', task_description)
     detected_img_txt = re.sub(r'[^a-z0-9\s]', '', detected_img_txt)
+    logger.info(f"Processed Detected Text = {detected_img_txt}")
+    logger.info(f"Processed Task Desc = {task_description}")
     
-    logger.info(f"Task Desc = {task_description}")
-    logger.info(f"Detected Main Text = {detected_img_txt}")
+    if task_description and detected_img_txt:
+        model = await get_sentence_transformer_model()
+        emb1 = model.encode(task_description, convert_to_tensor=True)
+        emb2 = model.encode(detected_img_txt, convert_to_tensor=True)
 
-    emb1 = model.encode(task_description, convert_to_tensor=True)
-    emb2 = model.encode(detected_img_txt, convert_to_tensor=True)
-
-    cosine_sim = util.pytorch_cos_sim(emb1, emb2).item()
+        cosine_sim = util.pytorch_cos_sim(emb1, emb2).item()
+    else:
+        cosine_sim = 0
     logger.info(f"Cosine Similarity = {cosine_sim}")
     
     return cosine_sim
@@ -354,11 +420,15 @@ async def _perform_text_rephrase(ctx: PipelineContext, analysis_result: Dict):
     return rephrased_brand.data
     
 
-async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict, cosine_sim: float, base_image) -> Optional[str]:
+async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict, cosine_sim: float, base_image) -> tuple[str, str]:
     logger.info("-----Performing text repair-----")
     
     # Get main object
-    _, main_obj = get_image_ctx_and_main_object(ctx)
+    image_ctx_json, main_obj = get_image_ctx_and_main_object(ctx)
+    
+    # Get Promotional Text Visuals
+    promotional_text_visuals = image_ctx_json.get('promotional_text_visuals', '')
+    logger.info(f"Promotional Text Visuals: {promotional_text_visuals}")
 
     # Check User Inputs
     user_inputs = ctx.original_pipeline_data.get('user_inputs')
@@ -369,9 +439,14 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
     
     logger.info("User Inputs:")
     logger.info(f"- Render Text : {is_render_text}")
-    logger.info(f"- Task Describtion : {task_description}")
     logger.info(f"- Apply Branding : {is_apply_branding}")
-    logger.info(f"- Branding Elements : {branding_elements}")
+    
+    # Get analysis result
+    main_text = analysis_result_json.get('main_text', '')
+    detected_brand = analysis_result_json.get('brand_name', '')
+    detected_desc = analysis_result_json.get('object_description', '')  
+    corrections = analysis_result_json.get('corrections', '')
+    corrected_desc = corrections.get('object_description', '')
     
     # Initialize prompts variable
     prompt_replace_brand = ''
@@ -382,24 +457,16 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
     #  Check if brand name is same as branding elements (Assuming that brand name will exists in branding elements)
     #  If brand name is not same as branding elements then replace brand name with rephrased brand name
     if is_apply_branding:
-        logger.info("-----Enhanced Type : Brand Name-----")
-        detected_brand = analysis_result_json.get('brand_name', '')
-        detected_desc = analysis_result_json.get('object_description', '')  
-        corrections = analysis_result_json.get('corrections', '')
-        corrected_desc = corrections.get('object_description', '')
-
-        logger.info(f"Detected Brand Name : {detected_brand}")
-        logger.info(f"Detected Object Description : {detected_desc}")
-        logger.info(f"Corrections : {corrections}")
+        logger.info("-----Enhanced Type : Brand Name-----")        
 
         # If brand name is empty
         if detected_brand == '':
-            print(f"!!! Render Branding FAILED - Empty Brand Name Detected from Image.")
+            logger.warning(f"!!! Render Branding FAILED - Empty Brand Name Detected from Image.")
             prompt_replace_brand = f"Add the brand name '{branding_elements}' clearly to the main object ('{main_obj}') in a professional and visually integrated manner." 
         
         # Apply branding True but brand name is not found in image
         if branding_elements.lower() not in detected_brand.lower():
-            print(f"!!! Brand Name - ({branding_elements}) not found in generated image. ")   
+            logger.warning(f"!!! Brand Name - ({branding_elements}) not found in generated image. ")   
             
             # Perform text rephrasing
             rephrased_brand = await _perform_text_rephrase(ctx, analysis_result_json)
@@ -407,27 +474,23 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
             # Create prompt for brand name replacement
             # (Optional)  Create prompt for object description replacement if corrections are suggested by agent
             prompt_replace_brand = f"""Replace the current brand name '{detected_brand}' on the main object ('{main_obj}') with '{rephrased_brand}', preserving the original placement, style, and formatting."""
-            if corrected_desc: 
-                prompt_fixed_spelling = f"""Replace the current object description '{detected_desc}' on the main object  ('{main_obj}') with '{corrected_desc}', preserve the orignal placement, style, and formatting."""
-    
     
     # Check if render text is true
     if is_render_text:
         logger.info("-----Enhanced Type : Task Description-----")
-        detected_img_txt = analysis_result_json.get('main_text', '')
         # detected_img_txt = str(detected_img_txt).replace('\\n', ', ').replace('\n', ', ')
     
         # If no text generated in image although provided by user
-        if not detected_img_txt:
-            print("!!! Render Text FAILED - Empty Text Detected from Image")
+        if not main_text:
+            logger.warning("!!! Render Text FAILED - Empty Text Detected from Image")
             prompt_replace_text = _prepare_render_text_prompt(ctx)
             
         
         # If Generated text does not match the user input
-        elif task_description and task_description.lower() not in str(detected_img_txt).lower() and cosine_sim < 0.6:
-            print(f"!!! Task description text ('{task_description}') not found in generated image. \n")
+        elif task_description and task_description.lower() not in str(main_text).lower() and cosine_sim < 0.6:
+            logger.warning(f"!!! Task description text ('{task_description}') not found in generated image. \n")
             prompt_replace_text = _prepare_text_repair_prompt(
-                detected_txt=detected_img_txt, 
+                detected_txt=main_text, 
                 expected_txt=task_description
             )
     
@@ -446,9 +509,29 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
         elif prompt_fixed_spelling: 
             final_prompt += f"\n    Instructions: {prompt_fixed_spelling}"
     
+    
+    # Ensure the main text is same as pipeline metadata - promotional_text_visuals
+    if promotional_text_visuals: 
+        final_prompt += f"""\n 
+        Review the detected main text: "{main_text}", and verify whether it aligns semantically and contextually with the provided reference sentence: "{promotional_text_visuals}".
+        The `main_text` should be a direct or prominent phrase extracted from within `promotional_text_visuals`.
+        If it does not align update the main text accordingly, any edits made to the image should preserve the original placement, visual style, and formatting of the main text area.
+        """
+    
+    # Update to add suggested corrections of object description from analysis agent
+    if corrected_desc: 
+        final_prompt += f"""\n
+        Replace the detected object description "{detected_desc}" on the main object {main_obj} with the corrected version: "{corrected_desc}".
+        Preserve the original text's placement, style, and formatting on the object.
+        """
+    
+    final_prompt += f"""\n
+    Fix all spelling errors and abnormal text caused by image generation artifacts, including garbled, unclear, or unnatural phrases.
+    A reference image of the main object is provided to ensure all changes preserve its appearance and integrity. **DO NOT alter any other text**.
+    Return only the edited image with updated text if modifications are made.
+    """
     logger.info(f"Final Prompt: {final_prompt}")
     
-
     # Determine image size using shared utility
     image_size = determine_api_image_size(base_image.size)
     logger.info(f"Base Image Size: {image_size}")
@@ -459,10 +542,15 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
     # Call OpenAI API using shared utility (no mask for global text repair)
     # Only call if prompt exists 
     if final_prompt.strip():
+        logger.info(f"Calling OpenAI Text Repair API.")
         # Initialize client if not already done (lazy initialization)
         global image_gen_client
         if image_gen_client is None:
             image_gen_client = get_configured_clients().get('image_gen_client')
+        
+        # Pass in reference image here
+        reference_image_path = get_reference_image_path(ctx)
+        ctx.reference_image_path = reference_image_path
         
         result_image_path = await call_openai_images_edit(
             ctx=ctx,
@@ -483,7 +571,7 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
             is_retryable=False
         )
     
-    return result_image_path
+    return result_image_path, final_prompt
 
 
 def _prepare_text_repair_prompt(detected_txt: str, expected_txt: str) -> str:
@@ -493,10 +581,11 @@ def _prepare_text_repair_prompt(detected_txt: str, expected_txt: str) -> str:
 
     Instructions:
     1. Replace every instance of "{detected_txt}" with "{expected_txt}", preserving the original casing style — if the existing text is in all uppercase, the replacement must also appear in all uppercase.
-    2. Maintain the original font style, size, color, positioning, and alignment exactly as seen in the source image. The updated text must seamlessly match the formatting and spatial layout of the original.
-    3. Ensure the new text blends naturally with the surrounding design — matching textures, shadows, lighting, and perspective.
-    4. Do not alter any other elements of the image or introduce additional text.
-    5. Return only the edited image with the updated text.
+    2. Correct all spelling errors and resolve any text issues caused by image generation artifacts, such as random, garbled, or incoherent words.
+    3. Maintain the original font style, size, color, positioning, and alignment exactly as seen in the source image. The updated text must seamlessly match the formatting and spatial layout of the original.
+    4. Ensure the new text blends naturally with the surrounding design — matching textures, shadows, lighting, and perspective.
+    5. Do not alter any other elements of the image or introduce additional text.
+    6. Return only the edited image with the updated text.
     """
 
     return prompt

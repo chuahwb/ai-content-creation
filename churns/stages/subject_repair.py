@@ -26,6 +26,7 @@ from .refinement_utils import (
     calculate_refinement_cost,
     track_refinement_cost,
     get_image_ctx_and_main_object,
+    get_reference_image_path,
     RefinementError
 )
 
@@ -53,6 +54,9 @@ async def run(ctx: PipelineContext) -> None:
     try:
         # Validate required inputs using shared utility
         validate_refinement_inputs(ctx, "subject")
+        
+        # Reset reference image path if it is not passed by user
+        ctx.reference_image_path = get_reference_image_path(ctx)
         
         # Additional validation specific to subject repair
         _validate_subject_repair_inputs(ctx)
