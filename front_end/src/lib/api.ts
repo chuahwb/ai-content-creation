@@ -235,6 +235,18 @@ export class PipelineAPI {
     return `${API_BASE_URL}/api/v1/files/${runId}/${filename}`;
   }
 
+  // Get image as blob URL (works with ngrok by including headers)
+  static async getImageBlobUrl(runId: string, filename: string): Promise<string> {
+    try {
+      const response = await apiClient.get(`/files/${runId}/${filename}`, {
+        responseType: 'blob',
+      });
+      return URL.createObjectURL(response.data);
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
   // Download file as blob
   static async downloadFile(runId: string, filename: string): Promise<Blob> {
     try {
@@ -326,8 +338,8 @@ export class WebSocketManager {
   private onError: (error: Event) => void;
   private onClose: (event: CloseEvent) => void;
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 1000;
+  private maxReconnectAttempts = 3;
+  private reconnectDelay = 2000;
 
   constructor(
     runId: string,
@@ -370,16 +382,23 @@ export class WebSocketManager {
         };
 
         this.ws.onclose = (event) => {
-          console.log('WebSocket connection closed:', event);
+          console.log(`WebSocket connection closed for run ${this.runId}:`, event.code, event.reason);
           this.onClose(event);
           
-          // Attempt reconnection if not intentionally closed
-          if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
+          // Only attempt reconnection for certain error codes (not for intentional closures)
+          const shouldReconnect = event.code !== 1000 && // Normal closure
+                                 event.code !== 1001 && // Going away
+                                 event.code !== 1005 && // No status code
+                                 this.reconnectAttempts < this.maxReconnectAttempts;
+          
+          if (shouldReconnect) {
             setTimeout(() => {
               this.reconnectAttempts++;
-              console.log(`Attempting WebSocket reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+              console.log(`Attempting WebSocket reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts} for run ${this.runId}`);
               this.connect().catch(console.error);
             }, this.reconnectDelay * this.reconnectAttempts);
+          } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            console.log(`Max reconnection attempts reached for run ${this.runId}`);
           }
         };
       } catch (error) {

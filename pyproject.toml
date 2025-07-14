@@ -53,9 +53,6 @@ dependencies = [
     
     # Database
     "aiosqlite>=0.19.0",
-    
-    # Background tasks (simple in-process for prototype)
-    "asyncio-mqtt>=0.16.0",  # For event bus
 ]
 
 [project.optional-dependencies]

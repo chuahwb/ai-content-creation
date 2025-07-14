@@ -16,6 +16,7 @@ from openai import APIConnectionError, RateLimitError, APIStatusError
 from openai.types.chat import ChatCompletionMessageParam
 from tenacity import RetryError
 from pydantic import ValidationError
+import base64
 
 from ..pipeline.context import PipelineContext
 from ..models import ImageAnalysisResult
@@ -83,6 +84,16 @@ async def run(ctx: PipelineContext) -> None:
     content_type = image_ref.get("content_type")
     size = image_ref.get("size_bytes")
     image_content_base64 = image_ref.get("image_content_base64")
+    
+    # Check if we need to perform base64 encoding (deferred from task creation)
+    if not image_content_base64 and image_ref.get("_image_data_bytes"):
+        ctx.log("Performing deferred base64 encoding of image data...")
+        image_data_bytes = image_ref.get("_image_data_bytes")
+        image_content_base64 = base64.b64encode(image_data_bytes).decode('utf-8')
+        # Update the image reference for future use
+        image_ref["image_content_base64"] = image_content_base64
+        # Remove the temporary bytes data to save memory
+        del image_ref["_image_data_bytes"]
 
     task_type = ctx.task_type or "N/A"
     platform = ctx.target_platform.get("name") if ctx.target_platform else "N/A"

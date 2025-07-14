@@ -339,8 +339,11 @@ _client_config = None
 def get_client_config(env_path: Optional[str] = None) -> ClientConfig:
     """Get or create the global client configuration instance."""
     global _client_config
-    # Force fresh configuration for now to avoid caching issues
-    _client_config = ClientConfig(env_path)
+    
+    # Only create new configuration if none exists or env_path is different
+    if _client_config is None or (env_path and _client_config.env_path != env_path):
+        _client_config = ClientConfig(env_path)
+    
     return _client_config
 
 def get_configured_clients(env_path: Optional[str] = None) -> Dict[str, Any]:

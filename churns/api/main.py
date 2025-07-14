@@ -1,13 +1,12 @@
 import os
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from churns.api.routers import api_router
-from churns.api.database import create_db_and_tables
+from churns.api.lifespan import lifespan
 
 
 # Configure logging
@@ -16,26 +15,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    # Startup
-    logger.info("Starting Churns API...")
-    
-    # Create database tables
-    create_db_and_tables()
-    logger.info("Database tables created/verified")
-    
-    # Ensure data directories exist
-    os.makedirs("./data/runs", exist_ok=True)
-    logger.info("Data directories created/verified")
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down Churns API...")
 
 
 # Create FastAPI application

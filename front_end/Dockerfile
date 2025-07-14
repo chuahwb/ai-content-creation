@@ -12,8 +12,10 @@ COPY package.json package-lock.json* ./
 # Install production dependencies only
 RUN npm ci --only=production && npm cache clean --force
 
-# Install dev dependencies for build in separate layer
-FROM deps AS build-deps
+# Install all dependencies for build
+FROM base AS build-deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
 RUN npm ci && npm cache clean --force
 
 # Rebuild the source code only when needed
@@ -48,11 +50,14 @@ RUN mkdir -p ./public && chown nextjs:nodejs ./public
 
 # Copy production dependencies
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=deps --chown=nextjs:nodejs /app/package.json ./package.json
 
 # Copy built application
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/public/ ./public/
+
+# Copy public directory if it exists
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 # Ensure proper permissions
 RUN chown -R nextjs:nodejs /app
@@ -63,6 +68,10 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+
+# Add health check using Node.js
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" || exit 1
 
 # Run the application
 CMD ["node", "server.js"] 

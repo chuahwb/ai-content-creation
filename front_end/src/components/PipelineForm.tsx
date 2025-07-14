@@ -20,13 +20,9 @@ import {
   CircularProgress,
   Chip,
   Paper,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   Divider,
 } from '@mui/material';
 import {
-  ExpandMore as ExpandMoreIcon,
   CloudUpload as CloudUploadIcon,
   Send as SendIcon,
   Refresh as RefreshIcon,
@@ -37,7 +33,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
-import { PipelineFormData, PipelineRunResponse, Platform } from '@/types/api';
+import { PipelineFormData, PipelineRunResponse } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
 
 // Common ISO-639-1 language codes for validation
