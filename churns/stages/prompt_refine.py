@@ -30,6 +30,7 @@ from .refinement_utils import (
     create_mask_from_coordinates,
     cleanup_temporary_files,
     get_image_ctx_and_main_object,
+    get_uploaded_reference_image_path,
     RefinementError
 )
 from pydantic import BaseModel, Field
@@ -44,6 +45,29 @@ logger = logging.getLogger("prompt_refine")
 
 # Setup Image Generation Client (injected by PipelineExecutor)
 image_gen_client = None
+
+
+def _get_optional_reference_image(ctx: PipelineContext) -> Optional[str]:
+    """
+    Get the optional reference image path for prompt refinement.
+    
+    This function retrieves the reference image that was uploaded specifically
+    for this refinement request (not the original pipeline reference image).
+    
+    Returns:
+        Optional[str]: Path to the uploaded reference image if available, None otherwise
+        
+    Usage in prompt refinement:
+        reference_path = _get_optional_reference_image(ctx)
+        if reference_path:
+            # Use reference image in refinement process
+            # This could be passed to the OpenAI API or used for context
+            logger.info(f"Using uploaded reference image: {reference_path}")
+        else:
+            # Proceed without reference image
+            logger.info("No reference image provided for prompt refinement")
+    """
+    return get_uploaded_reference_image_path(ctx)
 
 
 class PromptRefinementAgentInput(BaseModel):

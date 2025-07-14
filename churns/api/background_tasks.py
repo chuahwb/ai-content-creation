@@ -601,12 +601,18 @@ class PipelineTaskProcessor:
                 else:
                     context.reference_image_path = None
                     logger.warning(f"No reference image path found in refinement data: {refinement_data}")
-            elif job.refinement_type == "text":
-                context.instructions = refinement_data.get("instructions")
             elif job.refinement_type == "prompt":
                 context.prompt = refinement_data.get("prompt")
                 context.mask_coordinates = refinement_data.get("mask_coordinates")  # Legacy support
                 context.mask_file_path = refinement_data.get("mask_file_path")  # New mask file support
+                
+                # Handle optional reference image for prompt refinement
+                reference_image_path = refinement_data.get("reference_image_path")
+                if reference_image_path:
+                    if os.path.isabs(reference_image_path):
+                        context.reference_image_path = reference_image_path
+                    else:
+                        context.reference_image_path = str(parent_run_dir / reference_image_path)
             
             # Load parent run metadata for context enhancement
             metadata_path = parent_run_dir / "pipeline_metadata.json"
@@ -633,7 +639,7 @@ class PipelineTaskProcessor:
                     stage_cost = 0.0
                     
                     # Get actual cost from context if calculated by stage
-                    if stage_name in ["subject_repair", "text_repair", "prompt_refine"]:
+                    if stage_name in ["subject_repair", "prompt_refine"]:
                         # Check if stage calculated its own cost
                         stage_cost = getattr(context, 'refinement_cost', 0.0)
                         if stage_cost == 0.0:
@@ -650,7 +656,7 @@ class PipelineTaskProcessor:
                             "stage_name": stage_name,
                             "cost_usd": stage_cost,
                             "duration_seconds": duration_seconds,
-                            "model_used": "gpt-image-1" if stage_name in ["subject_repair", "text_repair", "prompt_refine"] else "local"
+                            "model_used": "gpt-image-1" if stage_name in ["subject_repair", "prompt_refine"] else "local"
                         })
                         logger.info(f"Refinement stage {stage_name} cost: ${stage_cost:.6f}")
                 

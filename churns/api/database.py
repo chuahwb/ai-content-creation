@@ -30,7 +30,6 @@ class StageStatus(str, Enum):
 class RefinementType(str, Enum):
     """Refinement type enumeration"""
     SUBJECT = "subject"
-    TEXT = "text"
     PROMPT = "prompt"
 
 

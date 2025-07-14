@@ -25,14 +25,45 @@ from ..models import CostDetail
 # Global variables for API clients and configuration (injected by pipeline executor)
 # These will be set by the pipeline executor before stage execution
 
-def get_reference_image_path(ctx: PipelineContext):
-    if ctx.reference_image_path:
-        return ctx.reference_image_path
-    else:
-        user_inputs = ctx.original_pipeline_data.get('user_inputs')
-        image_reference = user_inputs.get('image_reference')
-        if image_reference:
-            return image_reference['saved_image_path_in_run_dir']
+def get_original_reference_image_path(ctx: PipelineContext) -> Optional[str]:
+    """
+    Get the original reference image path from the parent pipeline run.
+    Used by subject repair to access the reference image that was used during initial generation.
+    
+    Returns:
+        Optional[str]: Path to the original reference image if it exists, None otherwise
+    """
+    user_inputs = ctx.original_pipeline_data.get('user_inputs', {})
+    image_reference = user_inputs.get('image_reference')
+    if image_reference:
+        return image_reference.get('saved_image_path_in_run_dir')
+    return None
+
+def get_uploaded_reference_image_path(ctx: PipelineContext) -> Optional[str]:
+    """
+    Get the uploaded reference image path from the current refinement request.
+    Used by prompt refinement to access a newly uploaded reference image.
+    
+    Returns:
+        Optional[str]: Path to the uploaded reference image if provided, None otherwise
+    """
+    return getattr(ctx, 'reference_image_path', None)
+
+def get_reference_image_path(ctx: PipelineContext) -> Optional[str]:
+    """
+    Legacy function for backward compatibility.
+    Attempts to get uploaded reference image first, then falls back to original.
+    
+    Returns:
+        Optional[str]: Path to reference image if available, None otherwise
+    """
+    # First try uploaded reference image (for prompt refinement)
+    uploaded_path = get_uploaded_reference_image_path(ctx)
+    if uploaded_path:
+        return uploaded_path
+    
+    # Fall back to original reference image (for subject repair)
+    return get_original_reference_image_path(ctx)
 
 def get_image_ctx_and_main_object(ctx: PipelineContext):
     processing_ctx = ctx.original_pipeline_data.get('processing_context')

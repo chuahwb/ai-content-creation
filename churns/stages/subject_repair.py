@@ -26,7 +26,7 @@ from .refinement_utils import (
     calculate_refinement_cost,
     track_refinement_cost,
     get_image_ctx_and_main_object,
-    get_reference_image_path,
+    get_original_reference_image_path,
     RefinementError
 )
 
@@ -35,12 +35,19 @@ image_gen_client = None
 
 async def run(ctx: PipelineContext) -> None:
     """
-    Perform subject repair/replacement using reference image.
+    Perform subject repair/replacement using original reference image.
+    
+    This is a one-click repair that requires NO user input. It automatically:
+    - Uses the original reference image from the parent pipeline run
+    - Applies default repair instructions
+    - Only works if an original reference image exists
     
     REQUIRED CONTEXT INPUTS:
     - ctx.base_image_path: Path to the base image to modify
-    - ctx.reference_image_path: Path to reference image for subject
-    - ctx.instructions: User instructions for the repair
+    
+    AUTOMATIC CONTEXT SETUP:
+    - ctx.reference_image_path: Retrieved from original pipeline run
+    - ctx.instructions: Set to default repair instructions
     - ctx.refinement_type: Should be "subject"
 
     
@@ -55,8 +62,36 @@ async def run(ctx: PipelineContext) -> None:
         # Validate required inputs using shared utility
         validate_refinement_inputs(ctx, "subject")
         
-        # Reset reference image path if it is not passed by user
-        ctx.reference_image_path = get_reference_image_path(ctx)
+        # Get original reference image path from parent pipeline run
+        original_ref_path = get_original_reference_image_path(ctx)
+        
+        # Check if original reference image exists (required for subject repair)
+        if not original_ref_path or not os.path.exists(original_ref_path):
+            # Gracefully handle case where no original reference image exists
+            ctx.refinement_result = {
+                "type": "subject_repair",
+                "status": "not_available",
+                "output_path": None,
+                "modifications": {
+                    "subject_replaced": False,
+                    "reason": "No original reference image available for repair"
+                },
+                "error_context": {
+                    "error_type": "no_reference_image",
+                    "user_message": "Quick repair is not available for this image as no reference image was used during generation",
+                    "suggestion": "Try using the prompt refinement feature instead",
+                    "is_retryable": False
+                }
+            }
+            ctx.log("Subject repair not available - no original reference image found")
+            ctx.refinement_cost = 0.0
+            return
+        
+        # Set the reference image path and default instructions
+        ctx.reference_image_path = original_ref_path
+        ctx.instructions = "Replace main subject using reference image"
+        ctx.log(f"Using original reference image: {original_ref_path}")
+        ctx.log("Using default repair instructions (input-free operation)")
         
         # Additional validation specific to subject repair
         _validate_subject_repair_inputs(ctx)
@@ -75,7 +110,8 @@ async def run(ctx: PipelineContext) -> None:
                     "subject_replaced": True,
                     "background_preserved": True,
                     "reference_image_used": ctx.reference_image_path,
-                    "instructions_applied": ctx.instructions
+                    "instructions_applied": ctx.instructions,
+                    "operation_type": "automatic_repair"
                 },
                 "error_context": None
             }
@@ -166,17 +202,27 @@ async def run(ctx: PipelineContext) -> None:
 
 
 def _validate_subject_repair_inputs(ctx: PipelineContext) -> None:
-    """Validate inputs specific to subject repair (beyond common validation)."""
+    """
+    Validate inputs for subject repair (input-free operation).
+    
+    This validation assumes that:
+    - ctx.reference_image_path has been set to the original reference image
+    - ctx.instructions has been set to default instructions
+    - All inputs are automatically configured, no user input required
+    """
     
     if not ctx.base_image_path or not os.path.exists(ctx.base_image_path):
         raise ValueError("Base image path is required and must exist for subject repair")
     
+    # Note: reference_image_path should already be validated in the main run() function
+    # This is just a final safety check
     if not ctx.reference_image_path or not os.path.exists(ctx.reference_image_path):
-        raise ValueError("Reference image path is required and must exist for subject repair")
+        raise ValueError("Original reference image is required for subject repair but was not found")
     
+    # Instructions should already be set to default in the main run() function
     if not ctx.instructions:
         ctx.instructions = "Replace main subject using reference image"
-        ctx.log("No instructions provided, using default")
+        ctx.log("Instructions not set, using default (this should not happen in normal operation)")
 
 
 async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
