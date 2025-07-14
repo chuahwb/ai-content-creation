@@ -1,4 +1,12 @@
-# Database Architecture Improvement Plan
+# Database Architecture Improvement Plan (Archived)
+
+> **Status Update (December 2024): This plan is now considered ARCHIVED and OBSOLETE.**
+>
+> The critical performance issues described in this document (database contention, UI blocking) have been fully resolved by a subsequent, more direct architectural enhancement.
+>
+> **Root Cause Resolution**: The core problem was addressed by migrating the application to a **fully asynchronous database stack** (using `aiosqlite` and `async-sqlmodel`). This change ensures that no database operation blocks the `asyncio` event loop, allowing the API to respond instantly even while database writes are in flight.
+>
+> This solution was implemented as part of the `ENHANCEMENT_PLAN.md`, which proved to be a more effective and direct resolution than the caching or queue-based architectures proposed below. The proposals in this document are no longer necessary for solving the original problem.
 
 ## Executive Summary
 
