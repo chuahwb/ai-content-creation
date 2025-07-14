@@ -239,7 +239,7 @@ async def create_refinement(
     mask_data: Optional[str] = Form(None, description="JSON string of mask coordinates (legacy)"),
     
     # File uploads
-    reference_image: Optional[UploadFile] = File(None, description="Reference image for subject repair"),
+    reference_image: Optional[UploadFile] = File(None, description="Reference image for subject repair or prompt refinement"),
     mask_file: Optional[UploadFile] = File(None, description="Mask PNG file for regional editing"),
     
     session: AsyncSession = Depends(get_session),
@@ -453,6 +453,175 @@ async def list_refinements(
     )
 
 
+@api_router.get("/refinements/{job_id}/details")
+async def get_refinement_details(
+    job_id: str,
+    session: AsyncSession = Depends(get_session)
+):
+    """Get detailed metadata for a refinement job"""
+    
+    refinement = await session.get(RefinementJob, job_id)
+    if not refinement:
+        raise HTTPException(status_code=404, detail="Refinement job not found")
+    
+    # Get parent run details for context
+    parent_run = await session.get(PipelineRun, refinement.parent_run_id)
+    if not parent_run:
+        raise HTTPException(status_code=404, detail="Parent pipeline run not found")
+    
+    # Prepare detailed response based on refinement type
+    details = {
+        "job_id": refinement.id,
+        "parent_run_id": refinement.parent_run_id,
+        "refinement_type": refinement.refinement_type,
+        "status": refinement.status,
+        "created_at": refinement.created_at,
+        "completed_at": refinement.completed_at,
+        "cost_usd": refinement.cost_usd,
+        "duration_seconds": (refinement.completed_at - refinement.created_at).total_seconds() if refinement.completed_at and refinement.created_at else None,
+        "error_message": refinement.error_message,
+    }
+    
+    # Type-specific details
+    if refinement.refinement_type == "subject":
+        details.update({
+            "refinement_type_display": "Quick Repair",
+            "description": "Automatic subject enhancement using original reference image",
+            "user_input_required": False,
+            "reference_image_used": refinement.reference_image_path is not None,
+            "reference_image_source": "original" if refinement.reference_image_path else None,
+        })
+    elif refinement.refinement_type == "prompt":
+        details.update({
+            "refinement_type_display": "Custom Enhancement",
+            "description": "Custom prompt-based refinement with optional reference image and regional masking",
+            "user_input_required": True,
+            "user_prompt": refinement.prompt,
+            "instructions": refinement.instructions,
+            "mask_used": refinement.mask_data is not None,
+            "reference_image_used": refinement.reference_image_path is not None,
+            "reference_image_source": "uploaded" if refinement.reference_image_path else None,
+        })
+    
+    # Try to load comprehensive metadata from the job directory
+    try:
+        parent_run_dir = Path(f"./data/runs/{refinement.parent_run_id}")
+        job_metadata_path = parent_run_dir / "refinements" / refinement.id / "metadata.json"
+        
+        logger.info(f"Attempting to load metadata from: {job_metadata_path}")
+        logger.info(f"Parent run dir exists: {parent_run_dir.exists()}")
+        logger.info(f"Refinements dir exists: {(parent_run_dir / 'refinements').exists()}")
+        logger.info(f"Job dir exists: {(parent_run_dir / 'refinements' / refinement.id).exists()}")
+        logger.info(f"Metadata file exists: {job_metadata_path.exists()}")
+        
+        if job_metadata_path.exists():
+            logger.info(f"Loading metadata from: {job_metadata_path}")
+            with open(job_metadata_path, 'r') as f:
+                job_metadata = json.load(f)
+                
+            # Extract inputs section
+            inputs = job_metadata.get("inputs", {})
+            details["original_prompt"] = inputs.get("original_prompt")
+            details["ai_refined_prompt"] = inputs.get("refined_prompt")
+            details["instructions"] = inputs.get("instructions") or details.get("instructions")
+            details["mask_file_path"] = inputs.get("mask_file_path")
+            details["creativity_level"] = inputs.get("creativity_level")
+            
+            # Extract processing information
+            processing = job_metadata.get("processing", {})
+            details["model_used"] = processing.get("model_used")
+            details["api_image_size"] = processing.get("api_image_size")
+            details["operation_type"] = processing.get("operation_type", "global_editing")
+            
+            # Extract results information
+            results = job_metadata.get("results", {})
+            details["output_generated"] = results.get("output_generated", False)
+            details["reference_preserved"] = results.get("reference_preserved", False)
+            details["modifications"] = results.get("modifications", {})
+            
+            # Extract image information
+            images = job_metadata.get("images", {})
+            details["base_image_metadata"] = images.get("base_image_metadata", {})
+            details["reference_image_filename"] = images.get("reference_path")
+            
+            # Extract context information for better understanding
+            context = job_metadata.get("context", {})
+            original_pipeline_data = context.get("original_pipeline_data", {})
+            if original_pipeline_data:
+                user_inputs = original_pipeline_data.get("user_inputs", {})
+                processing_context = original_pipeline_data.get("processing_context", {})
+                
+                # Add original generation context
+                details["original_generation"] = {
+                    "mode": user_inputs.get("mode"),
+                    "platform_name": user_inputs.get("platform_name"),
+                    "task_type": user_inputs.get("task_type"),
+                    "creativity_level": user_inputs.get("creativity_level"),
+                    "has_image_reference": user_inputs.get("image_reference") is not None,
+                }
+                
+                # Add visual concept that led to the original image
+                if processing_context:
+                    generated_prompts = processing_context.get("generated_image_prompts", [])
+                    if generated_prompts and refinement.generation_index is not None:
+                        if 0 <= refinement.generation_index < len(generated_prompts):
+                            visual_concept = generated_prompts[refinement.generation_index]
+                            details["original_visual_concept"] = visual_concept
+                            logger.info(f"Added original visual concept for generation index {refinement.generation_index}")
+                
+            logger.info(f"Successfully loaded metadata for refinement {job_id}")
+        else:
+            logger.warning(f"Metadata file not found: {job_metadata_path}")
+            # Try to load basic metadata from parent run
+            parent_metadata_path = parent_run_dir / "pipeline_metadata.json"
+            if parent_metadata_path.exists():
+                logger.info(f"Loading parent metadata from: {parent_metadata_path}")
+                with open(parent_metadata_path, 'r') as f:
+                    parent_metadata = json.load(f)
+                    
+                # Extract what we can from parent metadata
+                processing_context = parent_metadata.get("processing_context", {})
+                user_inputs = parent_metadata.get("user_inputs", {})
+                
+                # Add original generation context
+                details["original_generation"] = {
+                    "mode": user_inputs.get("mode"),
+                    "platform_name": user_inputs.get("platform_name"),
+                    "task_type": user_inputs.get("task_type"),
+                    "creativity_level": user_inputs.get("creativity_level"),
+                    "has_image_reference": user_inputs.get("image_reference") is not None,
+                }
+                
+                # Add visual concept if available
+                if processing_context and refinement.generation_index is not None:
+                    generated_prompts = processing_context.get("generated_image_prompts", [])
+                    if generated_prompts and 0 <= refinement.generation_index < len(generated_prompts):
+                        visual_concept = generated_prompts[refinement.generation_index]
+                        details["original_visual_concept"] = visual_concept
+                        logger.info(f"Added original visual concept from parent metadata for generation index {refinement.generation_index}")
+                        
+                logger.info(f"Loaded fallback metadata from parent run")
+            else:
+                logger.warning(f"Parent metadata not found: {parent_metadata_path}")
+                
+    except Exception as e:
+        logger.error(f"Error loading metadata for refinement {job_id}: {str(e)}")
+        logger.error(f"Exception details: {e.__class__.__name__}: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Set basic fallback values
+        details["original_generation"] = {
+            "mode": "unknown",
+            "platform_name": "unknown",
+            "task_type": "unknown",
+            "creativity_level": "unknown",
+            "has_image_reference": False,
+        }
+    
+    return details
+
+
 @api_router.post("/refinements/{job_id}/cancel")
 async def cancel_refinement(
     job_id: str,
@@ -564,9 +733,7 @@ def _get_base_image_path(run_id: str, parent_image_id: str, parent_image_type: s
 def _generate_refinement_summary(refinement_type: RefinementType, prompt: Optional[str], instructions: Optional[str]) -> str:
     """Generate a brief summary of the refinement for UI display"""
     if refinement_type == RefinementType.SUBJECT:
-        return f"Subject repair: {instructions or 'Replace main subject'}"
-    elif refinement_type == RefinementType.TEXT:
-        return f"Text repair: {instructions or 'Fix text elements'}"
+        return "Quick repair: Automatic subject enhancement using original reference image"
     elif refinement_type == RefinementType.PROMPT:
         return f"Prompt refinement: {prompt or instructions or 'Refine image'}"
     else:

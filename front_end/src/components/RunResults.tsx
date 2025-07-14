@@ -44,6 +44,8 @@ import {
   Warning as WarningIcon,
   AutoFixHigh as AutoFixHighIcon,
   AutoAwesome as AutoAwesomeIcon,
+  Image as ImageIcon,
+  Info as InfoIcon,
 } from '@mui/icons-material';
 
 import toast from 'react-hot-toast';
@@ -61,6 +63,7 @@ import {
 } from '@/types/api';
 import { PipelineAPI, WebSocketManager } from '@/lib/api';
 import RefinementModal from './RefinementModal';
+import RefinementDetailsDialog from './RefinementDetailsDialog';
 import CaptionDialog from './CaptionDialog';
 import CaptionDisplay from './CaptionDisplay';
 import ImageCompareSlider from './ImageCompareSlider';
@@ -562,6 +565,14 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [refinementGroupsExpanded, setRefinementGroupsExpanded] = useState<Record<string, boolean>>({});
   const [showAllRefinementsInGroup, setShowAllRefinementsInGroup] = useState<Record<string, boolean>>({});
   const INITIAL_REFINEMENTS_PER_GROUP = 3;
+  
+  // Refinement details dialog state
+  const [refinementDetailsDialog, setRefinementDetailsDialog] = useState<{
+    open: boolean;
+    jobId: string | null;
+    details: any | null;
+    loading: boolean;
+  }>({ open: false, jobId: null, details: null, loading: false });
 
   // Use the existing PIPELINE_STAGES from the top of the file
   
@@ -966,6 +977,23 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     setRefinementModal({ open: false, imageIndex: null, imagePath: null, parentRefinementJobId: undefined });
   };
 
+  const openRefinementDetailsDialog = async (jobId: string) => {
+    setRefinementDetailsDialog({ open: true, jobId, details: null, loading: true });
+    
+    try {
+      const details = await PipelineAPI.getRefinementDetails(jobId);
+      setRefinementDetailsDialog(prev => ({ ...prev, details, loading: false }));
+    } catch (error: any) {
+      console.error('Failed to load refinement details:', error);
+      toast.error(`Failed to load refinement details: ${error.message}`);
+      setRefinementDetailsDialog(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const closeRefinementDetailsDialog = () => {
+    setRefinementDetailsDialog({ open: false, jobId: null, details: null, loading: false });
+  };
+
   const loadRefinements = async (showToastOnError: boolean = false, retryCount: number = 0) => {
     try {
       setRefinementsLoading(true);
@@ -1335,11 +1363,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const getRefinementTypeLabel = (refinementType: string): string => {
     switch (refinementType) {
       case 'subject':
-        return 'Subject Enhancement';
+        return 'Quick Repair';
       case 'text':
         return 'Text Enhancement';
       case 'prompt':
-        return 'Style Enhancement';
+        return 'Custom Enhancement';
       default:
         return 'Image Enhancement';
     }
@@ -1847,6 +1875,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                         const group = groupedRefinements[groupKey];
                         const firstRefinement = group[0];
                         const originalImageIndex = firstRefinement.ultimateParent.generationIndex;
+                        // Ensure we have a valid image - check both the index and that the image exists
                         const originalImage = generatedImages[originalImageIndex];
                         const isExpanded = refinementGroupsExpanded[groupKey] ?? true;
                         const showAllInGroup = showAllRefinementsInGroup[groupKey] ?? false;
@@ -1873,7 +1902,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                   {/* Parent Image Thumbnail */}
-                                  {originalImage?.image_path && (
+                                  {originalImage?.image_path ? (
                                     <ImageWithAuth
                                       runId={runId}
                                       imagePath={originalImage.image_path}
@@ -1887,6 +1916,23 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                       }}
                                       alt={`Original image option ${originalImageIndex + 1}`}
                                     />
+                                  ) : (
+                                    <Box
+                                      sx={{
+                                        width: 48,
+                                        height: 48,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        backgroundColor: 'grey.200',
+                                        borderRadius: 1,
+                                        border: 1,
+                                        borderColor: 'divider',
+                                        color: 'grey.500'
+                                      }}
+                                    >
+                                      <ImageIcon fontSize="small" />
+                                    </Box>
                                   )}
                                   
                                   <Box>
@@ -1894,7 +1940,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                       Option {originalImageIndex + 1} Refinements
                                     </Typography>
                                     <Typography variant="body2" color="textSecondary">
-                                      {group.length} refinement{group.length !== 1 ? 's' : ''} • Total cost: ${group.reduce((sum, r) => sum + (r.cost_usd || 0), 0).toFixed(4)}
+                                      {group.length} refinement{group.length !== 1 ? 's' : ''}
                                     </Typography>
                                   </Box>
                                 </Box>
@@ -2001,6 +2047,16 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                                   sx={{ fontSize: '0.75rem' }}
                                                 >
                                                   Download
+                                                </Button>
+                                                <Button
+                                                  size="small"
+                                                  startIcon={<InfoIcon />}
+                                                  onClick={() => openRefinementDetailsDialog(refinement.job_id)}
+                                                  color="info"
+                                                  variant="outlined"
+                                                  sx={{ fontSize: '0.75rem' }}
+                                                >
+                                                  Details
                                                 </Button>
                                                 <Button
                                                   size="small"
@@ -2908,6 +2964,15 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             });
           }, 2000);
         }}
+      />
+
+      {/* Refinement Details Dialog */}
+      <RefinementDetailsDialog
+        open={refinementDetailsDialog.open}
+        onClose={closeRefinementDetailsDialog}
+        details={refinementDetailsDialog.details}
+        loading={refinementDetailsDialog.loading}
+        jobId={refinementDetailsDialog.jobId}
       />
 
       {/* Caption Dialog */}

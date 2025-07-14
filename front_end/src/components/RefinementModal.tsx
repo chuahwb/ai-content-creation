@@ -10,8 +10,6 @@ import {
   Box,
   Typography,
   TextField,
-  Tabs,
-  Tab,
   Alert,
   Paper,
   Chip,
@@ -20,16 +18,17 @@ import {
   CircularProgress,
   Stack,
   ToggleButton,
+  Divider,
 } from '@mui/material';
 import {
   Close as CloseIcon,
   AutoFixHigh as AutoFixHighIcon,
   CloudUpload as CloudUploadIcon,
   Brush as BrushIcon,
-  TextFields as TextFieldsIcon,
   Image as ImageIcon,
   Info as InfoIcon,
   CropFree as CropFreeIcon,
+  BuildCircle as BuildCircleIcon,
 } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { PipelineAPI } from '@/lib/api';
@@ -44,31 +43,11 @@ interface RefinementModalProps {
   onRefinementSubmit: (refinementData: any) => void;
 }
 
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
-}
-
 interface MaskCoordinate {
   x: number;
   y: number;
   width: number;
   height: number;
-}
-
-function TabPanel({ children, value, index, ...other }: TabPanelProps) {
-  return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`refinement-tabpanel-${index}`}
-      aria-labelledby={`refinement-tab-${index}`}
-      {...other}
-    >
-      {value === index && <Box sx={{ pt: 2 }}>{children}</Box>}
-    </div>
-  );
 }
 
 export default function RefinementModal({
@@ -80,30 +59,20 @@ export default function RefinementModal({
   parentRefinementJobId,
   onRefinementSubmit
 }: RefinementModalProps) {
-  const [tabValue, setTabValue] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRepairSubmitting, setIsRepairSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Form state
-  const [subjectInstructions, setSubjectInstructions] = useState('');
-  const [referenceImage, setReferenceImage] = useState<File | null>(null);
-  const [textInstructions, setTextInstructions] = useState('');
   const [promptInstructions, setPromptInstructions] = useState('');
+  const [referenceImage, setReferenceImage] = useState<File | null>(null);
   
   // Regional editing state
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [maskCoordinates, setMaskCoordinates] = useState<MaskCoordinate | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null);
-
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-    setTabValue(newValue);
-    // Reset drawing mode when switching tabs
-    setIsDrawingMode(false);
-    setMaskCoordinates(null);
-  };
 
   const handleReferenceImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -278,28 +247,22 @@ export default function RefinementModal({
         formData.append('generation_index', imageIndex?.toString() || '0');
       }
 
-      // Tab-specific fields
-      if (tabValue === 0) { // Subject Repair
-        formData.append('refine_type', 'subject');
-        formData.append('instructions', subjectInstructions || 'Replace the main subject with a modern version');
-        if (referenceImage) {
-          formData.append('reference_image', referenceImage);
-        }
-      } else if (tabValue === 1) { // Text Repair
-        formData.append('refine_type', 'text');
-        formData.append('instructions', textInstructions || 'Fix and improve text elements');
-      } else if (tabValue === 2) { // Prompt Refinement
-        formData.append('refine_type', 'prompt');
-        formData.append('prompt', promptInstructions || 'Enhance the overall image quality');
-        
-        // Generate and attach mask file if coordinates are provided
-        if (maskCoordinates) {
-          const maskFile = await generateMaskFile();
-          if (maskFile) {
-            formData.append('mask_file', maskFile);
-          } else {
-            toast.error('Failed to generate mask file. Proceeding with global enhancement.');
-          }
+      // Prompt refinement fields
+      formData.append('refine_type', 'prompt');
+      formData.append('prompt', promptInstructions || 'Enhance the overall image quality and appeal');
+      
+      // Add optional reference image
+      if (referenceImage) {
+        formData.append('reference_image', referenceImage);
+      }
+      
+      // Generate and attach mask file if coordinates are provided
+      if (maskCoordinates) {
+        const maskFile = await generateMaskFile();
+        if (maskFile) {
+          formData.append('mask_file', maskFile);
+        } else {
+          toast.error('Failed to generate mask file. Proceeding with global enhancement.');
         }
       }
 
@@ -318,13 +281,55 @@ export default function RefinementModal({
     }
   };
 
+  const handleRepair = async () => {
+    setIsRepairSubmitting(true);
+    
+    try {
+      const formData = new FormData();
+      
+      // Common fields for subject repair
+      if (parentRefinementJobId) {
+        // Chain refinement: repairing a refined image
+        formData.append('parent_image_id', parentRefinementJobId);
+        formData.append('parent_image_type', 'refinement');
+      } else {
+        // Original refinement: repairing a generated image
+        formData.append('parent_image_id', `image_${imageIndex}`);
+        formData.append('parent_image_type', 'original');
+        formData.append('generation_index', imageIndex?.toString() || '0');
+      }
+
+      // Subject repair fields (completely input-free)
+      formData.append('refine_type', 'subject');
+      // Note: No instructions needed - subject repair is fully automatic
+
+      // Submit repair request
+      const result = await PipelineAPI.submitRefinement(runId, formData);
+      
+      toast.success('Quick repair started! Check progress in real-time.');
+      onRefinementSubmit(result);
+      handleClose();
+      
+    } catch (error: any) {
+      console.error('Repair submission error:', error);
+      
+      // Provide specific error messages for common subject repair issues
+      if (error.message && error.message.includes('reference image')) {
+        toast.error('Quick repair is not available - no reference image was used during generation');
+      } else if (error.message && error.message.includes('not available')) {
+        toast.error('Quick repair is not available for this image');
+      } else {
+        toast.error(error.message || 'Failed to start repair');
+      }
+    } finally {
+      setIsRepairSubmitting(false);
+    }
+  };
+
   const handleClose = () => {
     // Reset form state
-    setTabValue(0);
-    setSubjectInstructions('');
-    setReferenceImage(null);
-    setTextInstructions('');
     setPromptInstructions('');
+    setReferenceImage(null);
     setIsDrawingMode(false);
     setMaskCoordinates(null);
     setIsDrawing(false);
@@ -335,24 +340,8 @@ export default function RefinementModal({
     onClose();
   };
 
-  const getTabIcon = (index: number) => {
-    switch (index) {
-      case 0: return <ImageIcon />;
-      case 1: return <TextFieldsIcon />;
-      case 2: return <BrushIcon />;
-      default: return <AutoFixHighIcon />;
-    }
-  };
-
   const isFormValid = () => {
-    if (tabValue === 0) { // Subject Repair
-      return subjectInstructions.trim().length > 0;
-    } else if (tabValue === 1) { // Text Repair
-      return textInstructions.trim().length > 0;
-    } else if (tabValue === 2) { // Prompt Refinement
-      return promptInstructions.trim().length > 0;
-    }
-    return false;
+    return promptInstructions.trim().length > 0;
   };
 
   return (
@@ -364,8 +353,8 @@ export default function RefinementModal({
       PaperProps={{
         sx: { 
           borderRadius: 3,
-          height: '80vh',
-          maxHeight: '80vh',
+          height: '85vh',
+          maxHeight: '85vh',
           display: 'flex',
           flexDirection: 'column',
         }
@@ -412,35 +401,38 @@ export default function RefinementModal({
               alignItems: 'center', 
               mb: 2, 
               flexShrink: 0,
-              minHeight: '40px', // Reserve consistent space for button area
+              minHeight: '40px',
             }}>
               <Typography variant="h6" sx={{ fontWeight: 600 }}>
                 Current Image
               </Typography>
-              {/* Always render button container to prevent layout shift */}
               <Box sx={{ width: '40px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {tabValue === 2 && (
-                  <Tooltip title={isDrawingMode ? "Exit drawing mode" : "Draw region to refine"}>
-                    <ToggleButton
-                      value="draw"
-                      selected={isDrawingMode}
-                      onChange={toggleDrawingMode}
-                      size="small"
-                      sx={{ borderRadius: 2 }}
-                    >
-                      <CropFreeIcon fontSize="small" />
-                    </ToggleButton>
-                  </Tooltip>
-                )}
+                <Tooltip title={isDrawingMode ? "Exit drawing mode" : "Draw region to refine"}>
+                  <ToggleButton
+                    value="draw"
+                    selected={isDrawingMode}
+                    onChange={toggleDrawingMode}
+                    size="small"
+                    sx={{ 
+                      borderRadius: 2,
+                      transition: 'all 0.2s ease',
+                      '&:hover': {
+                        backgroundColor: 'primary.light',
+                        transform: 'scale(1.05)',
+                      }
+                    }}
+                  >
+                    <CropFreeIcon fontSize="small" />
+                  </ToggleButton>
+                </Tooltip>
               </Box>
             </Box>
             
             {imagePath ? (
               <>
-                {/* Fixed height image container to prevent layout shifts */}
                 <Box
                   sx={{
-                    height: 'calc(100% - 80px)', // Reserve space for buttons at bottom
+                    height: 'calc(100% - 80px)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -450,6 +442,7 @@ export default function RefinementModal({
                     borderColor: 'divider',
                     borderRadius: 2,
                     backgroundColor: 'white',
+                    transition: 'all 0.3s ease',
                   }}
                 >
                   <Box
@@ -472,12 +465,13 @@ export default function RefinementModal({
                         border: '2px dashed rgba(33, 150, 243, 0.3)',
                         borderRadius: 1,
                         zIndex: 0,
+                        animation: 'pulse 2s infinite',
                       } : {},
                     }}
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
-                    onMouseLeave={handleMouseUp} // Stop drawing if mouse leaves container
+                    onMouseLeave={handleMouseUp}
                   >
                     <Box
                       ref={imageRef}
@@ -492,18 +486,17 @@ export default function RefinementModal({
                         opacity: isDrawingMode ? 0.7 : 1,
                         transition: 'opacity 0.2s ease',
                         userSelect: 'none',
-                        pointerEvents: 'none', // Let parent handle mouse events
+                        pointerEvents: 'none',
                       }}
                       draggable={false}
                     />
                     
-                    {/* Improved mask overlay with proper bounds */}
+                    {/* Mask overlay */}
                     {maskCoordinates && imageRef.current && (
                       (() => {
                         const img = imageRef.current;
                         if (!img || !img.parentElement) return null;
                         
-                        // Calculate actual displayed image dimensions and position
                         const containerRect = img.parentElement.getBoundingClientRect();
                         const containerWidth = containerRect.width;
                         const containerHeight = containerRect.height;
@@ -513,20 +506,17 @@ export default function RefinementModal({
                         let displayedWidth, displayedHeight, offsetX, offsetY;
                         
                         if (imageAspectRatio > containerAspectRatio) {
-                          // Image is wider - constrained by width
                           displayedWidth = containerWidth;
                           displayedHeight = containerWidth / imageAspectRatio;
                           offsetX = 0;
                           offsetY = (containerHeight - displayedHeight) / 2;
                         } else {
-                          // Image is taller - constrained by height
                           displayedHeight = containerHeight;
                           displayedWidth = containerHeight * imageAspectRatio;
                           offsetX = (containerWidth - displayedWidth) / 2;
                           offsetY = 0;
                         }
                         
-                        // Convert normalized coordinates to pixel positions
                         const maskLeft = offsetX + (maskCoordinates.x * displayedWidth);
                         const maskTop = offsetY + (maskCoordinates.y * displayedHeight);
                         const maskWidth = maskCoordinates.width * displayedWidth;
@@ -544,6 +534,7 @@ export default function RefinementModal({
                               backgroundColor: 'rgba(33, 150, 243, 0.1)',
                               pointerEvents: 'none',
                               borderRadius: 1,
+                              animation: 'fadeIn 0.3s ease',
                             }}
                           />
                         );
@@ -552,7 +543,6 @@ export default function RefinementModal({
                   </Box>
                 </Box>
                 
-                {/* Always present button area to prevent layout shifts */}
                 <Box sx={{ 
                   height: '60px', 
                   mt: 1.5, 
@@ -561,24 +551,30 @@ export default function RefinementModal({
                   justifyContent: 'center',
                   flexShrink: 0,
                 }}>
-                  {maskCoordinates && tabValue === 2 ? (
+                  {maskCoordinates ? (
                     <Stack direction="row" spacing={1} alignItems="center">
                       <Chip 
                         label="Region Selected" 
                         color="primary" 
                         size="small" 
                         variant="outlined"
+                        sx={{ animation: 'fadeIn 0.3s ease' }}
                       />
                       <Button 
                         size="small" 
                         onClick={clearMask}
-                        sx={{ fontSize: '0.7rem' }}
+                        sx={{ 
+                          fontSize: '0.7rem',
+                          transition: 'all 0.2s ease',
+                          '&:hover': {
+                            transform: 'scale(1.05)',
+                          }
+                        }}
                       >
                         Clear
                       </Button>
                     </Stack>
                   ) : (
-                    // Invisible placeholder to maintain layout
                     <Box sx={{ height: '32px' }} />
                   )}
                 </Box>
@@ -600,186 +596,117 @@ export default function RefinementModal({
 
           {/* Right side - Refinement Options */}
           <Box sx={{ width: '60%', display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Refinement Type Tabs */}
-            <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 3, pt: 2, flexShrink: 0 }}>
-              <Tabs
-                value={tabValue}
-                onChange={handleTabChange}
-                variant="fullWidth"
-                sx={{ 
-                  '& .MuiTab-root': {
-                    fontWeight: 500,
-                    textTransform: 'none',
-                    fontSize: '0.95rem',
-                  }
-                }}
-              >
-                <Tab 
-                  icon={getTabIcon(0)} 
-                  label="Subject Repair" 
-                  iconPosition="start"
-                />
-                <Tab 
-                  icon={getTabIcon(1)} 
-                  label="Text Repair" 
-                  iconPosition="start"
-                />
-                <Tab 
-                  icon={getTabIcon(2)} 
-                  label="Prompt Refinement" 
-                  iconPosition="start"
-                />
-              </Tabs>
-            </Box>
-
-            {/* Tab Content */}
             <Box sx={{ 
               flex: 1, 
               p: 3, 
               overflow: 'auto',
-              minHeight: 0, // Allow flex child to shrink
+              minHeight: 0,
             }}>
-              {/* Subject Repair Tab */}
-              <TabPanel value={tabValue} index={0}>
-                <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <Stack spacing={2.5}>
-                    <Alert severity="info" icon={<InfoIcon />} sx={{ py: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
-                        Replace or modify the main subject while preserving background and composition
-                      </Typography>
-                    </Alert>
-                    
-                    <TextField
-                      fullWidth
-                      label="What would you like to change about the subject?"
-                      multiline
-                      rows={3}
-                      value={subjectInstructions}
-                      onChange={(e) => setSubjectInstructions(e.target.value)}
-                      placeholder="e.g., 'Replace the burger with a pizza', 'Make the person younger', 'Change to a different product'"
+              <Stack spacing={3}>
+                <Alert severity="info" icon={<InfoIcon />} sx={{ py: 1 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
+                    Apply global or regional enhancements to improve overall image quality and appearance
+                  </Typography>
+                </Alert>
+                
+                <TextField
+                  fullWidth
+                  label="How would you like to enhance the image? *"
+                  multiline
+                  rows={3}
+                  value={promptInstructions}
+                  onChange={(e) => setPromptInstructions(e.target.value)}
+                  placeholder="e.g., 'Add warm sunset lighting', 'Enhance colors and contrast', 'Improve image sharpness'"
+                  variant="outlined"
+                  required
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: 2,
+                      transition: 'all 0.2s ease',
+                      '&:hover': {
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                      },
+                      '&.Mui-focused': {
+                        boxShadow: '0 4px 12px rgba(102, 126, 234, 0.2)',
+                      }
+                    }
+                  }}
+                />
+
+                <Box>
+                  <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, mb: 1, fontSize: '0.875rem' }}>
+                    Reference Image (Optional)
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5, fontSize: '0.8rem', lineHeight: 1.3 }}>
+                    Upload a reference image to guide the refinement process
+                  </Typography>
+                  
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleReferenceImageUpload}
+                    style={{ display: 'none' }}
+                  />
+                  
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Button
                       variant="outlined"
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          borderRadius: 2,
+                      startIcon={<CloudUploadIcon />}
+                      onClick={() => fileInputRef.current?.click()}
+                      sx={{ 
+                        fontWeight: 500, 
+                        borderRadius: 2, 
+                        fontSize: '0.875rem',
+                        transition: 'all 0.2s ease',
+                        '&:hover': {
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
                         }
                       }}
-                    />
-
-                    <Box>
-                      <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600, mb: 1, fontSize: '0.875rem' }}>
-                        Reference Image (Optional)
-                      </Typography>
-                      <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5, fontSize: '0.8rem', lineHeight: 1.3 }}>
-                        Upload a reference image to guide the subject replacement
-                      </Typography>
-                      
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        onChange={handleReferenceImageUpload}
-                        style={{ display: 'none' }}
+                    >
+                      Choose Image
+                    </Button>
+                    
+                    {referenceImage && (
+                      <Chip 
+                        label={referenceImage.name}
+                        onDelete={() => setReferenceImage(null)}
+                        color="success"
+                        variant="outlined"
+                        size="small"
+                        sx={{ 
+                          maxWidth: 180, 
+                          fontSize: '0.75rem',
+                          animation: 'fadeIn 0.3s ease'
+                        }}
                       />
-                      
-                      <Stack direction="row" spacing={2} alignItems="center">
-                        <Button
-                          variant="outlined"
-                          startIcon={<CloudUploadIcon />}
-                          onClick={() => fileInputRef.current?.click()}
-                          sx={{ fontWeight: 500, borderRadius: 2, fontSize: '0.875rem' }}
-                        >
-                          Choose Image
-                        </Button>
-                        
-                        {referenceImage && (
-                          <Chip 
-                            label={referenceImage.name}
-                            onDelete={() => setReferenceImage(null)}
-                            color="success"
-                            variant="outlined"
-                            size="small"
-                            sx={{ maxWidth: 180, fontSize: '0.75rem' }}
-                          />
-                        )}
-                      </Stack>
-                    </Box>
+                    )}
                   </Stack>
                 </Box>
-              </TabPanel>
 
-              {/* Text Repair Tab */}
-              <TabPanel value={tabValue} index={1}>
-                <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <Stack spacing={2.5}>
-                    <Alert severity="info" icon={<InfoIcon />} sx={{ py: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
-                        Fix spelling errors, improve text clarity, and enhance text rendering quality
-                      </Typography>
-                    </Alert>
-                    
-                    <TextField
-                      fullWidth
-                      label="What text issues would you like to fix?"
-                      multiline
-                      rows={3}
-                      value={textInstructions}
-                      onChange={(e) => setTextInstructions(e.target.value)}
-                      placeholder="e.g., 'Fix spelling errors in the headline', 'Make the text more readable', 'Improve font clarity and contrast'"
-                      variant="outlined"
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          borderRadius: 2,
-                        }
-                      }}
-                    />
+                <Paper sx={{ 
+                  p: 2, 
+                  backgroundColor: 'success.light', 
+                  borderRadius: 2, 
+                  border: 1, 
+                  borderColor: 'success.main',
+                  transition: 'all 0.2s ease',
+                }}>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                    <CropFreeIcon sx={{ fontSize: 16, color: 'success.dark' }} />
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'success.dark', fontSize: '0.875rem' }}>
+                      Regional Editing (Optional)
+                    </Typography>
                   </Stack>
-                </Box>
-              </TabPanel>
-
-              {/* Prompt Refinement Tab - Optimized for no scrolling */}
-              <TabPanel value={tabValue} index={2}>
-                <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <Stack spacing={2.5}>
-                    <Alert severity="info" icon={<InfoIcon />} sx={{ py: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.875rem' }}>
-                        Apply global or regional enhancements to improve overall image quality and appearance
-                      </Typography>
-                    </Alert>
-                    
-                    <TextField
-                      fullWidth
-                      label="How would you like to enhance the image?"
-                      multiline
-                      rows={3}
-                      value={promptInstructions}
-                      onChange={(e) => setPromptInstructions(e.target.value)}
-                      placeholder="e.g., 'Add warm sunset lighting', 'Enhance colors and contrast', 'Improve image sharpness'"
-                      variant="outlined"
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          borderRadius: 2,
-                        }
-                      }}
-                    />
-
-                    {/* Regional Editing Instructions - Compact */}
-                    <Paper sx={{ p: 2, backgroundColor: 'success.light', borderRadius: 2, border: 1, borderColor: 'success.main' }}>
-                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                        <CropFreeIcon sx={{ fontSize: 16, color: 'success.dark' }} />
-                        <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'success.dark', fontSize: '0.875rem' }}>
-                          Regional Editing Available
-                        </Typography>
-                      </Stack>
-                      <Typography variant="body2" color="success.dark" sx={{ fontSize: '0.8rem', lineHeight: 1.3 }}>
-                        {maskCoordinates ? 
-                          "✓ Region selected! Refinement will be applied only to the selected area." :
-                          "Click the draw button above to select a specific region, or leave unselected for global enhancement."
-                        }
-                      </Typography>
-                    </Paper>
-                  </Stack>
-                </Box>
-              </TabPanel>
+                  <Typography variant="body2" color="success.dark" sx={{ fontSize: '0.8rem', lineHeight: 1.3 }}>
+                    {maskCoordinates ? 
+                      "✓ Region selected! Refinement will be applied only to the selected area." :
+                      "Click the draw button above to select a specific region, or leave unselected for global enhancement."
+                    }
+                  </Typography>
+                </Paper>
+              </Stack>
             </Box>
           </Box>
         </Box>
@@ -794,37 +721,91 @@ export default function RefinementModal({
         borderRadius: '0 0 12px 12px',
         gap: 1,
         flexShrink: 0,
+        justifyContent: 'space-between',
       }}>
-        <Button 
-          onClick={handleClose} 
-          variant="outlined"
-          disabled={isSubmitting}
-          sx={{ 
-            fontWeight: 500,
-            borderRadius: 2,
-            px: 3
-          }}
-        >
-          Cancel
-        </Button>
-        <Button 
-          onClick={handleSubmit}
-          variant="contained"
-          disabled={!isFormValid() || isSubmitting}
-          startIcon={isSubmitting ? <CircularProgress size={20} /> : <AutoFixHighIcon />}
-          sx={{ 
-            fontWeight: 500,
-            borderRadius: 2,
-            px: 3,
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            '&:hover': {
-              background: 'linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%)',
-            }
-          }}
-        >
-          {isSubmitting ? 'Starting Refinement...' : 'Start Refinement'}
-        </Button>
+        <Tooltip title="One-click repair using original reference image (only available if reference image was used during generation)">
+          <Button 
+            onClick={handleRepair}
+            variant="outlined"
+            disabled={isSubmitting || isRepairSubmitting}
+            startIcon={isRepairSubmitting ? <CircularProgress size={18} /> : <BuildCircleIcon />}
+            sx={{ 
+              fontWeight: 600,
+              borderRadius: 2,
+              px: 3,
+              py: 1,
+              borderColor: 'warning.main',
+              color: 'warning.dark',
+              backgroundColor: 'warning.light',
+              transition: 'all 0.2s ease',
+              '&:hover': {
+                backgroundColor: 'warning.main',
+                color: 'white',
+                transform: 'translateY(-1px)',
+                boxShadow: '0 4px 12px rgba(237, 108, 2, 0.3)',
+              },
+              '&:disabled': {
+                backgroundColor: 'grey.100',
+                borderColor: 'grey.300',
+                color: 'grey.500',
+              }
+            }}
+          >
+            {isRepairSubmitting ? 'Repairing...' : 'Quick Repair'}
+          </Button>
+        </Tooltip>
+        
+        <Stack direction="row" spacing={1}>
+          <Button 
+            onClick={handleClose} 
+            variant="outlined"
+            disabled={isSubmitting || isRepairSubmitting}
+            sx={{ 
+              fontWeight: 500,
+              borderRadius: 2,
+              px: 3,
+              transition: 'all 0.2s ease',
+              '&:hover': {
+                transform: 'translateY(-1px)',
+              }
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSubmit}
+            variant="contained"
+            disabled={!isFormValid() || isSubmitting || isRepairSubmitting}
+            startIcon={isSubmitting ? <CircularProgress size={20} /> : <AutoFixHighIcon />}
+            sx={{ 
+              fontWeight: 500,
+              borderRadius: 2,
+              px: 3,
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              transition: 'all 0.2s ease',
+              '&:hover': {
+                background: 'linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%)',
+                transform: 'translateY(-1px)',
+                boxShadow: '0 6px 16px rgba(102, 126, 234, 0.3)',
+              }
+            }}
+          >
+            {isSubmitting ? 'Starting Refinement...' : 'Start Refinement'}
+          </Button>
+        </Stack>
       </DialogActions>
+
+      <style jsx global>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes pulse {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 0.6; }
+        }
+      `}</style>
     </Dialog>
   );
 } 

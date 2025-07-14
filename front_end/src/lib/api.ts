@@ -269,6 +269,16 @@ export class PipelineAPI {
     }
   }
 
+  // Get refinement details for a specific job
+  static async getRefinementDetails(jobId: string): Promise<any> {
+    try {
+      const response = await apiClient.get(`/refinements/${jobId}/details`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
   // Submit refinement request
   static async submitRefinement(runId: string, formData: FormData): Promise<any> {
     try {
