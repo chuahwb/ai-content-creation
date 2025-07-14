@@ -667,11 +667,8 @@ def create_mask_from_coordinates(
             draw.polygon(points, fill=255)
             
         else:
-            # Use ctx.log if available, otherwise fallback to print
-            try:
-                ctx.log(f"Warning: Unsupported mask type: {mask_data.get('type')}")
-            except:
-                print(f"Warning: Unsupported mask type: {mask_data.get('type')}")
+            # Unsupported mask type - log warning and return None
+            print(f"Warning: Unsupported mask type: {mask_data.get('type')}")
             return None
         
         # Save mask to temporary file
@@ -686,9 +683,6 @@ def create_mask_from_coordinates(
         return str(mask_path)
         
     except Exception as e:
-        # Use ctx.log if available, otherwise fallback to print
-        try:
-            ctx.log(f"Warning: Failed to create mask from coordinates: {e}")
-        except:
-            print(f"Warning: Failed to create mask from coordinates: {e}")
+        # Log error and return None for failed mask creation
+        print(f"Warning: Failed to create mask from coordinates: {e}")
         return None 
