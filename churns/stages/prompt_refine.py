@@ -42,8 +42,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("prompt_refine")
 
-# Setup Image Generation Client
-image_gen_client = get_configured_clients().get('image_gen_client')
+# Setup Image Generation Client (injected by PipelineExecutor)
+image_gen_client = None
 
 
 class PromptRefinementAgentInput(BaseModel):

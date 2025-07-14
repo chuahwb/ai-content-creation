@@ -199,10 +199,10 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
     # Store API image size in context for metadata
     ctx._api_image_size = image_size
     
-    # Initialize client if not already done (lazy initialization)
+    # Use injected client (initialized by PipelineExecutor)
     global image_gen_client
     if image_gen_client is None:
-        image_gen_client = get_configured_clients().get('image_gen_client')
+        raise RuntimeError("image_gen_client not properly injected by PipelineExecutor")
     
     # Call OpenAI API using shared utility (no mask for subject repair)
     result_image_path = await call_openai_images_edit(

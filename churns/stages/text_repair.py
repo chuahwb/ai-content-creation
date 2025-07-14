@@ -543,10 +543,10 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
     # Only call if prompt exists 
     if final_prompt.strip():
         logger.info(f"Calling OpenAI Text Repair API.")
-        # Initialize client if not already done (lazy initialization)
+        # Use injected client (initialized by PipelineExecutor)
         global image_gen_client
         if image_gen_client is None:
-            image_gen_client = get_configured_clients().get('image_gen_client')
+            raise RuntimeError("image_gen_client not properly injected by PipelineExecutor")
         
         # Pass in reference image here
         reference_image_path = get_reference_image_path(ctx)
