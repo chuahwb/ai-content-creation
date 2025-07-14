@@ -1266,7 +1266,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     const summary = refinement.refinement_summary || '';
     const errorMessage = refinement.error_message || '';
     
-    // Handle successful completion
+    // Handle successful completion with output image
     if (status === 'COMPLETED' && refinement.image_path) {
       return { 
         type: 'success', 
@@ -1276,8 +1276,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       };
     }
     
-    // Handle legitimate "no changes needed" cases (completed but no output)
-    if (status === 'COMPLETED' && !refinement.image_path && summary.toLowerCase().includes('no changes needed')) {
+    // Handle legitimate "no changes needed" cases - check status field and summary
+    if (status === 'no_changes_needed' ||
+        (status === 'COMPLETED' && !refinement.image_path && summary.toLowerCase().includes('no changes needed')) ||
+        summary.toLowerCase().includes('no changes needed') ||
+        summary.toLowerCase().includes('no_changes_needed')) {
       return { 
         type: 'info', 
         message: 'No Changes Needed',
