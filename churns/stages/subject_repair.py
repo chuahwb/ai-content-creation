@@ -16,7 +16,7 @@ import os
 import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional
-from ..core.client_config import get_configured_clients
+
 from ..pipeline.context import PipelineContext
 from .refinement_utils import (
     validate_refinement_inputs,

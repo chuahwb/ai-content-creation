@@ -22,7 +22,7 @@ from typing import Dict, Any, Optional, List
 from pydantic_ai import Agent, BinaryContent
 from ..pipeline.context import PipelineContext
 from ..api.schemas import ImageAnalysisResult
-from ..core.client_config import get_configured_clients
+
 from .refinement_utils import (
     validate_refinement_inputs,
     load_and_prepare_image,

@@ -19,7 +19,7 @@ from PIL import Image
 from typing import Dict, Any, Optional, List, Tuple
 import logging
 from ..pipeline.context import PipelineContext
-from ..core.client_config import get_configured_clients
+
 from .refinement_utils import (
     validate_refinement_inputs,
     load_and_prepare_image, 
