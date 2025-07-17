@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from churns.api.database import (
     get_session, PipelineRun, PipelineStage, RefinementJob, RefinementType,
-    RunStatus, StageStatus, create_db_and_tables
+    RunStatus, StageStatus, create_db_and_tables, BrandPreset, PresetType
 )
 from churns.api.dependencies import get_executor, get_refinement_executor, get_caption_executor
 from churns.api.schemas import (
@@ -25,7 +25,9 @@ from churns.api.schemas import (
     ImageReferenceInput, MarketingGoalsInput, GeneratedImageResult,
     RefinementResponse, RefinementListResponse, RefinementResult,
     CaptionRequest, CaptionResponse, CaptionRegenerateRequest, CaptionSettings,
-    CaptionModelsResponse, CaptionModelOption
+    CaptionModelsResponse, CaptionModelOption,
+    BrandPresetCreateRequest, BrandPresetUpdateRequest, BrandPresetResponse,
+    BrandPresetListResponse, SavePresetFromResultRequest
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
@@ -43,6 +45,7 @@ api_router = APIRouter(prefix="/api/v1")
 runs_router = APIRouter(prefix="/runs", tags=["Pipeline Runs"])
 files_router = APIRouter(prefix="/files", tags=["File Operations"])
 ws_router = APIRouter(prefix="/ws", tags=["WebSocket"])
+presets_router = APIRouter(prefix="/brand-presets", tags=["Brand Presets"])
 
 
 @api_router.on_event("startup")
@@ -86,6 +89,10 @@ async def create_pipeline_run(
     
     # File upload
     image_file: Optional[UploadFile] = File(None, description="Reference image"),
+    
+    # Brand Preset support
+    preset_id: Optional[str] = Form(None, description="Brand preset ID to apply"),
+    overrides: Optional[str] = Form(None, description="JSON string of override values"),
     
     session: AsyncSession = Depends(get_session),
     executor: PipelineExecutor = Depends(get_executor)
@@ -162,6 +169,14 @@ async def create_pipeline_run(
             niche=marketing_niche
         )
     
+    # Parse overrides if provided
+    parsed_overrides = None
+    if overrides:
+        try:
+            parsed_overrides = json.loads(overrides)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON format for overrides")
+    
     # Create pipeline run request
     request = PipelineRunRequest(
         mode=mode,
@@ -176,7 +191,9 @@ async def create_pipeline_run(
         render_text=render_text,
         apply_branding=apply_branding,
         marketing_goals=marketing_goals,
-        language=language
+        language=language,
+        preset_id=preset_id,
+        overrides=parsed_overrides
     )
     
     # Create database record
@@ -1458,7 +1475,261 @@ async def list_captions(
     }
 
 
+# Brand Preset Endpoints
+@presets_router.post("", response_model=BrandPresetResponse)
+async def create_brand_preset(
+    request: BrandPresetCreateRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """Create a new brand preset"""
+    # TODO: Add user authentication and get user_id from auth context
+    # For now, using a hardcoded user_id for development
+    user_id = "dev_user_1"
+    
+    # Validate preset type
+    if request.preset_type not in [PresetType.INPUT_TEMPLATE, PresetType.STYLE_RECIPE]:
+        raise HTTPException(status_code=400, detail=f"Invalid preset type: {request.preset_type}")
+    
+    # Validate that appropriate data is provided based on preset type
+    if request.preset_type == PresetType.INPUT_TEMPLATE and not request.input_snapshot:
+        raise HTTPException(status_code=400, detail="input_snapshot is required for INPUT_TEMPLATE presets")
+    
+    if request.preset_type == PresetType.STYLE_RECIPE and not request.style_recipe:
+        raise HTTPException(status_code=400, detail="style_recipe is required for STYLE_RECIPE presets")
+    
+    # Create the preset
+    preset = BrandPreset(
+        name=request.name,
+        user_id=user_id,
+        preset_type=request.preset_type,
+        model_id=request.model_id,
+        pipeline_version=request.pipeline_version,
+        brand_colors=json.dumps(request.brand_colors) if request.brand_colors else None,
+        brand_voice_description=request.brand_voice_description,
+        input_snapshot=json.dumps(request.input_snapshot) if request.input_snapshot else None,
+        style_recipe=json.dumps(request.style_recipe) if request.style_recipe else None
+    )
+    
+    session.add(preset)
+    await session.commit()
+    await session.refresh(preset)
+    
+    return _convert_preset_to_response(preset)
+
+
+@presets_router.get("", response_model=BrandPresetListResponse)
+async def list_brand_presets(
+    preset_type: Optional[str] = None,
+    session: AsyncSession = Depends(get_session)
+):
+    """List all brand presets for the authenticated user"""
+    # TODO: Add user authentication and get user_id from auth context
+    user_id = "dev_user_1"
+    
+    # Build query
+    query = select(BrandPreset).where(BrandPreset.user_id == user_id)
+    
+    if preset_type:
+        if preset_type not in [PresetType.INPUT_TEMPLATE, PresetType.STYLE_RECIPE]:
+            raise HTTPException(status_code=400, detail=f"Invalid preset type: {preset_type}")
+        query = query.where(BrandPreset.preset_type == preset_type)
+    
+    # Order by most recently used, then by created date
+    query = query.order_by(
+        desc(BrandPreset.last_used_at),
+        desc(BrandPreset.created_at)
+    )
+    
+    result = await session.execute(query)
+    presets = result.scalars().all()
+    
+    return BrandPresetListResponse(
+        presets=[_convert_preset_to_response(p) for p in presets],
+        total=len(presets)
+    )
+
+
+@presets_router.get("/{preset_id}", response_model=BrandPresetResponse)
+async def get_brand_preset(
+    preset_id: str,
+    session: AsyncSession = Depends(get_session)
+):
+    """Get a specific brand preset"""
+    # TODO: Add user authentication and get user_id from auth context
+    user_id = "dev_user_1"
+    
+    result = await session.execute(
+        select(BrandPreset)
+        .where(BrandPreset.id == preset_id)
+        .where(BrandPreset.user_id == user_id)
+    )
+    preset = result.scalar_one_or_none()
+    
+    if not preset:
+        raise HTTPException(status_code=404, detail="Brand preset not found")
+    
+    return _convert_preset_to_response(preset)
+
+
+@presets_router.put("/{preset_id}", response_model=BrandPresetResponse)
+async def update_brand_preset(
+    preset_id: str,
+    request: BrandPresetUpdateRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """Update a brand preset with optimistic locking"""
+    # TODO: Add user authentication and get user_id from auth context
+    user_id = "dev_user_1"
+    
+    # Fetch the preset with user authorization
+    result = await session.execute(
+        select(BrandPreset)
+        .where(BrandPreset.id == preset_id)
+        .where(BrandPreset.user_id == user_id)
+    )
+    preset = result.scalar_one_or_none()
+    
+    if not preset:
+        raise HTTPException(status_code=404, detail="Brand preset not found")
+    
+    # Check version for optimistic locking
+    if preset.version != request.version:
+        raise HTTPException(
+            status_code=409, 
+            detail=f"Version mismatch. Current version is {preset.version}, provided version is {request.version}"
+        )
+    
+    # Update fields
+    if request.name is not None:
+        preset.name = request.name
+    if request.brand_colors is not None:
+        preset.brand_colors = json.dumps(request.brand_colors)
+    if request.brand_voice_description is not None:
+        preset.brand_voice_description = request.brand_voice_description
+    
+    # Increment version
+    preset.version += 1
+    preset.updated_at = datetime.utcnow()
+    
+    await session.commit()
+    await session.refresh(preset)
+    
+    return _convert_preset_to_response(preset)
+
+
+@presets_router.delete("/{preset_id}")
+async def delete_brand_preset(
+    preset_id: str,
+    session: AsyncSession = Depends(get_session)
+):
+    """Delete a brand preset"""
+    # TODO: Add user authentication and get user_id from auth context
+    user_id = "dev_user_1"
+    
+    # Fetch the preset with user authorization
+    result = await session.execute(
+        select(BrandPreset)
+        .where(BrandPreset.id == preset_id)
+        .where(BrandPreset.user_id == user_id)
+    )
+    preset = result.scalar_one_or_none()
+    
+    if not preset:
+        raise HTTPException(status_code=404, detail="Brand preset not found")
+    
+    await session.delete(preset)
+    await session.commit()
+    
+    return {"message": "Brand preset deleted successfully"}
+
+
+@runs_router.post("/{run_id}/save-as-preset", response_model=BrandPresetResponse)
+async def save_preset_from_result(
+    run_id: str,
+    request: SavePresetFromResultRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """Create a STYLE_RECIPE preset from a completed pipeline run"""
+    # TODO: Add user authentication and get user_id from auth context
+    user_id = "dev_user_1"
+    
+    # Get the pipeline run
+    result = await session.execute(
+        select(PipelineRun).where(PipelineRun.id == run_id)
+    )
+    run = result.scalar_one_or_none()
+    
+    if not run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    
+    if run.status != RunStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Can only save presets from completed runs")
+    
+    # Load the run metadata to extract the style recipe data
+    if not run.metadata_file_path or not os.path.exists(run.metadata_file_path):
+        raise HTTPException(status_code=400, detail="Run metadata not found")
+    
+    try:
+        with open(run.metadata_file_path, 'r') as f:
+            run_metadata = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run metadata: {str(e)}")
+    
+    # Extract style recipe data from the specified generation index
+    if request.generation_index >= len(run_metadata.get('generated_images', [])):
+        raise HTTPException(status_code=400, detail="Invalid generation index")
+    
+    # Build the style recipe from the run metadata
+    # TODO: Extract the actual style recipe data from the run metadata
+    # For now, using a simplified structure
+    style_recipe_data = {
+        "visual_concept": run_metadata.get('stage_outputs', {}).get('creative_expert', {}).get('visual_concept', {}),
+        "strategy": run_metadata.get('stage_outputs', {}).get('strategy', {}),
+        "style_guidance": run_metadata.get('stage_outputs', {}).get('style_guide', {}),
+        "final_prompt": run_metadata.get('stage_outputs', {}).get('prompt_assembly', {}).get('final_prompt', ''),
+        "generation_index": request.generation_index
+    }
+    
+    # Create the preset
+    preset = BrandPreset(
+        name=request.name,
+        user_id=user_id,
+        preset_type=PresetType.STYLE_RECIPE,
+        model_id=run.metadata_file_path.split('/')[-1].split('_')[0] if run.metadata_file_path else "unknown",  # Extract from filename
+        pipeline_version="1.0.0",  # TODO: Get from run metadata
+        brand_colors=json.dumps(request.brand_colors) if request.brand_colors else None,
+        brand_voice_description=request.brand_voice_description,
+        style_recipe=json.dumps(style_recipe_data)
+    )
+    
+    session.add(preset)
+    await session.commit()
+    await session.refresh(preset)
+    
+    return _convert_preset_to_response(preset)
+
+
+def _convert_preset_to_response(preset: BrandPreset) -> BrandPresetResponse:
+    """Convert a BrandPreset database model to a response model"""
+    return BrandPresetResponse(
+        id=preset.id,
+        name=preset.name,
+        preset_type=preset.preset_type,
+        version=preset.version,
+        model_id=preset.model_id,
+        pipeline_version=preset.pipeline_version,
+        usage_count=preset.usage_count,
+        created_at=preset.created_at,
+        last_used_at=preset.last_used_at,
+        brand_colors=json.loads(preset.brand_colors) if preset.brand_colors else None,
+        brand_voice_description=preset.brand_voice_description,
+        input_snapshot=json.loads(preset.input_snapshot) if preset.input_snapshot else None,
+        style_recipe=json.loads(preset.style_recipe) if preset.style_recipe else None
+    )
+
+
 # Include routers in main API router
 api_router.include_router(runs_router)
 api_router.include_router(files_router)
-api_router.include_router(ws_router) 
+api_router.include_router(ws_router)
+api_router.include_router(presets_router) 

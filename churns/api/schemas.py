@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, HttpUrl
 from datetime import datetime
-from churns.api.database import RunStatus, StageStatus, RefinementType
+from churns.api.database import RunStatus, StageStatus, RefinementType, PresetType
 
 
 class ImageReferenceInput(BaseModel):
@@ -46,6 +46,10 @@ class PipelineRunRequest(BaseModel):
     
     # Language control
     language: Optional[str] = Field(default='en', description="ISO-639-1 code of desired output language")
+    
+    # Brand Preset support
+    preset_id: Optional[str] = Field(default=None, description="ID of brand preset to apply")
+    overrides: Optional[Dict[str, Any]] = Field(default=None, description="Override values for preset fields")
 
 
 class RefinementRequest(BaseModel):
@@ -281,3 +285,69 @@ class CaptionResponse(BaseModel):
     settings_used: CaptionSettings = Field(description="Settings that were used to generate this caption")
     created_at: datetime = Field(description="When the caption was created")
     status: str = Field(description="Status of caption generation")
+
+
+# Brand Preset schemas
+class BrandPresetCreateRequest(BaseModel):
+    """Request model for creating a brand preset"""
+    name: str = Field(description="User-friendly name for the preset")
+    preset_type: str = Field(description="Type of preset: INPUT_TEMPLATE or STYLE_RECIPE")
+    
+    # Brand Kit fields (optional)
+    brand_colors: Optional[List[str]] = Field(None, description="Array of HEX color strings")
+    brand_voice_description: Optional[str] = Field(None, description="Brand voice description")
+    
+    # Preset data (one of these should be provided based on preset_type)
+    input_snapshot: Optional[Dict[str, Any]] = Field(None, description="Pipeline input snapshot for INPUT_TEMPLATE")
+    style_recipe: Optional[Dict[str, Any]] = Field(None, description="Style recipe data for STYLE_RECIPE")
+    
+    # Metadata
+    model_id: str = Field(description="Model identifier used")
+    pipeline_version: str = Field(description="Version of the pipeline used")
+
+
+class BrandPresetUpdateRequest(BaseModel):
+    """Request model for updating a brand preset"""
+    name: Optional[str] = Field(None, description="Updated name")
+    version: int = Field(description="Current version for optimistic locking")
+    
+    # Brand Kit fields (optional)
+    brand_colors: Optional[List[str]] = Field(None, description="Array of HEX color strings")
+    brand_voice_description: Optional[str] = Field(None, description="Brand voice description")
+
+
+class BrandPresetResponse(BaseModel):
+    """Response model for brand preset"""
+    id: str = Field(description="Unique preset ID")
+    name: str = Field(description="User-friendly name")
+    preset_type: str = Field(description="Type of preset")
+    version: int = Field(description="Current version")
+    model_id: str = Field(description="Model identifier")
+    pipeline_version: str = Field(description="Pipeline version")
+    usage_count: int = Field(description="Number of times used")
+    created_at: datetime = Field(description="Creation timestamp")
+    last_used_at: Optional[datetime] = Field(None, description="Last usage timestamp")
+    
+    # Brand Kit fields
+    brand_colors: Optional[List[str]] = Field(None, description="Brand colors")
+    brand_voice_description: Optional[str] = Field(None, description="Brand voice")
+    
+    # Preset data
+    input_snapshot: Optional[Dict[str, Any]] = Field(None, description="Input snapshot")
+    style_recipe: Optional[Dict[str, Any]] = Field(None, description="Style recipe")
+
+
+class BrandPresetListResponse(BaseModel):
+    """Response model for listing brand presets"""
+    presets: List[BrandPresetResponse]
+    total: int = Field(description="Total number of presets")
+
+
+class SavePresetFromResultRequest(BaseModel):
+    """Request model for saving a preset from a pipeline result"""
+    name: str = Field(description="Name for the new preset")
+    generation_index: int = Field(description="Which generated image to save as preset (0-based)")
+    
+    # Brand Kit fields (optional)
+    brand_colors: Optional[List[str]] = Field(None, description="Array of HEX color strings")
+    brand_voice_description: Optional[str] = Field(None, description="Brand voice description")

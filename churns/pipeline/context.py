@@ -36,6 +36,13 @@ class PipelineContext:
     task_description: Optional[str] = None
     marketing_goals: Optional[Dict[str, Any]] = None
     
+    # Brand Preset support
+    preset_id: Optional[str] = None
+    preset_data: Optional[Dict[str, Any]] = None
+    preset_type: Optional[str] = None  # "INPUT_TEMPLATE" or "STYLE_RECIPE"
+    overrides: Optional[Dict[str, Any]] = None
+    skip_stages: List[str] = field(default_factory=list)  # Stages to skip for STYLE_RECIPE
+    
     # === REFINEMENT PROPERTIES ===
     # Pipeline mode ("generation" or "refinement")
     pipeline_mode: str = "generation"
@@ -238,6 +245,8 @@ class PipelineContext:
             branding_elements=user_inputs.get("branding_elements"),
             task_description=user_inputs.get("task_description"),
             marketing_goals=user_inputs.get("marketing_goals"),
+            preset_id=user_inputs.get("preset_id"),
+            overrides=user_inputs.get("overrides"),
             image_analysis_result=processing_context.get("image_analysis_result"),
             suggested_marketing_strategies=processing_context.get("suggested_marketing_strategies"),
             style_guidance_sets=processing_context.get("style_guidance_sets"),

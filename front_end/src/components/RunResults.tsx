@@ -46,6 +46,7 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   Image as ImageIcon,
   Info as InfoIcon,
+  BookmarkAdd as BookmarkAddIcon,
 } from '@mui/icons-material';
 
 import toast from 'react-hot-toast';
@@ -586,6 +587,12 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   // Add caption error state management
   const [captionErrors, setCaptionErrors] = useState<Record<number, string>>({});
   
+  // Save preset dialog state
+  const [savePresetDialogOpen, setSavePresetDialogOpen] = useState(false);
+  const [savePresetImageIndex, setSavePresetImageIndex] = useState<number>(0);
+  const [savePresetName, setSavePresetName] = useState('');
+  const [savePresetLoading, setSavePresetLoading] = useState(false);
+  
   const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
 
   // Initialize developer mode from localStorage
@@ -1047,6 +1054,39 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const closeCaptionDialog = () => {
     setCaptionDialogOpen(false);
     setCaptionInitialSettings(undefined);
+  };
+
+  // Save preset dialog functions
+  const openSavePresetDialog = (imageIndex: number) => {
+    setSavePresetImageIndex(imageIndex);
+    setSavePresetName('');
+    setSavePresetDialogOpen(true);
+  };
+
+  const closeSavePresetDialog = () => {
+    setSavePresetDialogOpen(false);
+    setSavePresetName('');
+    setSavePresetLoading(false);
+  };
+
+  const handleSavePreset = async () => {
+    if (!savePresetName.trim()) return;
+
+    setSavePresetLoading(true);
+    try {
+      await PipelineAPI.savePresetFromResult(runId, {
+        name: savePresetName.trim(),
+        generation_index: savePresetImageIndex,
+      });
+      
+      toast.success('Style saved as preset successfully!');
+      closeSavePresetDialog();
+    } catch (error: any) {
+      console.error('Failed to save preset:', error);
+      toast.error(error.message || 'Failed to save style as preset');
+    } finally {
+      setSavePresetLoading(false);
+    }
   };
 
   const handleOpenCaptionSettingsDialog = (imageIndex: number, currentSettings: CaptionSettings, currentModelId?: string) => {
@@ -1745,6 +1785,18 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 {captionGenerating[result.strategy_index] ? 'Generating...' : 'Caption'}
                               </Button>
                             </Tooltip>
+                            <Tooltip title="Save this style as a preset">
+                              <Button
+                                size="small"
+                                startIcon={<BookmarkAddIcon />}
+                                onClick={() => openSavePresetDialog(result.strategy_index)}
+                                color="secondary"
+                                variant="outlined"
+                                sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                              >
+                                Save Style
+                              </Button>
+                            </Tooltip>
                           </Box>
                           
                           {/* Assessment Indicators */}
@@ -1764,6 +1816,46 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 color="default"
                                 sx={{ fontSize: '0.7rem' }}
                               />
+                            </Box>
+                          )}
+
+                          {/* Consistency Metrics for Style Recipes */}
+                          {result.assessment?.consistency_metrics && (
+                            <Box sx={{ mt: 2, p: 2, backgroundColor: 'primary.50', borderRadius: 2, border: 1, borderColor: 'primary.200' }}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'primary.main', mb: 1 }}>
+                                🎯 Style Consistency
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                {result.assessment.consistency_metrics.overall_consistency_score && (
+                                  <Chip
+                                    label={`Overall: ${Math.round(result.assessment.consistency_metrics.overall_consistency_score * 100)}%`}
+                                    size="small"
+                                    color={result.assessment.consistency_metrics.overall_consistency_score >= 0.8 ? 'success' : 
+                                           result.assessment.consistency_metrics.overall_consistency_score >= 0.6 ? 'warning' : 'error'}
+                                    variant="filled"
+                                    sx={{ fontSize: '0.7rem', fontWeight: 500 }}
+                                  />
+                                )}
+                                {result.assessment.consistency_metrics.clip_similarity && (
+                                  <Chip
+                                    label={`CLIP: ${Math.round(result.assessment.consistency_metrics.clip_similarity * 100)}%`}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                )}
+                                {result.assessment.consistency_metrics.color_histogram_similarity && (
+                                  <Chip
+                                    label={`Color: ${Math.round(result.assessment.consistency_metrics.color_histogram_similarity * 100)}%`}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                Shows how closely this result matches your selected style recipe
+                              </Typography>
                             </Box>
                           )}
 
@@ -2986,6 +3078,42 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         initialModelId={captionInitialSettings ? (imageCaptions[captionImageIndex]?.[imageCaptions[captionImageIndex].length - 1]?.model_id || undefined) : undefined}
         error={captionErrors[captionImageIndex]}
       />
+
+      {/* Save Preset Dialog */}
+      <Dialog open={savePresetDialogOpen} onClose={closeSavePresetDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>Save Style as Preset</DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Save the style from Option {savePresetImageIndex + 1} as a reusable preset that you can apply to future projects.
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              label="Preset Name"
+              value={savePresetName}
+              onChange={(e) => setSavePresetName(e.target.value)}
+              placeholder="e.g., Modern Minimalist Style"
+              helperText="Give your style preset a memorable name"
+              variant="outlined"
+              sx={{ mt: 1 }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeSavePresetDialog} disabled={savePresetLoading}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSavePreset}
+            disabled={!savePresetName.trim() || savePresetLoading}
+            variant="contained"
+            startIcon={savePresetLoading ? <CircularProgress size={16} /> : <BookmarkAddIcon />}
+          >
+            {savePresetLoading ? 'Saving...' : 'Save Preset'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
   );
 } 

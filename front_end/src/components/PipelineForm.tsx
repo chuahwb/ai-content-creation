@@ -26,6 +26,9 @@ import {
   CloudUpload as CloudUploadIcon,
   Send as SendIcon,
   Refresh as RefreshIcon,
+  BookmarkAdd as BookmarkAddIcon,
+  Palette as PaletteIcon,
+  Style as StyleIcon,
 } from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';
 import { useForm, Controller } from 'react-hook-form';
@@ -33,8 +36,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
-import { PipelineFormData, PipelineRunResponse } from '@/types/api';
+import { PipelineFormData, PipelineRunResponse, BrandPresetResponse } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
+import PresetManagementModal from './PresetManagementModal';
 
 // Common ISO-639-1 language codes for validation
 const VALID_LANGUAGE_CODES = [
@@ -110,6 +114,12 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showCustomLanguage, setShowCustomLanguage] = useState(false);
+  
+  // Preset-related state
+  const [activePreset, setActivePreset] = useState<BrandPresetResponse | null>(null);
+  const [isRecipeActive, setIsRecipeActive] = useState(false);
+  const [presetModalOpen, setPresetModalOpen] = useState(false);
+  const [recipeOverrides, setRecipeOverrides] = useState<Record<string, any>>({});
 
   const {
     control,
@@ -168,6 +178,68 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     }
   };
 
+  // Preset handling functions
+  const handlePresetSelected = (preset: BrandPresetResponse) => {
+    setActivePreset(preset);
+    applyPresetToForm(preset);
+    setPresetModalOpen(false);
+    toast.success(`${preset.preset_type === 'INPUT_TEMPLATE' ? 'Template' : 'Recipe'} "${preset.name}" applied`);
+  };
+
+  const applyPresetToForm = (preset: BrandPresetResponse) => {
+    if (preset.preset_type === 'INPUT_TEMPLATE') {
+      // Apply Input Template: populate form fields
+      const inputData = preset.input_snapshot;
+      if (inputData) {
+        // Populate form fields with template data
+        if (inputData.prompt) setValue('prompt', inputData.prompt);
+        if (inputData.creativity_level) setValue('creativity_level', inputData.creativity_level);
+        if (inputData.platform_name) setValue('platform_name', inputData.platform_name);
+        if (inputData.num_variants) setValue('num_variants', inputData.num_variants);
+        if (inputData.task_type) setValue('task_type', inputData.task_type);
+        if (inputData.task_description) setValue('task_description', inputData.task_description);
+        if (inputData.branding_elements) setValue('branding_elements', inputData.branding_elements);
+        if (inputData.render_text !== undefined) setValue('render_text', inputData.render_text);
+        if (inputData.apply_branding !== undefined) setValue('apply_branding', inputData.apply_branding);
+        if (inputData.language) setValue('language', inputData.language);
+        if (inputData.marketing_audience) setValue('marketing_audience', inputData.marketing_audience);
+        if (inputData.marketing_objective) setValue('marketing_objective', inputData.marketing_objective);
+        if (inputData.marketing_voice) setValue('marketing_voice', inputData.marketing_voice);
+        if (inputData.marketing_niche) setValue('marketing_niche', inputData.marketing_niche);
+      }
+      setIsRecipeActive(false);
+    } else if (preset.preset_type === 'STYLE_RECIPE') {
+      // Apply Style Recipe: enter Recipe Active mode
+      setIsRecipeActive(true);
+      setRecipeOverrides({});
+      
+      // Clear form for recipe mode (user will provide new input)
+      reset({
+        mode: 'easy_mode',
+        platform_name: '',
+        creativity_level: 1,
+        num_variants: 3,
+        render_text: false,
+        apply_branding: false,
+        language: 'en',
+      });
+    }
+  };
+
+  const clearPreset = () => {
+    setActivePreset(null);
+    setIsRecipeActive(false);
+    setRecipeOverrides({});
+    toast.success('Preset cleared');
+  };
+
+  const handleRecipeOverride = (field: string, value: any) => {
+    setRecipeOverrides(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
   const onSubmit = async (data: PipelineFormData) => {
     setIsSubmitting(true);
     
@@ -185,8 +257,15 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         throw new Error('Task type is required for task-specific mode');
       }
 
+      // Add preset data if active
+      const submitData = {
+        ...data,
+        preset_id: activePreset?.id,
+        overrides: isRecipeActive ? recipeOverrides : undefined,
+      };
+
       // Submit the run
-      const response = await PipelineAPI.submitRun(data);
+      const response = await PipelineAPI.submitRun(submitData);
       
       toast.success('Pipeline run started successfully!');
       
@@ -233,6 +312,108 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           <Typography variant="h4" gutterBottom sx={{ fontWeight: 600, mb: 4, textAlign: 'center', letterSpacing: '-0.02em' }}>
             Create New Pipeline Run
           </Typography>
+
+          {/* Preset Section */}
+          <Box sx={{ mb: 4 }}>
+            <Grid container spacing={2} alignItems="center">
+              <Grid item xs={12} md={6}>
+                <Typography variant="h6" gutterBottom>
+                  Brand Presets & Style Memory
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Use saved templates or style recipes to speed up your creative process
+                </Typography>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <Box display="flex" gap={2} justifyContent={{ xs: 'flex-start', md: 'flex-end' }}>
+                  <Button
+                    variant="outlined"
+                    onClick={() => setPresetModalOpen(true)}
+                    startIcon={<BookmarkAddIcon />}
+                  >
+                    Load Preset
+                  </Button>
+                  {activePreset && (
+                    <Button
+                      variant="text"
+                      onClick={clearPreset}
+                      color="secondary"
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </Box>
+              </Grid>
+            </Grid>
+
+            {/* Active Preset Display */}
+            {activePreset && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Alert 
+                  severity="info" 
+                  sx={{ mt: 2 }}
+                  action={
+                    <Button size="small" onClick={clearPreset}>
+                      Clear
+                    </Button>
+                  }
+                >
+                  <Box display="flex" alignItems="center" gap={1}>
+                    {activePreset.preset_type === 'INPUT_TEMPLATE' ? <PaletteIcon /> : <StyleIcon />}
+                    <Typography variant="body2">
+                      <strong>{activePreset.preset_type === 'INPUT_TEMPLATE' ? 'Template' : 'Recipe'}</strong> 
+                      &quot;{activePreset.name}&quot; is active
+                    </Typography>
+                  </Box>
+                </Alert>
+              </motion.div>
+            )}
+
+            {/* Recipe Active Mode */}
+            {isRecipeActive && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Paper sx={{ p: 3, mt: 2, bgcolor: 'primary.50', border: 1, borderColor: 'primary.200' }}>
+                  <Typography variant="h6" gutterBottom color="primary">
+                    🎨 Recipe Active Mode
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Choose how to use this style recipe:
+                  </Typography>
+                  
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} md={6}>
+                      <Paper sx={{ p: 2, border: 1, borderColor: 'divider' }}>
+                        <Typography variant="subtitle1" gutterBottom>
+                          🖼️ Path A: Swap the Subject
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Upload a new image to apply this style recipe to a different subject
+                        </Typography>
+                      </Paper>
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <Paper sx={{ p: 2, border: 1, borderColor: 'divider' }}>
+                        <Typography variant="subtitle1" gutterBottom>
+                          ✏️ Path B: Create with Style
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Write a new prompt to create something new with this style
+                        </Typography>
+                      </Paper>
+                    </Grid>
+                  </Grid>
+                </Paper>
+              </motion.div>
+            )}
+          </Box>
           
           <form onSubmit={handleSubmit(onSubmit)}>
             {/* Main Content - Left/Right Split */}
@@ -787,6 +968,13 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           </form>
         </CardContent>
       </Card>
+
+      {/* Preset Management Modal */}
+      <PresetManagementModal
+        open={presetModalOpen}
+        onClose={() => setPresetModalOpen(false)}
+        onPresetSelected={handlePresetSelected}
+      />
     </motion.div>
   );
 } 

@@ -7,6 +7,7 @@ from sqlmodel import SQLModel, Field
 import uuid
 from datetime import datetime
 from enum import Enum
+from churns.models.presets import PipelineInputSnapshot, StyleRecipeData, BrandColors, LogoAnalysis
 
 
 class RunStatus(str, Enum):
@@ -31,6 +32,12 @@ class RefinementType(str, Enum):
     """Refinement type enumeration"""
     SUBJECT = "subject"
     PROMPT = "prompt"
+
+
+class PresetType(str, Enum):
+    """Brand preset type enumeration"""
+    INPUT_TEMPLATE = "INPUT_TEMPLATE"
+    STYLE_RECIPE = "STYLE_RECIPE"
 
 
 class PipelineRun(SQLModel, table=True):
@@ -140,6 +147,38 @@ class PipelineStage(SQLModel, table=True):
     output_data: Optional[str] = Field(default=None, sa_column=Column(Text))  # JSON string
     error_message: Optional[str] = Field(default=None)
     error_traceback: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+
+class BrandPreset(SQLModel, table=True):
+    """Database model for brand presets and style memory"""
+    __tablename__ = "brand_presets"
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(description="User-friendly name for the preset")
+    user_id: str = Field(description="User ID (non-nullable for security)")
+    
+    # Versioning and metadata
+    version: int = Field(default=1, description="Version number for optimistic locking")
+    model_id: str = Field(description="Model identifier used (e.g., 'dall-e-3')")
+    pipeline_version: str = Field(description="Version of the pipeline used")
+    
+    # Brand Kit fields
+    brand_colors: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of BrandColors")
+    brand_voice_description: Optional[str] = Field(default=None, sa_column=Column(Text), description="Brand voice description")
+    logo_asset_analysis: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of LogoAnalysis")
+    
+    # Preset data fields
+    preset_type: PresetType = Field(description="Type of preset: INPUT_TEMPLATE or STYLE_RECIPE")
+    input_snapshot: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of PipelineInputSnapshot")
+    style_recipe: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of StyleRecipeData")
+    
+    # Usage tracking
+    usage_count: int = Field(default=0, description="Number of times preset has been used")
+    last_used_at: Optional[datetime] = Field(default=None, description="When preset was last used")
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), server_default=func.now()))
+    updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), onupdate=func.now()))
 
 
 # Database configuration - Updated to use async

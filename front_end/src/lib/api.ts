@@ -16,6 +16,11 @@ import {
   CaptionModelOption,
   CaptionRequest,
   CaptionSettings,
+  BrandPresetListResponse,
+  BrandPresetResponse,
+  BrandPresetCreateRequest,
+  BrandPresetUpdateRequest,
+  SavePresetFromResultRequest,
 } from '@/types/api';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
@@ -333,6 +338,62 @@ export class PipelineAPI {
   static async getCaptions(runId: string, imageId: string): Promise<any> {
     try {
       const response = await apiClient.get(`/runs/${runId}/images/${imageId}/captions`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  // Brand Preset API functions
+  static async getBrandPresets(presetType?: 'INPUT_TEMPLATE' | 'STYLE_RECIPE'): Promise<BrandPresetListResponse> {
+    try {
+      const params = presetType ? { preset_type: presetType } : {};
+      const response = await apiClient.get('/brand-presets', { params });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async getBrandPreset(presetId: string): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.get(`/brand-presets/${presetId}`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async createBrandPreset(data: BrandPresetCreateRequest): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.post('/brand-presets', data);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async updateBrandPreset(presetId: string, data: BrandPresetUpdateRequest): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.put(`/brand-presets/${presetId}`, data);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async deleteBrandPreset(presetId: string): Promise<{ message: string }> {
+    try {
+      const response = await apiClient.delete(`/brand-presets/${presetId}`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async savePresetFromResult(runId: string, data: SavePresetFromResultRequest): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.post(`/runs/${runId}/save-as-preset`, data);
       return response.data;
     } catch (error) {
       return handleApiError(error as AxiosError);

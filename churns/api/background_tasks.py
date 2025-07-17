@@ -358,7 +358,9 @@ class PipelineTaskProcessor:
                 from churns.pipeline.executor import PipelineExecutor
                 executor = PipelineExecutor()
             
-            await executor.run_async(context, progress_callback)
+            # Pass database session to executor for preset loading
+            async with async_session_factory() as session:
+                await executor.run_async(context, progress_callback, session)
             
             # Calculate final cost summary using actual LLM usage data
             await self._calculate_final_cost_summary(context)
@@ -920,7 +922,9 @@ class PipelineTaskProcessor:
                 "apply_branding": request.apply_branding,
                 "branding_elements": request.branding_elements,
                 "task_description": request.task_description,
-                "marketing_goals": None
+                "marketing_goals": None,
+                "preset_id": request.preset_id,
+                "overrides": request.overrides
             },
             "processing_context": {
                 "initial_json_valid": True,

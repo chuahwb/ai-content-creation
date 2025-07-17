@@ -40,6 +40,8 @@ export interface PipelineRunRequest {
   apply_branding: boolean;
   marketing_goals?: MarketingGoalsInput;
   language?: string;
+  preset_id?: string;
+  overrides?: Record<string, any>;
 }
 
 export interface StageProgressUpdate {
@@ -113,6 +115,13 @@ export interface ImageAssessmentData {
   needs_subject_repair: boolean;
   needs_regeneration: boolean;
   needs_text_repair: boolean;
+  consistency_metrics?: {
+    clip_similarity?: number;
+    color_histogram_similarity?: number;
+    color_palette_match?: number;
+    overall_consistency_score?: number;
+    detailed_metrics?: Record<string, any>;
+  };
   _meta?: {
     tokens_used: number;
     model: string;
@@ -271,4 +280,69 @@ export interface ApiStatusResponse {
   status: string;
   active_runs: number;
   active_run_ids: string[];
+}
+
+// Brand Preset types
+export type PresetType = 'INPUT_TEMPLATE' | 'STYLE_RECIPE';
+
+export interface BrandPresetCreateRequest {
+  name: string;
+  preset_type: PresetType;
+  brand_colors?: string[];
+  brand_voice_description?: string;
+  input_snapshot?: Record<string, any>;
+  style_recipe?: Record<string, any>;
+  model_id: string;
+  pipeline_version: string;
+}
+
+export interface BrandPresetUpdateRequest {
+  name?: string;
+  version: number;
+  brand_colors?: string[];
+  brand_voice_description?: string;
+}
+
+export interface BrandPresetResponse {
+  id: string;
+  name: string;
+  preset_type: PresetType;
+  version: number;
+  model_id: string;
+  pipeline_version: string;
+  usage_count: number;
+  created_at: string;
+  last_used_at?: string;
+  brand_colors?: string[];
+  brand_voice_description?: string;
+  input_snapshot?: Record<string, any>;
+  style_recipe?: Record<string, any>;
+}
+
+export interface BrandPresetListResponse {
+  presets: BrandPresetResponse[];
+  total: number;
+}
+
+export interface SavePresetFromResultRequest {
+  name: string;
+  generation_index: number;
+  brand_colors?: string[];
+  brand_voice_description?: string;
+}
+
+export interface BrandPreset {
+  id: string;
+  name: string;
+  preset_type: PresetType;
+  version: number;
+  model_id: string;
+  pipeline_version: string;
+  usage_count: number;
+  created_at: string;
+  last_used_at?: string;
+  brand_colors?: string[];
+  brand_voice_description?: string;
+  input_snapshot?: Record<string, any>;
+  style_recipe?: Record<string, any>;
 } 
