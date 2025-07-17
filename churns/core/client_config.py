@@ -250,6 +250,12 @@ class ClientConfig:
             "Caption Generation"
         )
         
+        base_llm_client_style_adaptation, instructor_client_style_adaptation = self._configure_llm_client(
+            self.model_config["STYLE_ADAPTATION_MODEL_PROVIDER"], 
+            self.model_config["STYLE_ADAPTATION_MODEL_ID"], 
+            "Style Adaptation"
+        )
+        
         # Configure Image Generation Client (typically OpenAI)
         image_gen_client = None
         if OpenAI and self.openai_api_key:
@@ -281,6 +287,8 @@ class ClientConfig:
             'instructor_client_image_assessment': instructor_client_image_assessment,
             'base_llm_client_caption': base_llm_client_caption,
             'instructor_client_caption': instructor_client_caption,
+            'base_llm_client_style_adaptation': base_llm_client_style_adaptation,
+            'instructor_client_style_adaptation': instructor_client_style_adaptation,
             'image_gen_client': image_gen_client
         }
         
