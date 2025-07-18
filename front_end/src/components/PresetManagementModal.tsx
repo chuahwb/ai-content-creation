@@ -138,12 +138,12 @@ export default function PresetManagementModal({
       setRenameName(selectedPreset.name);
       setRenameDialogOpen(true);
     }
-    handleMenuClose();
+    setAnchorEl(null); // Close menu but keep selectedPreset
   };
 
   const handleDeleteClick = () => {
     setDeleteDialogOpen(true);
-    handleMenuClose();
+    setAnchorEl(null); // Close menu but keep selectedPreset
   };
 
   const handleRenameConfirm = async () => {
@@ -158,11 +158,18 @@ export default function PresetManagementModal({
       toast.success('Preset renamed successfully');
       setRenameDialogOpen(false);
       setRenameName('');
+      setSelectedPreset(null); // Clear selected preset after successful rename
       loadPresets(); // Refresh list
     } catch (err) {
       toast.error('Failed to rename preset');
       console.error('Error renaming preset:', err);
     }
+  };
+
+  const handleRenameCancel = () => {
+    setRenameDialogOpen(false);
+    setRenameName('');
+    setSelectedPreset(null); // Clear selected preset when canceling
   };
 
   const handleDeleteConfirm = async () => {
@@ -172,11 +179,17 @@ export default function PresetManagementModal({
       await PipelineAPI.deleteBrandPreset(selectedPreset.id);
       toast.success('Preset deleted successfully');
       setDeleteDialogOpen(false);
+      setSelectedPreset(null); // Clear selected preset after successful deletion
       loadPresets(); // Refresh list
     } catch (err) {
       toast.error('Failed to delete preset');
       console.error('Error deleting preset:', err);
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setSelectedPreset(null); // Clear selected preset when canceling
   };
 
   const getPresetsByType = (type: string) => {
@@ -406,7 +419,7 @@ export default function PresetManagementModal({
       </Menu>
 
       {/* Rename Dialog */}
-      <Dialog open={renameDialogOpen} onClose={() => setRenameDialogOpen(false)}>
+      <Dialog open={renameDialogOpen} onClose={handleRenameCancel}>
         <DialogTitle>Rename Preset</DialogTitle>
         <DialogContent>
           <TextField
@@ -420,7 +433,7 @@ export default function PresetManagementModal({
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setRenameDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleRenameCancel}>Cancel</Button>
           <Button onClick={handleRenameConfirm} disabled={!renameName.trim()}>
             Rename
           </Button>
@@ -428,7 +441,7 @@ export default function PresetManagementModal({
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+      <Dialog open={deleteDialogOpen} onClose={handleDeleteCancel}>
         <DialogTitle>Delete Preset</DialogTitle>
         <DialogContent>
           <DialogContentText>
@@ -436,7 +449,7 @@ export default function PresetManagementModal({
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleDeleteCancel}>Cancel</Button>
           <Button onClick={handleDeleteConfirm} color="error">
             Delete
           </Button>

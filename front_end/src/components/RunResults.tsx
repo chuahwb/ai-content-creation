@@ -82,20 +82,15 @@ interface LogEntry {
   message: string;
 }
 
-// Define all pipeline stages
-const PIPELINE_STAGES = [
-  { name: 'image_eval', label: 'Image Analysis', description: 'Analyzing uploaded image' },
-  { name: 'strategy', label: 'Strategy Generation', description: 'Creating marketing strategies' },
-  { name: 'style_guide', label: 'Style Guide', description: 'Defining visual style' },
-  { name: 'creative_expert', label: 'Creative Concepts', description: 'Developing visual concepts' },
-  { name: 'prompt_assembly', label: 'Prompt Assembly', description: 'Building generation prompts' },
-  { name: 'image_generation', label: 'Image Generation', description: 'Creating final images' },
-  { name: 'image_assessment', label: 'Image Assessment', description: 'Evaluating generated images' },
-];
+// Pipeline stages are now dynamic based on backend response
 
 // Component for visual pipeline stages display
 interface PipelineStageBoxProps {
-  stage: typeof PIPELINE_STAGES[0];
+  stage: {
+    name: string;
+    label: string;
+    description: string;
+  };
   status: StageStatus;
   message?: string;
   duration?: number;
@@ -112,6 +107,7 @@ const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({
       case 'COMPLETED': return '#4caf50';
       case 'RUNNING': return '#2196f3';
       case 'FAILED': return '#f44336';
+      case 'SKIPPED': return '#ff9800';
       default: return '#9e9e9e';
     }
   };
@@ -121,6 +117,7 @@ const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({
       case 'COMPLETED': return <CheckCircleIcon sx={{ color: '#4caf50', fontSize: 20 }} />;
       case 'RUNNING': return <PlayArrowIcon sx={{ color: '#2196f3', fontSize: 20 }} />;
       case 'FAILED': return <ErrorIcon sx={{ color: '#f44336', fontSize: 20 }} />;
+      case 'SKIPPED': return <CheckCircleIcon sx={{ color: '#ff9800', fontSize: 20 }} />;
       default: return <AccessTimeIcon sx={{ color: '#9e9e9e', fontSize: 20 }} />;
     }
   };
@@ -695,11 +692,22 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   }, [runId, addLog]);
 
   const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
+    console.log('🔌 WebSocket message received:', {
+      type: message.type,
+      runId: message.run_id,
+      stageName: message.data?.stage_name,
+      status: message.data?.status,
+      message: message.data?.message,
+      timestamp: new Date().toISOString()
+    });
+    
     addLog('info', `WebSocket message: ${message.type}`, message.data.stage_name);
     
     switch (message.type) {
       case 'stage_update':
         const stageUpdate = message.data as StageProgressUpdate;
+        console.log('📊 Stage update details:', stageUpdate);
+        
         addLog(
           stageUpdate.status === 'FAILED' ? 'error' : 
           stageUpdate.status === 'COMPLETED' ? 'success' : 'info',
@@ -718,17 +726,30 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         
         // Update run details with new stage info
         setRunDetails(prev => {
-          if (!prev) return prev;
+          if (!prev) {
+            console.log('⚠️ Cannot update stages - runDetails is null');
+            return prev;
+          }
+          
           const updatedStages = [...prev.stages];
           const stageIndex = updatedStages.findIndex(s => s.stage_name === stageUpdate.stage_name);
           
           if (stageIndex >= 0) {
+            console.log(`✅ Updating existing stage ${stageUpdate.stage_name} at index ${stageIndex}`);
             updatedStages[stageIndex] = { ...updatedStages[stageIndex], ...stageUpdate };
           } else {
+            console.log(`➕ Adding new stage ${stageUpdate.stage_name}`);
             updatedStages.push(stageUpdate);
           }
           
-          return { ...prev, stages: updatedStages };
+          const newRunDetails = { ...prev, stages: updatedStages };
+          console.log('🔄 Updated runDetails:', {
+            totalStages: newRunDetails.stages.length,
+            completedStages: newRunDetails.stages.filter(s => s.status === 'COMPLETED').length,
+            stages: newRunDetails.stages.map(s => ({ name: s.stage_name, status: s.status }))
+          });
+          
+          return newRunDetails;
         });
         break;
         
@@ -819,40 +840,49 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     // Prevent multiple connections for the same run ID
     if (wsManager && wsManager.readyState === WebSocket.OPEN) {
       console.log('WebSocket already connected for run:', runId);
-      return wsManager;
+      return;
     }
 
+    // Clean up existing connection
     if (wsManager) {
       console.log('Closing existing WebSocket connection before creating new one');
       wsManager.disconnect();
+      setWsManager(null);
     }
+
+    console.log('🚀 Initializing new WebSocket connection for run:', runId);
+    console.log('🌐 WebSocket URL will be:', `${process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'}/api/v1/ws/${runId}`);
 
     const newWsManager = new WebSocketManager(
       runId,
       handleWebSocketMessage,
       (error) => {
         addLog('error', 'WebSocket connection error');
-        console.error('WebSocket error:', error);
+        console.error('❌ WebSocket error:', error);
       },
       (event) => {
+        console.log('🔌 WebSocket closed:', { code: event.code, reason: event.reason, runId });
         if (event.code !== 1000) { // Not a normal closure
           addLog('warning', 'WebSocket connection lost. Attempting to reconnect...');
         }
       }
     );
 
+    const connectionStart = Date.now();
     newWsManager.connect()
       .then(() => {
+        const connectionTime = Date.now() - connectionStart;
         addLog('success', 'Connected to real-time updates');
         setWsManager(newWsManager);
+        console.log(`✅ WebSocket connected successfully for run: ${runId} (took ${connectionTime}ms)`);
       })
       .catch((error) => {
+        const connectionTime = Date.now() - connectionStart;
         addLog('error', 'Failed to connect to real-time updates');
-        console.error('WebSocket connection failed:', error);
+        console.error(`❌ WebSocket connection failed for run: ${runId} (failed after ${connectionTime}ms):`, error);
+        setWsManager(null);
       });
-
-    return newWsManager;
-  }, [runId, handleWebSocketMessage, addLog, wsManager]);
+  }, [runId, handleWebSocketMessage, addLog]); // Removed wsManager from dependencies
 
   const handleCancelRun = async () => {
     try {
@@ -1187,9 +1217,13 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   const getProgressValue = () => {
     if (!runDetails?.stages.length) return 0;
-    const TOTAL_STAGES = 7;
-    const completedStages = runDetails.stages.filter(s => s.status === 'COMPLETED').length;
-    return (completedStages / TOTAL_STAGES) * 100;
+    // Use actual number of stages from the backend instead of hardcoded value
+    const totalStages = runDetails.stages.length;
+    // Count both completed and skipped stages as "done" for progress calculation
+    const completedStages = runDetails.stages.filter(s => 
+      s.status === 'COMPLETED' || s.status === 'SKIPPED'
+    ).length;
+    return totalStages > 0 ? (completedStages / totalStages) * 100 : 0;
   };
 
   const formatDuration = (seconds?: number) => {
@@ -1209,14 +1243,36 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     return runDetails?.stages.find(s => s.stage_name === stageName);
   };
 
+  // Get display information for any stage (including dynamic ones like style_adaptation)
+  const getStageDisplayInfo = (stageName: string) => {
+    // Define display info for known stages
+    const stageDisplayMap: Record<string, { label: string; description: string }> = {
+      'image_eval': { label: 'Image Analysis', description: 'Analyzing uploaded image' },
+      'strategy': { label: 'Strategy Generation', description: 'Creating marketing strategies' },
+      'style_guide': { label: 'Style Guide', description: 'Defining visual style' },
+      'creative_expert': { label: 'Creative Concepts', description: 'Developing visual concepts' },
+      'style_adaptation': { label: 'Style Adaptation', description: 'Adapting saved style to new concept' },
+      'prompt_assembly': { label: 'Prompt Assembly', description: 'Building generation prompts' },
+      'image_generation': { label: 'Image Generation', description: 'Creating final images' },
+      'image_assessment': { label: 'Image Assessment', description: 'Evaluating generated images' },
+    };
+
+    return stageDisplayMap[stageName] || {
+      label: stageName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      description: `Processing ${stageName.replace(/_/g, ' ')}`
+    };
+  };
+
   useEffect(() => {
     fetchRunDetails();
-    
-    // Only initialize WebSocket if we don't already have one for this run
-    if (!wsManager || wsManager.readyState !== WebSocket.OPEN) {
-      initializeWebSocket();
-    }
-  }, [runId, fetchRunDetails, initializeWebSocket]);
+  }, [runId, fetchRunDetails]);
+
+  // Separate effect for WebSocket initialization to avoid race conditions
+  useEffect(() => {
+    console.log('WebSocket effect triggered for run:', runId);
+    // Always initialize WebSocket when runId changes or component mounts
+    initializeWebSocket();
+  }, [runId, initializeWebSocket]);
 
   // Cleanup effect for WebSocket
   useEffect(() => {
@@ -2349,31 +2405,48 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 Pipeline Progress
               </Typography>
               <Typography variant="body1" color="textSecondary" sx={{ fontWeight: 500 }}>
-                {runDetails.stages.filter(s => s.status === 'COMPLETED').length} / {PIPELINE_STAGES.length} stages
+                {runDetails.stages?.filter(s => s.status === 'COMPLETED' || s.status === 'SKIPPED').length || 0} / {runDetails.stages?.length || 0} stages
               </Typography>
             </Box>
             
-            {/* Visual Pipeline Stages Grid */}
+            {/* Visual Pipeline Stages Grid - Dynamic based on actual stages */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
-              {PIPELINE_STAGES.map((pipelineStage) => {
-                const stageData = getStageData(pipelineStage.name);
-                const status = getStageStatus(pipelineStage.name);
-                
-                return (
-                                     <Grid item xs={12} sm={6} md={4} lg={2} key={pipelineStage.name} sx={{ display: 'flex', flexDirection: 'column' }}>
-                     <PipelineStageBox
-                       stage={{ 
-                         name: pipelineStage.name, 
-                         label: pipelineStage.label, 
-                         description: pipelineStage.description 
-                       }}
-                       status={status}
-                       message={stageData?.message}
-                       duration={stageData?.duration_seconds}
-                     />
-                   </Grid>
-                );
-              })}
+              {runDetails.stages && runDetails.stages.length > 0 ? (
+                runDetails.stages
+                  .sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0)) // Sort by stage order
+                  .map((stage) => {
+                    const displayInfo = getStageDisplayInfo(stage.stage_name);
+                    
+                    return (
+                      <Grid 
+                        item 
+                        xs={12} 
+                        sm={6} 
+                        md={4} 
+                        lg={2} 
+                        key={stage.stage_name} 
+                        sx={{ display: 'flex', flexDirection: 'column' }}
+                      >
+                        <PipelineStageBox
+                          stage={{ 
+                            name: stage.stage_name, 
+                            label: displayInfo.label, 
+                            description: displayInfo.description 
+                          }}
+                          status={stage.status}
+                          message={stage.message}
+                          duration={stage.duration_seconds}
+                        />
+                      </Grid>
+                    );
+                  })
+              ) : (
+                <Grid item xs={12}>
+                  <Typography variant="body2" color="textSecondary" sx={{ textAlign: 'center', py: 2 }}>
+                    Loading pipeline stages...
+                  </Typography>
+                </Grid>
+              )}
             </Grid>
             
             {/* Overall Progress Bar */}

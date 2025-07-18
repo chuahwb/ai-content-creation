@@ -1676,17 +1676,19 @@ async def save_preset_from_result(
         raise HTTPException(status_code=500, detail=f"Failed to load run metadata: {str(e)}")
     
     # Extract style recipe data from the specified generation index
-    if request.generation_index >= len(run_metadata.get('generated_images', [])):
+    processing_context = run_metadata.get('processing_context', {})
+    generated_image_results = processing_context.get('generated_image_results', [])
+    
+    if request.generation_index >= len(generated_image_results):
         raise HTTPException(status_code=400, detail="Invalid generation index")
     
     # Build the style recipe from the run metadata
-    # TODO: Extract the actual style recipe data from the run metadata
-    # For now, using a simplified structure
+    # Extract the actual style recipe data from the processing context
     style_recipe_data = {
-        "visual_concept": run_metadata.get('stage_outputs', {}).get('creative_expert', {}).get('visual_concept', {}),
-        "strategy": run_metadata.get('stage_outputs', {}).get('strategy', {}),
-        "style_guidance": run_metadata.get('stage_outputs', {}).get('style_guide', {}),
-        "final_prompt": run_metadata.get('stage_outputs', {}).get('prompt_assembly', {}).get('final_prompt', ''),
+        "visual_concept": processing_context.get('generated_image_prompts', [{}])[request.generation_index] if request.generation_index < len(processing_context.get('generated_image_prompts', [])) else {},
+        "strategy": processing_context.get('suggested_marketing_strategies', [{}])[request.generation_index] if request.generation_index < len(processing_context.get('suggested_marketing_strategies', [])) else {},
+        "style_guidance": processing_context.get('style_guidance_sets', [{}])[request.generation_index] if request.generation_index < len(processing_context.get('style_guidance_sets', [])) else {},
+        "final_prompt": processing_context.get('final_assembled_prompts', [{}])[request.generation_index].get('final_prompt', '') if request.generation_index < len(processing_context.get('final_assembled_prompts', [])) else '',
         "generation_index": request.generation_index
     }
     

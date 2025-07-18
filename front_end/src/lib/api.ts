@@ -24,7 +24,42 @@ import {
 } from '@/types/api';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
-const WS_BASE_URL = (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000').replace(/\/+$/, '');
+
+// Smart WebSocket URL construction - automatically use WSS for HTTPS APIs
+const WS_BASE_URL = (() => {
+  const envWsUrl = process.env.NEXT_PUBLIC_WS_URL;
+  if (envWsUrl && envWsUrl !== 'ws://localhost:8000') {
+    // If WS URL is explicitly set and not localhost, use it as-is for now
+    // but auto-correct protocol mismatch for ngrok/HTTPS scenarios
+    const apiUrl = new URL(API_BASE_URL);
+    if (apiUrl.protocol === 'https:' && envWsUrl.startsWith('ws://')) {
+      // Convert ws:// to wss:// for HTTPS APIs (like ngrok)
+      const correctedUrl = envWsUrl.replace('ws://', 'wss://');
+      console.log('🔧 WebSocket URL auto-corrected:', { 
+        original: envWsUrl, 
+        corrected: correctedUrl, 
+        reason: 'API is HTTPS, WebSocket must use WSS' 
+      });
+      return correctedUrl;
+    }
+    console.log('🔗 Using WebSocket URL from environment:', envWsUrl);
+    return envWsUrl;
+  }
+  
+  // Default localhost fallback
+  console.log('🏠 Using default localhost WebSocket URL');
+  return 'ws://localhost:8000';
+})().replace(/\/+$/, '');
+
+// Log the final URLs for debugging
+console.log('🌐 API Configuration:', {
+  API_BASE_URL,
+  WS_BASE_URL,
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL
+  }
+});
 
 // Create axios instance with default config
 const apiClient = axios.create({
@@ -162,6 +197,15 @@ export class PipelineAPI {
       // Add language setting
       if (formData.language) {
         requestData.append('language', formData.language);
+      }
+
+      // Add preset information (CRITICAL FIX) - ONLY for STYLE_RECIPE, not INPUT_TEMPLATE
+      if (formData.preset_type === 'STYLE_RECIPE' && formData.preset_id) {
+        requestData.append('preset_id', formData.preset_id);
+        
+        if (formData.overrides) {
+          requestData.append('overrides', JSON.stringify(formData.overrides));
+        }
       }
 
       // Add image file if provided

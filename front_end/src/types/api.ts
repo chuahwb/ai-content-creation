@@ -268,6 +268,10 @@ export interface PipelineFormData {
   marketing_voice?: string;
   marketing_niche?: string;
   language?: string;
+  // Brand preset support
+  preset_id?: string;
+  preset_type?: PresetType; // To distinguish between style recipes and templates
+  overrides?: Record<string, any>;
 }
 
 // Configuration types

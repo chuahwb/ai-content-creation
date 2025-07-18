@@ -21,6 +21,11 @@ import {
   Chip,
   Paper,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Tooltip,
 } from '@mui/material';
 import {
   CloudUpload as CloudUploadIcon,
@@ -121,6 +126,12 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const [presetModalOpen, setPresetModalOpen] = useState(false);
   const [recipeOverrides, setRecipeOverrides] = useState<Record<string, any>>({});
 
+  // Add state for save template functionality after the existing state declarations
+  // Save template dialog state
+  const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false);
+  const [saveTemplateName, setSaveTemplateName] = useState('');
+  const [saveTemplateLoading, setSaveTemplateLoading] = useState(false);
+
   const {
     control,
     handleSubmit,
@@ -144,6 +155,20 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const selectedMode = watch('mode');
   const requiresTaskType = selectedMode === 'task_specific_mode';
   const showAdvancedFields = selectedMode !== 'easy_mode';
+  
+  // Check if form is valid for template saving
+  const isFormValidForTemplate = () => {
+    const currentValues = watch();
+    const validation = validateFormData(currentValues);
+    return validation.isValid;
+  };
+
+  // Get validation error message for tooltip
+  const getValidationErrorMessage = () => {
+    const currentValues = watch();
+    const validation = validateFormData(currentValues);
+    return validation.error || '';
+  };
 
   // File upload handling
   const onDrop = (acceptedFiles: File[]) => {
@@ -188,24 +213,33 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
   const applyPresetToForm = (preset: BrandPresetResponse) => {
     if (preset.preset_type === 'INPUT_TEMPLATE') {
-      // Apply Input Template: populate form fields
+      // Apply Input Template: Clear form first, then populate with template data
       const inputData = preset.input_snapshot;
+      
+      // First, reset form to clean state to avoid hybrid templates (but keep preset state)
+      resetFormToDefaults(false);
+      
       if (inputData) {
-        // Populate form fields with template data
-        if (inputData.prompt) setValue('prompt', inputData.prompt);
-        if (inputData.creativity_level) setValue('creativity_level', inputData.creativity_level);
-        if (inputData.platform_name) setValue('platform_name', inputData.platform_name);
-        if (inputData.num_variants) setValue('num_variants', inputData.num_variants);
-        if (inputData.task_type) setValue('task_type', inputData.task_type);
-        if (inputData.task_description) setValue('task_description', inputData.task_description);
-        if (inputData.branding_elements) setValue('branding_elements', inputData.branding_elements);
-        if (inputData.render_text !== undefined) setValue('render_text', inputData.render_text);
-        if (inputData.apply_branding !== undefined) setValue('apply_branding', inputData.apply_branding);
-        if (inputData.language) setValue('language', inputData.language);
-        if (inputData.marketing_audience) setValue('marketing_audience', inputData.marketing_audience);
-        if (inputData.marketing_objective) setValue('marketing_objective', inputData.marketing_objective);
-        if (inputData.marketing_voice) setValue('marketing_voice', inputData.marketing_voice);
-        if (inputData.marketing_niche) setValue('marketing_niche', inputData.marketing_niche);
+        // Use setTimeout to ensure proper form state transition and avoid placeholder overlap
+        setTimeout(() => {
+          // Now populate with template data - this ensures clean application
+          setValue('mode', inputData.mode || 'easy_mode');
+          setValue('prompt', inputData.prompt || '');
+          setValue('creativity_level', inputData.creativity_level || 1);
+          setValue('platform_name', inputData.platform_name || '');
+          setValue('num_variants', inputData.num_variants || 3);
+          setValue('task_type', inputData.task_type || '');
+          setValue('task_description', inputData.task_description || '');
+          setValue('branding_elements', inputData.branding_elements || '');
+          setValue('render_text', inputData.render_text || false);
+          setValue('apply_branding', inputData.apply_branding || false);
+          setValue('language', inputData.language || 'en');
+          setValue('marketing_audience', inputData.marketing_audience || '');
+          setValue('marketing_objective', inputData.marketing_objective || '');
+          setValue('marketing_voice', inputData.marketing_voice || '');
+          setValue('marketing_niche', inputData.marketing_niche || '');
+          setValue('image_instruction', inputData.image_instruction || '');
+        }, 0);
       }
       setIsRecipeActive(false);
     } else if (preset.preset_type === 'STYLE_RECIPE') {
@@ -240,28 +274,40 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     }));
   };
 
+  // Shared validation logic for both pipeline run and template saving
+  const validateFormData = (data: PipelineFormData): { isValid: boolean; error?: string } => {
+    // Validate required fields
+    if (!data.platform_name) {
+      return { isValid: false, error: 'Platform selection is required' };
+    }
+    
+    if (selectedMode === 'easy_mode' && !data.prompt && !uploadedFile) {
+      return { isValid: false, error: 'Easy mode requires either a prompt or an image' };
+    }
+    
+    if (requiresTaskType && !data.task_type) {
+      return { isValid: false, error: 'Task type is required for task-specific mode' };
+    }
+
+    return { isValid: true };
+  };
+
   const onSubmit = async (data: PipelineFormData) => {
     setIsSubmitting(true);
     
     try {
-      // Validate required fields
-      if (!data.platform_name) {
-        throw new Error('Platform selection is required');
-      }
-      
-      if (selectedMode === 'easy_mode' && !data.prompt && !uploadedFile) {
-        throw new Error('Easy mode requires either a prompt or an image');
-      }
-      
-      if (requiresTaskType && !data.task_type) {
-        throw new Error('Task type is required for task-specific mode');
+      // Validate required fields using shared validation
+      const validation = validateFormData(data);
+      if (!validation.isValid) {
+        throw new Error(validation.error);
       }
 
-      // Add preset data if active
+      // Add preset data if active - only send preset_id and overrides for STYLE_RECIPE
       const submitData = {
         ...data,
-        preset_id: activePreset?.id,
-        overrides: isRecipeActive ? recipeOverrides : undefined,
+        preset_id: activePreset?.preset_type === 'STYLE_RECIPE' ? activePreset.id : undefined,
+        preset_type: activePreset?.preset_type,
+        overrides: (activePreset?.preset_type === 'STYLE_RECIPE' && isRecipeActive) ? recipeOverrides : undefined,
       };
 
       // Submit the run
@@ -269,13 +315,13 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       
       toast.success('Pipeline run started successfully!');
       
-      // Reset form for next use
-      reset();
-      removeImage();
-      setShowCustomLanguage(false);
-      
-      // Trigger redirect immediately after form cleanup
+      // Navigate FIRST to avoid disrupting WebSocket connection initialization
       onRunStarted(response);
+      
+      // Mark successful submission for form reset when user returns
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('lastFormSubmission', Date.now().toString());
+      }
       
     } catch (error: any) {
       console.error('Failed to submit run:', error);
@@ -285,12 +331,123 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     }
   };
 
-  const handleReset = () => {
-    reset();
+  // Shared function to properly reset form to clean state
+  const resetFormToDefaults = (clearPresets = true) => {
+    reset({
+      mode: 'easy_mode',
+      platform_name: '',
+      creativity_level: 1,
+      num_variants: 3,
+      prompt: '', // Clear prompt field with empty string
+      task_type: '',
+      task_description: '',
+      branding_elements: '',
+      image_instruction: '',
+      render_text: false,
+      apply_branding: false,
+      marketing_audience: '',
+      marketing_objective: '',
+      marketing_voice: '',
+      marketing_niche: '',
+      language: 'en',
+    });
+    
+    // Clear uploaded image
     removeImage();
+    
+    // Clear custom language state
     setShowCustomLanguage(false);
+    
+    // Only clear presets if requested (not when switching templates)
+    if (clearPresets) {
+      setActivePreset(null);
+      setIsRecipeActive(false);
+      setRecipeOverrides({});
+    }
+  };
+
+  const handleReset = () => {
+    resetFormToDefaults(true); // Clear presets when manually resetting
     toast.success('Form reset');
   };
+
+  // Add save template dialog functions after the existing preset handling functions
+  const openSaveTemplateDialog = () => {
+    setSaveTemplateName('');
+    setSaveTemplateDialogOpen(true);
+  };
+
+  const closeSaveTemplateDialog = () => {
+    setSaveTemplateDialogOpen(false);
+    setSaveTemplateName('');
+    setSaveTemplateLoading(false);
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!saveTemplateName.trim()) return;
+
+    setSaveTemplateLoading(true);
+    try {
+      // Get current form values
+      const currentValues = watch();
+      
+      // Validate form data before saving template
+      const validation = validateFormData(currentValues);
+      if (!validation.isValid) {
+        throw new Error(validation.error);
+      }
+      
+      // Create input snapshot from current form state
+      const inputSnapshot = {
+        mode: currentValues.mode, // Include mode field
+        prompt: currentValues.prompt || '',
+        creativity_level: currentValues.creativity_level,
+        platform_name: currentValues.platform_name,
+        num_variants: currentValues.num_variants,
+        render_text: currentValues.render_text,
+        apply_branding: currentValues.apply_branding,
+        language: currentValues.language || 'en',
+        task_type: currentValues.task_type || null,
+        task_description: currentValues.task_description || null,
+        branding_elements: currentValues.branding_elements || null,
+        image_instruction: currentValues.image_instruction || null,
+        marketing_audience: currentValues.marketing_audience || null,
+        marketing_objective: currentValues.marketing_objective || null,
+        marketing_voice: currentValues.marketing_voice || null,
+        marketing_niche: currentValues.marketing_niche || null,
+      };
+
+      // Save as INPUT_TEMPLATE preset
+      await PipelineAPI.createBrandPreset({
+        name: saveTemplateName.trim(),
+        preset_type: 'INPUT_TEMPLATE',
+        input_snapshot: inputSnapshot,
+        model_id: 'current-pipeline',
+        pipeline_version: '1.0.0',
+      });
+      
+      toast.success('Template saved successfully!');
+      closeSaveTemplateDialog();
+    } catch (error: any) {
+      console.error('Failed to save template:', error);
+      toast.error(error.message || 'Failed to save template');
+    } finally {
+      setSaveTemplateLoading(false);
+    }
+  };
+
+  // Check if user is returning from a successful submission when component mounts/becomes visible
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const lastSubmission = window.sessionStorage.getItem('lastFormSubmission');
+      if (lastSubmission) {
+        // User is returning from a results page, reset the form
+        resetFormToDefaults(true);
+        // Clear the session storage flag
+        window.sessionStorage.removeItem('lastFormSubmission');
+      }
+    }
+  }, []); // Only run on mount
 
   useEffect(() => {
     return () => {
@@ -315,36 +472,41 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
           {/* Preset Section */}
           <Box sx={{ mb: 4 }}>
-            <Grid container spacing={2} alignItems="center">
-              <Grid item xs={12} md={6}>
-                <Typography variant="h6" gutterBottom>
-                  Brand Presets & Style Memory
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Use saved templates or style recipes to speed up your creative process
-                </Typography>
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <Box display="flex" gap={2} justifyContent={{ xs: 'flex-start', md: 'flex-end' }}>
-                  <Button
-                    variant="outlined"
-                    onClick={() => setPresetModalOpen(true)}
-                    startIcon={<BookmarkAddIcon />}
-                  >
-                    Load Preset
-                  </Button>
-                  {activePreset && (
+            {!activePreset ? (
+              // Simple load button when no preset is active
+              <Box display="flex" justifyContent={{ xs: 'flex-start', md: 'flex-end' }} sx={{ mb: 2 }}>
+                <Button
+                  variant="outlined"
+                  onClick={() => setPresetModalOpen(true)}
+                  startIcon={<BookmarkAddIcon />}
+                >
+                  Load Preset
+                </Button>
+              </Box>
+            ) : (
+              // Full section when preset is active
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={6}>
+                  <Typography variant="h6" gutterBottom>
+                    Brand Presets & Style Memory
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Use saved templates or style recipes to speed up your creative process
+                  </Typography>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Box display="flex" gap={2} justifyContent={{ xs: 'flex-start', md: 'flex-end' }}>
                     <Button
-                      variant="text"
-                      onClick={clearPreset}
-                      color="secondary"
+                      variant="outlined"
+                      onClick={() => setPresetModalOpen(true)}
+                      startIcon={<BookmarkAddIcon />}
                     >
-                      Clear
+                      Load Preset
                     </Button>
-                  )}
-                </Box>
+                  </Box>
+                </Grid>
               </Grid>
-            </Grid>
+            )}
 
             {/* Active Preset Display */}
             {activePreset && (
@@ -653,6 +815,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       render={({ field }) => (
                         <TextField
                           {...field}
+                          key={`prompt-${activePreset?.id || 'default'}`} // Force re-render when preset changes
                           fullWidth
                           multiline
                           rows={4}
@@ -745,6 +908,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                           render={({ field }) => (
                             <TextField
                               {...field}
+                              key={`image_instruction-${activePreset?.id || 'default'}`}
                               fullWidth
                               multiline
                               rows={2}
@@ -807,6 +971,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                               render={({ field }) => (
                                 <TextField
                                   {...field}
+                                  key={`task_description-${activePreset?.id || 'default'}`}
                                   fullWidth
                                   multiline
                                   rows={3}
@@ -825,6 +990,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                               render={({ field }) => (
                                 <TextField
                                   {...field}
+                                  key={`branding_elements-${activePreset?.id || 'default'}`}
                                   fullWidth
                                   multiline
                                   rows={3}
@@ -848,6 +1014,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                   render={({ field }) => (
                                     <TextField
                                       {...field}
+                                      key={`marketing_audience-${activePreset?.id || 'default'}`}
                                       fullWidth
                                       label="Target Audience"
                                       placeholder="e.g., Young professionals, families"
@@ -862,6 +1029,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                   render={({ field }) => (
                                     <TextField
                                       {...field}
+                                      key={`marketing_objective-${activePreset?.id || 'default'}`}
                                       fullWidth
                                       label="Objective"
                                       placeholder="e.g., Increase engagement, drive sales"
@@ -876,6 +1044,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                   render={({ field }) => (
                                     <TextField
                                       {...field}
+                                      key={`marketing_voice-${activePreset?.id || 'default'}`}
                                       fullWidth
                                       label="Voice"
                                       placeholder="e.g., Playful, casual, professional"
@@ -890,6 +1059,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                   render={({ field }) => (
                                     <TextField
                                       {...field}
+                                      key={`marketing_niche-${activePreset?.id || 'default'}`}
                                       fullWidth
                                       label="Niche"
                                       placeholder="e.g., Fast food, fine dining, coffee shop"
@@ -946,6 +1116,30 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                     </Alert>
                   )}
                   
+                  <Tooltip 
+                    title={!isFormValidForTemplate() ? getValidationErrorMessage() : "Save current form settings as a template"}
+                    arrow
+                  >
+                    <span>
+                      <Button
+                        variant="outlined"
+                        onClick={openSaveTemplateDialog}
+                        startIcon={<PaletteIcon />}
+                        size="large"
+                        disabled={!isFormValidForTemplate()}
+                        sx={{ 
+                          px: 3, 
+                          py: 1.5, 
+                          fontSize: '1.1rem',
+                          fontWeight: 600,
+                          minWidth: 200
+                        }}
+                      >
+                        Save as Template
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  
                   <Button
                     type="submit"
                     variant="contained"
@@ -968,6 +1162,47 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           </form>
         </CardContent>
       </Card>
+
+      {/* Save Template Dialog */}
+      <Dialog open={saveTemplateDialogOpen} onClose={closeSaveTemplateDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>Save as Template</DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Save your current form settings as a reusable template for future projects.
+            </Typography>
+            {!isFormValidForTemplate() && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                {getValidationErrorMessage()}
+              </Alert>
+            )}
+            <TextField
+              autoFocus
+              fullWidth
+              label="Template Name"
+              value={saveTemplateName}
+              onChange={(e) => setSaveTemplateName(e.target.value)}
+              placeholder="e.g., Instagram Product Photography"
+              helperText="Give your template a descriptive name"
+              variant="outlined"
+              sx={{ mt: 1 }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeSaveTemplateDialog} disabled={saveTemplateLoading}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSaveTemplate}
+            disabled={!saveTemplateName.trim() || saveTemplateLoading || !isFormValidForTemplate()}
+            variant="contained"
+            startIcon={saveTemplateLoading ? <CircularProgress size={16} /> : <PaletteIcon />}
+          >
+            {saveTemplateLoading ? 'Saving...' : 'Save Template'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Preset Management Modal */}
       <PresetManagementModal
