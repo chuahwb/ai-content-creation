@@ -5,7 +5,7 @@ These models support both 'Input Templates' and 'Style Recipes' workflows.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from churns.models import VisualConceptDetails, MarketingGoalSetFinal, StyleGuidance
+from churns.models import VisualConceptDetails, MarketingGoalSetFinal, StyleGuidance, BrandKitInput
 
 
 class PipelineInputSnapshot(BaseModel):
@@ -14,6 +14,7 @@ class PipelineInputSnapshot(BaseModel):
     Captures user's raw form inputs in a structured model.
     """
     # Core inputs
+    mode: str = Field('easy_mode', description="Pipeline mode (easy_mode, custom_mode, task_specific_mode)")
     prompt: Optional[str] = Field(None, description="User's text prompt")
     creativity_level: int = Field(2, ge=1, le=3, description="Creativity level 1-3")
     platform_name: str = Field(..., description="Target social media platform")
@@ -22,8 +23,10 @@ class PipelineInputSnapshot(BaseModel):
     # Content inputs
     task_type: Optional[str] = Field(None, description="Task type for task_specific_mode")
     task_description: Optional[str] = Field(None, description="Specific task content")
-    branding_elements: Optional[str] = Field(None, description="Branding guidelines")
     image_instruction: Optional[str] = Field(None, description="Image reference instruction")
+    
+    # Brand Kit - UPDATED: Replace branding_elements with brand_kit
+    brand_kit: Optional[BrandKitInput] = Field(None, description="Structured brand kit with colors, voice, and logo")
     
     # Marketing goals
     marketing_audience: Optional[str] = Field(None, description="Target audience")
@@ -52,23 +55,6 @@ class StyleRecipeData(BaseModel):
     # Optional fields for enhanced consistency
     generation_seed: Optional[str] = Field(None, description="Deterministic seed if supported by the model")
     model_parameters: Optional[Dict[str, Any]] = Field(None, description="Model-specific parameters used")
-
-
-class BrandColors(BaseModel):
-    """Brand color palette configuration"""
-    colors: List[str] = Field(..., description="Array of HEX color strings (e.g., ['#1A2B3C', '#FFD700'])")
-    primary_color: Optional[str] = Field(None, description="Primary brand color (HEX)")
-    secondary_color: Optional[str] = Field(None, description="Secondary brand color (HEX)")
-
-
-class LogoAnalysis(BaseModel):
-    """Analysis of uploaded logo asset"""
-    filename: str = Field(..., description="Original filename of the logo")
-    file_size_kb: int = Field(..., description="File size in KB")
-    dimensions: Optional[str] = Field(None, description="Image dimensions (e.g., '512x512')")
-    format: Optional[str] = Field(None, description="File format (e.g., 'PNG', 'SVG')")
-    preview_path: Optional[str] = Field(None, description="Path to optimized preview (<200KB)")
-    analysis_notes: Optional[str] = Field(None, description="AI-generated analysis of logo characteristics")
 
 
 class PresetMetadata(BaseModel):

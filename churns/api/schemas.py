@@ -2,6 +2,8 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, HttpUrl
 from datetime import datetime
 from churns.api.database import RunStatus, StageStatus, RefinementType, PresetType
+from churns.models import BrandKitInput
+from churns.models.presets import StyleRecipeData, PipelineInputSnapshot
 
 
 class ImageReferenceInput(BaseModel):
@@ -32,7 +34,6 @@ class PipelineRunRequest(BaseModel):
     prompt: Optional[str] = Field(default=None, description="User's text prompt")
     task_type: Optional[str] = Field(default=None, description="Task type for task_specific_mode")
     task_description: Optional[str] = Field(default=None, description="Specific task content")
-    branding_elements: Optional[str] = Field(default=None, description="Branding guidelines")
     
     # Image inputs
     image_reference: Optional[ImageReferenceInput] = Field(default=None, description="Reference image data")
@@ -49,7 +50,11 @@ class PipelineRunRequest(BaseModel):
     
     # Brand Preset support
     preset_id: Optional[str] = Field(default=None, description="ID of brand preset to apply")
+    preset_type: Optional[str] = Field(default=None, description="Type of preset being applied")
     overrides: Optional[Dict[str, Any]] = Field(default=None, description="Override values for preset fields")
+    
+    # Brand Kit data (UPDATED: replaced legacy fields with unified brand_kit)
+    brand_kit: Optional[BrandKitInput] = Field(default=None, description="Brand kit with colors, voice, and logo")
 
 
 class RefinementRequest(BaseModel):
@@ -144,13 +149,15 @@ class PipelineRunDetail(PipelineRunResponse):
     has_image_reference: bool = False
     image_filename: Optional[str] = None
     image_instruction: Optional[str] = None
-    branding_elements: Optional[str] = None
     task_description: Optional[str] = None
     marketing_audience: Optional[str] = None
     marketing_objective: Optional[str] = None
     marketing_voice: Optional[str] = None
     marketing_niche: Optional[str] = None
     language: Optional[str] = None
+
+    # Brand Kit data (UPDATED: unified brand kit structure)
+    brand_kit: Optional[Dict[str, Any]] = None
 
 
 class GeneratedImageResult(BaseModel):
@@ -293,13 +300,12 @@ class BrandPresetCreateRequest(BaseModel):
     name: str = Field(description="User-friendly name for the preset")
     preset_type: str = Field(description="Type of preset: INPUT_TEMPLATE or STYLE_RECIPE")
     
-    # Brand Kit fields (optional)
-    brand_colors: Optional[List[str]] = Field(None, description="Array of HEX color strings")
-    brand_voice_description: Optional[str] = Field(None, description="Brand voice description")
+    # Brand Kit (UPDATED: unified brand kit structure)
+    brand_kit: Optional[BrandKitInput] = Field(None, description="Brand kit with colors, voice, and logo")
     
     # Preset data (one of these should be provided based on preset_type)
-    input_snapshot: Optional[Dict[str, Any]] = Field(None, description="Pipeline input snapshot for INPUT_TEMPLATE")
-    style_recipe: Optional[Dict[str, Any]] = Field(None, description="Style recipe data for STYLE_RECIPE")
+    input_snapshot: Optional[PipelineInputSnapshot] = Field(None, description="Pipeline input snapshot for INPUT_TEMPLATE")
+    style_recipe: Optional[StyleRecipeData] = Field(None, description="Style recipe data for STYLE_RECIPE")
     
     # Metadata
     model_id: str = Field(description="Model identifier used")
@@ -311,9 +317,8 @@ class BrandPresetUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, description="Updated name")
     version: int = Field(description="Current version for optimistic locking")
     
-    # Brand Kit fields (optional)
-    brand_colors: Optional[List[str]] = Field(None, description="Array of HEX color strings")
-    brand_voice_description: Optional[str] = Field(None, description="Brand voice description")
+    # Brand Kit (UPDATED: unified brand kit structure)
+    brand_kit: Optional[BrandKitInput] = Field(None, description="Brand kit with colors, voice, and logo")
 
 
 class BrandPresetResponse(BaseModel):
@@ -328,13 +333,12 @@ class BrandPresetResponse(BaseModel):
     created_at: datetime = Field(description="Creation timestamp")
     last_used_at: Optional[datetime] = Field(None, description="Last usage timestamp")
     
-    # Brand Kit fields
-    brand_colors: Optional[List[str]] = Field(None, description="Brand colors")
-    brand_voice_description: Optional[str] = Field(None, description="Brand voice")
+    # Brand Kit (UPDATED: unified brand kit structure)
+    brand_kit: Optional[BrandKitInput] = Field(None, description="Brand kit with colors, voice, and logo")
     
     # Preset data
-    input_snapshot: Optional[Dict[str, Any]] = Field(None, description="Input snapshot")
-    style_recipe: Optional[Dict[str, Any]] = Field(None, description="Style recipe")
+    input_snapshot: Optional[PipelineInputSnapshot] = Field(None, description="Input snapshot")
+    style_recipe: Optional[StyleRecipeData] = Field(None, description="Style recipe")
 
 
 class BrandPresetListResponse(BaseModel):
@@ -348,6 +352,5 @@ class SavePresetFromResultRequest(BaseModel):
     name: str = Field(description="Name for the new preset")
     generation_index: int = Field(description="Which generated image to save as preset (0-based)")
     
-    # Brand Kit fields (optional)
-    brand_colors: Optional[List[str]] = Field(None, description="Array of HEX color strings")
-    brand_voice_description: Optional[str] = Field(None, description="Brand voice description")
+    # Brand Kit (UPDATED: unified brand kit structure)
+    brand_kit: Optional[BrandKitInput] = Field(None, description="Brand kit with colors, voice, and logo")

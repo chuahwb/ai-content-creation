@@ -7,6 +7,7 @@ import logging
 import time
 import asyncio
 from datetime import datetime, timezone
+import traceback
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -56,6 +57,7 @@ async def startup_event():
     os.makedirs("./data/runs", exist_ok=True)
 
 
+
 # Pipeline Run Endpoints
 @runs_router.post("", response_model=PipelineRunResponse)
 async def create_pipeline_run(
@@ -69,7 +71,6 @@ async def create_pipeline_run(
     prompt: Optional[str] = Form(None, description="User prompt"),
     task_type: Optional[str] = Form(None, description="Task type"),
     task_description: Optional[str] = Form(None, description="Task description"),
-    branding_elements: Optional[str] = Form(None, description="Branding elements"),
     
     # Boolean flags
     render_text: bool = Form(False, description="Render text flag"),
@@ -92,152 +93,188 @@ async def create_pipeline_run(
     
     # Brand Preset support
     preset_id: Optional[str] = Form(None, description="Brand preset ID to apply"),
+    preset_type: Optional[str] = Form(None, description="Type of preset being applied"),
     overrides: Optional[str] = Form(None, description="JSON string of override values"),
+    
+    # Brand Kit data
+    brand_kit: Optional[str] = Form(None, description="JSON string of BrandKitInput"),
     
     session: AsyncSession = Depends(get_session),
     executor: PipelineExecutor = Depends(get_executor)
 ):
     """Create a new pipeline run"""
     
-    # Validate inputs
-    if mode not in ["easy_mode", "custom_mode", "task_specific_mode"]:
-        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
-    
-    if platform_name not in SOCIAL_MEDIA_PLATFORMS:
-        raise HTTPException(status_code=400, detail=f"Invalid platform: {platform_name}")
-    
-    if creativity_level not in [1, 2, 3]:
-        raise HTTPException(status_code=400, detail=f"Creativity level must be 1, 2, or 3")
-    
-    if num_variants < 1 or num_variants > 6:
-        raise HTTPException(status_code=400, detail=f"Number of variants must be between 1 and 6")
-    
-    if mode == "task_specific_mode" and not task_type:
-        raise HTTPException(status_code=400, detail="Task type required for task_specific_mode")
-    
-    if task_type and task_type not in TASK_TYPES:
-        raise HTTPException(status_code=400, detail=f"Invalid task type: {task_type}")
-    
-    # Language validation
-    if language:
-        # Common ISO-639-1 language codes
-        VALID_LANGUAGE_CODES = {
-            'en', 'zh', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 
-            'ar', 'hi', 'th', 'vi', 'nl', 'sv', 'no', 'da', 'fi', 'pl',
-            'tr', 'he', 'cs', 'hu', 'ro', 'bg', 'hr', 'sk', 'sl', 'et',
-            'lv', 'lt', 'mt', 'ga', 'cy', 'eu', 'ca', 'gl', 'is', 'fo'
-        }
-        if len(language) != 2 or language.lower() not in VALID_LANGUAGE_CODES:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Invalid language code: '{language}'. Must be a valid 2-letter ISO-639-1 code (e.g., es, fr, ja, de, it)"
+    try:
+        # Validate inputs
+        if mode not in ["easy_mode", "custom_mode", "task_specific_mode"]:
+            raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+        
+        if platform_name not in SOCIAL_MEDIA_PLATFORMS:
+            raise HTTPException(status_code=400, detail=f"Invalid platform: {platform_name}")
+        
+        if creativity_level not in [1, 2, 3]:
+            raise HTTPException(status_code=400, detail=f"Creativity level must be 1, 2, or 3")
+        
+        if num_variants < 1 or num_variants > 6:
+            raise HTTPException(status_code=400, detail=f"Number of variants must be between 1 and 6")
+        
+        if mode == "task_specific_mode" and not task_type:
+            raise HTTPException(status_code=400, detail="Task type required for task_specific_mode")
+        
+        if task_type and task_type not in TASK_TYPES:
+            raise HTTPException(status_code=400, detail=f"Invalid task type: {task_type}")
+        
+        # Language validation
+        if language:
+            # Common ISO-639-1 language codes
+            VALID_LANGUAGE_CODES = {
+                'en', 'zh', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 
+                'ar', 'hi', 'th', 'vi', 'nl', 'sv', 'no', 'da', 'fi', 'pl',
+                'tr', 'he', 'cs', 'hu', 'ro', 'bg', 'hr', 'sk', 'sl', 'et',
+                'lv', 'lt', 'mt', 'ga', 'cy', 'eu', 'ca', 'gl', 'is', 'fo'
+            }
+            if len(language) != 2 or language.lower() not in VALID_LANGUAGE_CODES:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid language code: '{language}'. Must be a valid 2-letter ISO-639-1 code (e.g., es, fr, ja, de, it)"
+                )
+            # Normalize to lowercase
+            language = language.lower()
+        
+        # Basic validation for required inputs
+        if mode in ["easy_mode", "custom_mode"] and not prompt and not image_file:
+            raise HTTPException(status_code=400, detail=f"{mode} requires either prompt or image")
+        
+        logger.info("✅ Input validation passed")
+        
+        # Process image file if provided
+        image_data = None
+        image_reference = None
+        if image_file:
+            logger.info(f"📷 Processing image file: {image_file.filename}")
+            # Validate image file
+            if not image_file.content_type or not image_file.content_type.startswith('image/'):
+                raise HTTPException(status_code=400, detail="Uploaded file must be an image")
+            
+            # Read image data
+            image_data = await image_file.read()
+            if len(image_data) > 10 * 1024 * 1024:  # 10MB limit
+                raise HTTPException(status_code=400, detail="Image file too large (max 10MB)")
+            
+            image_reference = ImageReferenceInput(
+                filename=image_file.filename or "uploaded_image",
+                content_type=image_file.content_type,
+                size_bytes=len(image_data),
+                instruction=image_instruction
             )
-        # Normalize to lowercase
-        language = language.lower()
-    
-    # Basic validation for required inputs
-    if mode in ["easy_mode", "custom_mode"] and not prompt and not image_file:
-        raise HTTPException(status_code=400, detail=f"{mode} requires either prompt or image")
-    
-    # Process image file if provided
-    image_data = None
-    image_reference = None
-    if image_file:
-        # Validate image file
-        if not image_file.content_type or not image_file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="Uploaded file must be an image")
         
-        # Read image data
-        image_data = await image_file.read()
-        if len(image_data) > 10 * 1024 * 1024:  # 10MB limit
-            raise HTTPException(status_code=400, detail="Image file too large (max 10MB)")
+        # Build marketing goals if any provided
+        marketing_goals = None
+        if any([marketing_audience, marketing_objective, marketing_voice, marketing_niche]):
+            marketing_goals = MarketingGoalsInput(
+                target_audience=marketing_audience,
+                objective=marketing_objective,
+                voice=marketing_voice,
+                niche=marketing_niche
+            )
         
-        image_reference = ImageReferenceInput(
-            filename=image_file.filename or "uploaded_image",
-            content_type=image_file.content_type,
-            size_bytes=len(image_data),
-            instruction=image_instruction
+        # Parse overrides if provided
+        parsed_overrides = None
+        if overrides:
+            try:
+                parsed_overrides = json.loads(overrides)
+                logger.info(f"📝 Parsed overrides: {parsed_overrides}")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Failed to parse overrides JSON: {e}")
+                raise HTTPException(status_code=400, detail="Invalid JSON format for overrides")
+        
+        # Parse brand kit if provided
+        parsed_brand_kit = None
+        if brand_kit:
+            try:
+                parsed_brand_kit = json.loads(brand_kit)
+                logger.info(f"🎨 Parsed brand_kit: {parsed_brand_kit}")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Failed to parse brand_kit JSON: {e}")
+                raise HTTPException(status_code=400, detail="Invalid JSON format for brand_kit")
+        
+        # Create pipeline run request
+        request = PipelineRunRequest(
+            mode=mode,
+            platform_name=platform_name,
+            creativity_level=creativity_level,
+            num_variants=num_variants,
+            prompt=prompt,
+            task_type=task_type,
+            task_description=task_description,
+            image_reference=image_reference,
+            render_text=render_text,
+            apply_branding=apply_branding,
+            marketing_goals=marketing_goals,
+            language=language,
+            preset_id=preset_id,
+            preset_type=preset_type,
+            overrides=parsed_overrides,
+            brand_kit=parsed_brand_kit
         )
-    
-    # Build marketing goals if any provided
-    marketing_goals = None
-    if any([marketing_audience, marketing_objective, marketing_voice, marketing_niche]):
-        marketing_goals = MarketingGoalsInput(
-            target_audience=marketing_audience,
-            objective=marketing_objective,
-            voice=marketing_voice,
-            niche=marketing_niche
+        
+        logger.info(f"📋 Created pipeline run request object")
+        
+        # Create database record
+        run = PipelineRun(
+            status=RunStatus.PENDING,
+            mode=request.mode,
+            platform_name=request.platform_name,
+            task_type=request.task_type,
+            prompt=request.prompt,
+            creativity_level=request.creativity_level,
+            render_text=request.render_text,
+            apply_branding=request.apply_branding,
+            has_image_reference=image_reference is not None,
+            image_filename=image_reference.filename if image_reference else None,
+            image_instruction=image_reference.instruction if image_reference else None,
+            task_description=request.task_description,
+            marketing_audience=marketing_goals.target_audience if marketing_goals else None,
+            marketing_objective=marketing_goals.objective if marketing_goals else None,
+            marketing_voice=marketing_goals.voice if marketing_goals else None,
+            marketing_niche=marketing_goals.niche if marketing_goals else None,
+            language=language or 'en',
+            brand_kit=json.dumps(parsed_brand_kit) if parsed_brand_kit else None
         )
-    
-    # Parse overrides if provided
-    parsed_overrides = None
-    if overrides:
-        try:
-            parsed_overrides = json.loads(overrides)
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON format for overrides")
-    
-    # Create pipeline run request
-    request = PipelineRunRequest(
-        mode=mode,
-        platform_name=platform_name,
-        creativity_level=creativity_level,
-        num_variants=num_variants,
-        prompt=prompt,
-        task_type=task_type,
-        task_description=task_description,
-        branding_elements=branding_elements,
-        image_reference=image_reference,
-        render_text=render_text,
-        apply_branding=apply_branding,
-        marketing_goals=marketing_goals,
-        language=language,
-        preset_id=preset_id,
-        overrides=parsed_overrides
-    )
-    
-    # Create database record
-    run = PipelineRun(
-        status=RunStatus.PENDING,
-        mode=request.mode,
-        platform_name=request.platform_name,
-        task_type=request.task_type,
-        prompt=request.prompt,
-        creativity_level=request.creativity_level,
-        render_text=request.render_text,
-        apply_branding=request.apply_branding,
-        has_image_reference=image_reference is not None,
-        image_filename=image_reference.filename if image_reference else None,
-        image_instruction=image_reference.instruction if image_reference else None,
-        branding_elements=request.branding_elements,
-        task_description=request.task_description,
-        marketing_audience=marketing_goals.target_audience if marketing_goals else None,
-        marketing_objective=marketing_goals.objective if marketing_goals else None,
-        marketing_voice=marketing_goals.voice if marketing_goals else None,
-        marketing_niche=marketing_goals.niche if marketing_goals else None,
-        language=language or 'en'
-    )
-    
-    session.add(run)
-    await session.commit()
-    await session.refresh(run)
-    
-    # Start background pipeline execution
-    asyncio.create_task(task_processor.start_pipeline_run(run.id, request, image_data, executor))
-    
-    return PipelineRunResponse(
-        id=run.id,
-        status=run.status,
-        mode=run.mode,
-        created_at=run.created_at,
-        started_at=run.started_at,
-        completed_at=run.completed_at,
-        total_duration_seconds=run.total_duration_seconds,
-        total_cost_usd=run.total_cost_usd,
-        error_message=run.error_message,
-        output_directory=run.output_directory,
-        metadata_file_path=run.metadata_file_path
-    )
+        
+        session.add(run)
+        await session.commit()
+        await session.refresh(run)
+        
+        logger.info(f"💾 Created database record for run {run.id}")
+        
+        # Start background pipeline execution
+        logger.info(f"🎬 Starting background task for run {run.id}")
+        asyncio.create_task(task_processor.start_pipeline_run(run.id, request, image_data, executor))
+        
+        logger.info(f"🚀 Background task started for run {run.id}")
+        
+        return PipelineRunResponse(
+            id=run.id,
+            status=run.status,
+            mode=run.mode,
+            created_at=run.created_at,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            total_duration_seconds=run.total_duration_seconds,
+            total_cost_usd=run.total_cost_usd,
+            error_message=run.error_message,
+            output_directory=run.output_directory,
+            metadata_file_path=run.metadata_file_path
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in create_pipeline_run: {e}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 # === REFINEMENT ENDPOINTS ===
@@ -844,7 +881,6 @@ async def get_pipeline_run(
         stage_output_data = getattr(stage, 'output_data', None)
         if stage_output_data:
             try:
-                import json
                 output_data = json.loads(stage_output_data)
             except:
                 pass
@@ -885,13 +921,15 @@ async def get_pipeline_run(
         has_image_reference=run.has_image_reference,
         image_filename=run.image_filename,
         image_instruction=run.image_instruction,
-        branding_elements=run.branding_elements,
         task_description=run.task_description,
         marketing_audience=run.marketing_audience,
         marketing_objective=run.marketing_objective,
         marketing_voice=run.marketing_voice,
         marketing_niche=run.marketing_niche,
-        language=run.language
+        language=run.language,
+        
+        # Brand Kit data (parse JSON if present)
+        brand_kit=json.loads(run.brand_kit) if run.brand_kit else None
     )
 
 
@@ -944,6 +982,7 @@ async def get_run_status(
         "completed_stages": len([s for s in stages if getattr(s, 'status', None) == StageStatus.COMPLETED]),
         "failed_stages": len([s for s in stages if getattr(s, 'status', None) == StageStatus.FAILED])
     }
+
 
 
 @runs_router.post("/{run_id}/cancel")
@@ -1369,20 +1408,13 @@ async def regenerate_caption(
     # Check if model has changed
     model_has_changed = previous_model_id and (model_id != previous_model_id)
     
-    # DEBUG: Log the request parameters
-    logger.info(f"DEBUG: Regenerate request - writer_only={request.writer_only}, settings={request.settings}")
-    logger.info(f"DEBUG: Model comparison - previous: {previous_model_id}, current: {model_id}, changed: {model_has_changed}")
-    if request.settings:
-        logger.info(f"DEBUG: Settings dump: {request.settings.model_dump()}")
     is_empty = _is_settings_empty(request.settings)
-    logger.info(f"DEBUG: _is_settings_empty result: {is_empty}")
     
     # Determine if we should run writer-only:
     # - Must be requested as writer_only=True
     # - Settings must be empty (no changes to caption settings)
     # - Model must NOT have changed (if model changed, run full pipeline)
     writer_only_result = request.writer_only and is_empty and not model_has_changed
-    logger.info(f"DEBUG: Final writer_only logic: {request.writer_only} and {is_empty} and not {model_has_changed} = {writer_only_result}")
     
     # Prepare caption regeneration data
     caption_data = {
@@ -1395,8 +1427,6 @@ async def regenerate_caption(
         "previous_version": caption_version,
         "model_id": model_id
     }
-    
-    logger.info(f"DEBUG: Caption data being sent: {caption_data}")
     
     # Start background caption regeneration
     await task_processor.start_caption_generation(new_caption_id, caption_data, executor)
@@ -1504,10 +1534,9 @@ async def create_brand_preset(
         preset_type=request.preset_type,
         model_id=request.model_id,
         pipeline_version=request.pipeline_version,
-        brand_colors=json.dumps(request.brand_colors) if request.brand_colors else None,
-        brand_voice_description=request.brand_voice_description,
-        input_snapshot=json.dumps(request.input_snapshot) if request.input_snapshot else None,
-        style_recipe=json.dumps(request.style_recipe) if request.style_recipe else None
+        brand_kit=json.dumps(request.brand_kit.model_dump()) if request.brand_kit else None,
+        input_snapshot=request.input_snapshot.model_dump_json() if request.input_snapshot else None,
+        style_recipe=request.style_recipe.model_dump_json() if request.style_recipe else None,
     )
     
     session.add(preset)
@@ -1602,10 +1631,8 @@ async def update_brand_preset(
     # Update fields
     if request.name is not None:
         preset.name = request.name
-    if request.brand_colors is not None:
-        preset.brand_colors = json.dumps(request.brand_colors)
-    if request.brand_voice_description is not None:
-        preset.brand_voice_description = request.brand_voice_description
+    if request.brand_kit is not None:
+        preset.brand_kit = json.dumps(request.brand_kit.model_dump())
     
     # Increment version
     preset.version += 1
@@ -1641,6 +1668,35 @@ async def delete_brand_preset(
     await session.commit()
     
     return {"message": "Brand preset deleted successfully"}
+
+
+@presets_router.post("/cleanup-invalid")
+async def cleanup_invalid_presets(
+    session: AsyncSession = Depends(get_session)
+):
+    """Clean up presets with invalid data structures"""
+    # TODO: Add admin authentication
+    
+    result = await session.execute(select(BrandPreset))
+    presets = result.scalars().all()
+    
+    invalid_presets = []
+    valid_presets = []
+    
+    for preset in presets:
+        try:
+            # Try to convert to response format
+            _convert_preset_to_response(preset)
+            valid_presets.append(preset.id)
+        except Exception as e:
+            invalid_presets.append({"id": preset.id, "name": preset.name, "error": str(e)})
+    
+    return {
+        "total_presets": len(presets),
+        "valid_presets": len(valid_presets),
+        "invalid_presets": len(invalid_presets),
+        "invalid_details": invalid_presets
+    }
 
 
 @runs_router.post("/{run_id}/save-as-preset", response_model=BrandPresetResponse)
@@ -1684,11 +1740,16 @@ async def save_preset_from_result(
     
     # Build the style recipe from the run metadata
     # Extract the actual style recipe data from the processing context
+    generated_image_prompts = processing_context.get('generated_image_prompts', [])
+    suggested_marketing_strategies = processing_context.get('suggested_marketing_strategies', [])
+    style_guidance_sets = processing_context.get('style_guidance_sets', [])
+    final_assembled_prompts = processing_context.get('final_assembled_prompts', [])
+    
     style_recipe_data = {
-        "visual_concept": processing_context.get('generated_image_prompts', [{}])[request.generation_index] if request.generation_index < len(processing_context.get('generated_image_prompts', [])) else {},
-        "strategy": processing_context.get('suggested_marketing_strategies', [{}])[request.generation_index] if request.generation_index < len(processing_context.get('suggested_marketing_strategies', [])) else {},
-        "style_guidance": processing_context.get('style_guidance_sets', [{}])[request.generation_index] if request.generation_index < len(processing_context.get('style_guidance_sets', [])) else {},
-        "final_prompt": processing_context.get('final_assembled_prompts', [{}])[request.generation_index].get('final_prompt', '') if request.generation_index < len(processing_context.get('final_assembled_prompts', [])) else '',
+        "visual_concept": generated_image_prompts[request.generation_index].get('visual_concept', {}) if request.generation_index < len(generated_image_prompts) else {},
+        "strategy": suggested_marketing_strategies[request.generation_index] if request.generation_index < len(suggested_marketing_strategies) else {},
+        "style_guidance": style_guidance_sets[request.generation_index] if request.generation_index < len(style_guidance_sets) else {},
+        "final_prompt": final_assembled_prompts[request.generation_index].get('prompt', '') if request.generation_index < len(final_assembled_prompts) else '',
         "generation_index": request.generation_index
     }
     
@@ -1699,8 +1760,8 @@ async def save_preset_from_result(
         preset_type=PresetType.STYLE_RECIPE,
         model_id=run.metadata_file_path.split('/')[-1].split('_')[0] if run.metadata_file_path else "unknown",  # Extract from filename
         pipeline_version="1.0.0",  # TODO: Get from run metadata
-        brand_colors=json.dumps(request.brand_colors) if request.brand_colors else None,
-        brand_voice_description=request.brand_voice_description,
+        brand_kit=json.dumps(request.brand_kit.model_dump()) if request.brand_kit else None,
+        input_snapshot=None,  # STYLE_RECIPE presets don't use input_snapshot
         style_recipe=json.dumps(style_recipe_data)
     )
     
@@ -1713,21 +1774,45 @@ async def save_preset_from_result(
 
 def _convert_preset_to_response(preset: BrandPreset) -> BrandPresetResponse:
     """Convert a BrandPreset database model to a response model"""
-    return BrandPresetResponse(
-        id=preset.id,
-        name=preset.name,
-        preset_type=preset.preset_type,
-        version=preset.version,
-        model_id=preset.model_id,
-        pipeline_version=preset.pipeline_version,
-        usage_count=preset.usage_count,
-        created_at=preset.created_at,
-        last_used_at=preset.last_used_at,
-        brand_colors=json.loads(preset.brand_colors) if preset.brand_colors else None,
-        brand_voice_description=preset.brand_voice_description,
-        input_snapshot=json.loads(preset.input_snapshot) if preset.input_snapshot else None,
-        style_recipe=json.loads(preset.style_recipe) if preset.style_recipe else None
-    )
+    try:
+        # Parse JSON fields safely
+        brand_kit = json.loads(preset.brand_kit) if preset.brand_kit else None
+        input_snapshot = json.loads(preset.input_snapshot) if preset.input_snapshot else None
+        style_recipe = json.loads(preset.style_recipe) if preset.style_recipe else None
+        
+        return BrandPresetResponse(
+            id=preset.id,
+            name=preset.name,
+            preset_type=preset.preset_type,
+            version=preset.version,
+            model_id=preset.model_id,
+            pipeline_version=preset.pipeline_version,
+            usage_count=preset.usage_count,
+            created_at=preset.created_at,
+            last_used_at=preset.last_used_at,
+            brand_kit=brand_kit,
+            input_snapshot=input_snapshot,
+            style_recipe=style_recipe
+        )
+    except Exception as e:
+        # Log the error but don't crash the entire listing
+        logger.error(f"Failed to convert preset {preset.id} to response: {e}")
+        
+        # Return a minimal response with just the basic fields
+        return BrandPresetResponse(
+            id=preset.id,
+            name=f"{preset.name} (Error Loading)",
+            preset_type=preset.preset_type,
+            version=preset.version,
+            model_id=preset.model_id,
+            pipeline_version=preset.pipeline_version,
+            usage_count=preset.usage_count,
+            created_at=preset.created_at,
+            last_used_at=preset.last_used_at,
+            brand_kit=None,
+            input_snapshot=None,
+            style_recipe=None
+        )
 
 
 # Include routers in main API router

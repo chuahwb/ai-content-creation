@@ -256,7 +256,9 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
         enhanced_prompt=enhanced_prompt,
         image_size=image_size,
         mask_path=None,
-        image_gen_client=image_gen_client
+        image_gen_client=image_gen_client,
+        image_quality_setting="medium",  # Use high quality for subject repair refinements
+        input_fidelity="high"  # High fidelity for all refinement operations
     )
     
     return result_image_path
@@ -266,39 +268,82 @@ def _prepare_subject_repair_prompt(ctx: PipelineContext) -> str:
     """
     Prepare an enhanced prompt for subject repair that incorporates
     the user instructions and reference image context.
+    Updated to handle new brandkit data structure gracefully.
     """
-    image_ctx_json, main_obj = get_image_ctx_and_main_object(ctx)
-    
-    # Add context about subject replacement
-    enhanced_prompt = f"""
-    You are editing a base image using a reference object image. The goal is to create a realistic and visually consistent composition based on the provided visual concept.
+    try:
+        image_ctx_json, main_obj = get_image_ctx_and_main_object(ctx)
+        
+        # Safely extract visual concept data with fallbacks
+        visual_concept = {}
+        if isinstance(image_ctx_json, dict):
+            visual_concept = image_ctx_json.get('visual_concept', {})
+        
+        # Ensure we have valid visual concept data with safe fallbacks
+        def safe_get(key, default):
+            """Safely get a value from visual_concept with fallback"""
+            if isinstance(visual_concept, dict):
+                return visual_concept.get(key, default)
+            return default
+        
+        composition = safe_get('composition_and_framing', 'Standard composition with balanced framing')
+        background = safe_get('background_environment', 'Appropriate background setting')
+        foreground = safe_get('foreground_elements', 'Standard foreground elements')
+        lighting = safe_get('lighting_and_mood', 'Natural lighting with appropriate mood')
+        color_palette = safe_get('color_palette', 'Harmonious color palette')
+        visual_style = safe_get('visual_style', 'Professional visual style')
+        texture_details = safe_get('texture_and_details', 'Appropriate textures and details')
+        creative_reasoning = safe_get('creative_reasoning', 'Maintain visual consistency')
+        
+        # For text and branding, provide safe defaults to maintain original functionality
+        text_visuals = safe_get('promotional_text_visuals', 'No text elements')
+        branding_visuals = safe_get('branding_visuals', 'No branding elements')
+        
+        # Construct the enhanced prompt with safe data access
+        enhanced_prompt = f"""
+        You are editing a base image using a reference object image. The goal is to create a realistic and visually consistent composition based on the provided visual concept.
 
-    **Instructions**:
-    1. Replace the main object in the base image with relevant content from the reference image.
-        - The reference object must retain its **exact shape, proportions, visual aesthetics and text** when inserted.
-        - **Do not reinterpret or creatively modify** the reference object — replicate it **as-is**.
+        **Instructions**:
+        1. Replace the main object in the base image with relevant content from the reference image.
+            - The reference object must retain its **exact shape, proportions, visual aesthetics and text** when inserted.
+            - **Do not reinterpret or creatively modify** the reference object — replicate it **as-is**.
 
-    2. The following visual concept was used during the generation of the original image. It may not fully align with the current image but can serve as **an optional creative reference** to guide stylistic consistency and atmosphere:
+        2. The following visual concept was used during the generation of the original image. It may not fully align with the current image but can serve as **an optional creative reference** to guide stylistic consistency and atmosphere:
 
-        Visual Concept:
-        - Main Subject: {main_obj}
-        - Composition & Framing: {image_ctx_json['visual_concept']['composition_and_framing']}
-        - Background Environment: {image_ctx_json['visual_concept']['background_environment']}
-        - Foreground Elements: {image_ctx_json['visual_concept']['foreground_elements']}
-        - Lighting & Mood: {image_ctx_json['visual_concept']['lighting_and_mood']}
-        - Color Palette: {image_ctx_json['visual_concept']['color_palette']}
-        - Visual Style: {image_ctx_json['visual_concept']['visual_style']}
-        - Texture & Details: {image_ctx_json['visual_concept']['texture_and_details']}
-        - Creative Reasoning: {image_ctx_json['visual_concept']['creative_reasoning']}
-        - Text Visuals : {image_ctx_json['visual_concept']['promotional_text_visuals']}
-        - Branding Visuals : {image_ctx_json['visual_concept']['branding_visuals']}
+            Visual Concept:
+            - Main Subject: {main_obj}
+            - Composition & Framing: {composition}
+            - Background Environment: {background}
+            - Foreground Elements: {foreground}
+            - Lighting & Mood: {lighting}
+            - Color Palette: {color_palette}
+            - Visual Style: {visual_style}
+            - Texture & Details: {texture_details}
+            - Creative Reasoning: {creative_reasoning}
+            - Text Visuals: {text_visuals}
+            - Branding Visuals: {branding_visuals}
 
-    3. Seamlessly match the lighting, texture, perspective, and depth of field of the base image so that the inserted object looks naturally integrated.
-    4. Align the inserted content with the image's narrative and composition principles (e.g., rule of thirds, natural diagonals, balance of elements).
-    5. Ensure all elements in the edited image are visually coherent and logically consistent within the scene.
-    6. Correct any visual or contextual inconsistencies introduced during the edit to maintain a believable and polished composition.
-    7. Return only the edited base image, fully rendered and coherent. Do not include or concatenate the reference image.
-    """
-    
-    # ctx.log(f"Enhanced subject repair prompt: {enhanced_prompt}")
-    return enhanced_prompt 
+        3. Seamlessly match the lighting, texture, perspective, and depth of field of the base image so that the inserted object looks naturally integrated.
+        4. Align the inserted content with the image's narrative and composition principles (e.g., rule of thirds, natural diagonals, balance of elements).
+        5. Ensure all elements in the edited image are visually coherent and logically consistent within the scene.
+        6. Correct any visual or contextual inconsistencies introduced during the edit to maintain a believable and polished composition.
+        7. Return only the edited base image, fully rendered and coherent. Do not include or concatenate the reference image.
+        """
+        
+        ctx.log("Subject repair prompt prepared successfully with visual context")
+        return enhanced_prompt
+        
+    except Exception as e:
+        # Fallback to a basic prompt if data access fails
+        ctx.log(f"Warning: Error preparing subject repair prompt, using fallback: {e}")
+        
+        fallback_prompt = """
+        You are editing a base image using a reference object image. Replace the main object in the base image with the object from the reference image.
+        
+        **Instructions**:
+        1. The reference object must retain its exact shape, proportions, and visual characteristics when inserted.
+        2. Seamlessly match the lighting, texture, perspective, and depth of field of the base image.
+        3. Ensure all elements are visually coherent and logically consistent.
+        4. Return only the edited base image, fully rendered and coherent.
+        """
+        
+        return fallback_prompt 

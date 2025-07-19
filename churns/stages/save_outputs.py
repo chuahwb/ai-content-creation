@@ -91,97 +91,141 @@ def _get_relative_path(absolute_path: str, parent_run_id: str) -> str:
 
 def _generate_summary(ctx: PipelineContext) -> str:
     """Generate a detailed summary of the refinement for the index."""
-    refinement_type = ctx.refinement_type
-    refinement_status = ctx.refinement_result.get("status", "unknown") if ctx.refinement_result else "unknown"
-    
-    # Check if refinement was successful based on output
-    has_output = (ctx.refinement_result and 
-                  ctx.refinement_result.get("output_path") and 
-                  os.path.exists(ctx.refinement_result.get("output_path", "")))
-    
-    # Get error context for better messaging
-    error_context = ctx.refinement_result.get("error_context") if ctx.refinement_result else None
-    
-    type_labels = {
-        "subject": "Subject Enhancement",
-        "text": "Text Enhancement", 
-        "prompt": "Style Enhancement"
-    }
-    type_label = type_labels.get(refinement_type, "Refinement")
-    
-    if refinement_status == "completed" and has_output:
-        return f"{type_label}: Successful"
-    elif refinement_status == "no_changes_needed":
-        return f"{type_label}: No changes needed"
-    elif refinement_status == "failed" and error_context:
-        error_type = error_context.get("error_type", "unknown")
-        if error_type == "connection_error":
-            return f"{type_label}: Connection failed"
-        elif error_type == "rate_limit":
-            return f"{type_label}: Rate limit exceeded"
-        elif error_type == "api_error":
-            return f"{type_label}: API error"
-        elif error_type == "auth_error":
-            return f"{type_label}: Authentication failed"
+    try:
+        refinement_type = getattr(ctx, 'refinement_type', 'unknown')
+        refinement_status = "unknown"
+        
+        if hasattr(ctx, 'refinement_result') and ctx.refinement_result:
+            refinement_status = ctx.refinement_result.get("status", "unknown")
+        
+        # Check if refinement was successful based on output
+        has_output = False
+        if (hasattr(ctx, 'refinement_result') and ctx.refinement_result and 
+            ctx.refinement_result.get("output_path") and 
+            os.path.exists(ctx.refinement_result.get("output_path", ""))):
+            has_output = True
+        
+        # Get error context for better messaging
+        error_context = None
+        if hasattr(ctx, 'refinement_result') and ctx.refinement_result:
+            error_context = ctx.refinement_result.get("error_context")
+        
+        type_labels = {
+            "subject": "Subject Enhancement",
+            "text": "Text Enhancement", 
+            "prompt": "Style Enhancement"
+        }
+        type_label = type_labels.get(refinement_type, "Refinement")
+        
+        if refinement_status == "completed" and has_output:
+            return f"{type_label}: Successful"
+        elif refinement_status == "no_changes_needed":
+            return f"{type_label}: No changes needed"
+        elif refinement_status == "not_available":
+            return f"{type_label}: Not available"
+        elif refinement_status == "failed" and error_context:
+            error_type = error_context.get("error_type", "unknown")
+            if error_type == "connection_error":
+                return f"{type_label}: Connection failed"
+            elif error_type == "rate_limit":
+                return f"{type_label}: Rate limit exceeded"
+            elif error_type == "api_error":
+                return f"{type_label}: API error"
+            elif error_type == "auth_error":
+                return f"{type_label}: Authentication failed"
+            elif error_type == "no_reference_image":
+                return f"{type_label}: No reference image available"
+            else:
+                return f"{type_label}: Failed"
         else:
-            return f"{type_label}: Failed"
-    else:
-        return f"{type_label}: {'Successful' if has_output else 'Failed'}"
+            return f"{type_label}: {'Successful' if has_output else 'Failed'}"
+            
+    except Exception as e:
+        logger.warning(f"Error generating refinement summary: {e}")
+        return "Refinement: Status unknown"
 
 
 def _prepare_database_updates(ctx: PipelineContext) -> None:
     """
     Prepare data for final database record updates.
+    Updated to handle new brandkit data structure gracefully.
     
     This sets context properties that will be used by the background
     task processor to update the database record with final results.
     """
     
-    # Set the final image path (relative to make it portable)
-    output_path = ctx.refinement_result.get("output_path", "")
-    relative_path = None
-    
-    if output_path and os.path.exists(output_path):
-        try:
-            # Try to make path relative to parent run directory
-            relative_path = _get_relative_path(output_path, ctx.parent_run_id)
-        except Exception as e:
-            logger.warning(f"Could not create relative path for {output_path}: {e}")
-            # Fallback to just the filename
-            relative_path = f"refinements/{os.path.basename(output_path)}"
-    
-    # Extract error information from refinement result
-    error_message = None
-    refinement_status = ctx.refinement_result.get("status", "unknown") if ctx.refinement_result else "unknown"
-    error_context = ctx.refinement_result.get("error_context") if ctx.refinement_result else None
-    
-    if error_context:
-        # Use the user-friendly message from error context
-        error_message = error_context.get("user_message")
-        if error_context.get("suggestion"):
-            error_message += f" {error_context.get('suggestion')}"
-    elif refinement_status == "failed" and ctx.refinement_result:
-        # Fallback to basic error from modifications
-        modifications = ctx.refinement_result.get("modifications", {})
-        error_message = modifications.get("error", "Refinement failed for unknown reason")
-    
-    # Determine final status for database
-    if refinement_status in ["completed", "no_changes_needed"]:
-        db_status = "completed"
-    else:
-        db_status = "failed"
-    
-    # Store database update information in context
-    ctx.database_updates = {
-        "status": db_status,
-        "image_path": relative_path,
-        "cost_usd": ctx.refinement_cost or 0.0,
-        "completed_at": datetime.utcnow(),
-        "refinement_summary": _generate_summary(ctx),
-        "error_message": error_message
-    }
-    
-    logger.info("Prepared database updates for final commit")
+    try:
+        # Set the final image path (relative to make it portable)
+        output_path = None
+        if hasattr(ctx, 'refinement_result') and ctx.refinement_result:
+            output_path = ctx.refinement_result.get("output_path", "")
+        
+        relative_path = None
+        
+        if output_path and os.path.exists(output_path):
+            try:
+                # Try to make path relative to parent run directory
+                parent_run_id = getattr(ctx, 'parent_run_id', 'unknown')
+                relative_path = _get_relative_path(output_path, parent_run_id)
+            except Exception as e:
+                logger.warning(f"Could not create relative path for {output_path}: {e}")
+                # Fallback to just the filename
+                relative_path = f"refinements/{os.path.basename(output_path)}"
+        
+        # Extract error information from refinement result
+        error_message = None
+        refinement_status = "unknown"
+        error_context = None
+        
+        if hasattr(ctx, 'refinement_result') and ctx.refinement_result:
+            refinement_status = ctx.refinement_result.get("status", "unknown")
+            error_context = ctx.refinement_result.get("error_context")
+        
+        if error_context:
+            # Use the user-friendly message from error context
+            error_message = error_context.get("user_message")
+            if error_context.get("suggestion"):
+                error_message += f" {error_context.get('suggestion')}"
+        elif refinement_status == "failed" and hasattr(ctx, 'refinement_result') and ctx.refinement_result:
+            # Fallback to basic error from modifications
+            modifications = ctx.refinement_result.get("modifications", {})
+            error_message = modifications.get("error", "Refinement failed for unknown reason")
+        
+        # Determine final status for database
+        if refinement_status in ["completed", "no_changes_needed"]:
+            db_status = "completed"
+        else:
+            db_status = "failed"
+        
+        # Get refinement cost safely
+        refinement_cost = getattr(ctx, 'refinement_cost', 0.0)
+        if refinement_cost is None:
+            refinement_cost = 0.0
+        
+        # Store database update information in context
+        ctx.database_updates = {
+            "status": db_status,
+            "image_path": relative_path,
+            "cost_usd": refinement_cost,
+            "completed_at": datetime.utcnow(),
+            "refinement_summary": _generate_summary(ctx),
+            "error_message": error_message
+        }
+        
+        logger.info(f"Prepared database updates for final commit: status={db_status}, cost=${refinement_cost}")
+        
+    except Exception as e:
+        # Fallback database updates if something goes wrong
+        logger.error(f"Error preparing database updates: {e}")
+        ctx.database_updates = {
+            "status": "failed",
+            "image_path": None,
+            "cost_usd": 0.0,
+            "completed_at": datetime.utcnow(),
+            "refinement_summary": "Refinement: Error preparing updates",
+            "error_message": f"Error preparing database updates: {str(e)}"
+        }
+        logger.info("Using fallback database updates due to error")
 
 
 def _cleanup_temporary_files(ctx: PipelineContext) -> None:

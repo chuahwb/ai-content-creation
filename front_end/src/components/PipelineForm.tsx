@@ -40,10 +40,14 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
-import { motion } from 'framer-motion';
-import { PipelineFormData, PipelineRunResponse, BrandPresetResponse } from '@/types/api';
+import { motion, AnimatePresence } from 'framer-motion';
+import { PipelineFormData, PipelineRunResponse, BrandPresetResponse, BrandKitInput } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
 import PresetManagementModal from './PresetManagementModal';
+import BrandKitPresetModal from './BrandKitPresetModal';
+import ColorPaletteEditor from './ColorPaletteEditor';
+import LogoUploader from './LogoUploader';
+import CompactLogoDisplay from './CompactLogoDisplay';
 
 // Common ISO-639-1 language codes for validation
 const VALID_LANGUAGE_CODES = [
@@ -62,7 +66,12 @@ const formSchema = z.object({
   prompt: z.string().optional(),
   task_type: z.string().optional(),
   task_description: z.string().optional(),
-  branding_elements: z.string().optional(),
+  brand_kit: z.object({
+    colors: z.array(z.string()).optional(),
+    brand_voice_description: z.string().optional(),
+    logo_file_base64: z.string().nullable().optional(),
+    saved_logo_path_in_run_dir: z.string().nullable().optional(),
+  }).optional(),
   image_file: z.any().optional(),
   image_instruction: z.string().optional(),
   render_text: z.boolean(),
@@ -132,6 +141,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const [saveTemplateName, setSaveTemplateName] = useState('');
   const [saveTemplateLoading, setSaveTemplateLoading] = useState(false);
 
+  // Brand kit preset state
+  const [brandKitPresetModalOpen, setBrandKitPresetModalOpen] = useState(false);
+
   const {
     control,
     handleSubmit,
@@ -149,12 +161,14 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       render_text: false,
       apply_branding: false,
       language: 'en',
+      brand_kit: undefined,
     },
   });
 
   const selectedMode = watch('mode');
   const requiresTaskType = selectedMode === 'task_specific_mode';
   const showAdvancedFields = selectedMode !== 'easy_mode';
+  const applyBranding = watch('apply_branding');
   
   // Check if form is valid for template saving
   const isFormValidForTemplate = () => {
@@ -205,6 +219,20 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
   // Preset handling functions
   const handlePresetSelected = (preset: BrandPresetResponse) => {
+    // Check if this is a pure brand kit preset (brand kit data + minimal input_snapshot)
+    const isBrandKitPreset = preset.preset_type === 'INPUT_TEMPLATE' && 
+                            preset.brand_kit && 
+                            (preset.brand_kit.colors?.length || preset.brand_kit.brand_voice_description || preset.brand_kit.logo_file_base64) &&
+                            preset.model_id === 'brand-kit-preset' &&
+                            preset.input_snapshot?.platform_name === 'Brand Kit (Universal)';
+    
+    if (isBrandKitPreset) {
+      // Use the dedicated brand kit handler for brand kit presets
+      handleApplyBrandKitPreset(preset);
+      setPresetModalOpen(false);
+      return;
+    }
+    
     setActivePreset(preset);
     applyPresetToForm(preset);
     setPresetModalOpen(false);
@@ -216,30 +244,27 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       // Apply Input Template: Clear form first, then populate with template data
       const inputData = preset.input_snapshot;
       
-      // First, reset form to clean state to avoid hybrid templates (but keep preset state)
-      resetFormToDefaults(false);
-      
       if (inputData) {
-        // Use setTimeout to ensure proper form state transition and avoid placeholder overlap
-        setTimeout(() => {
-          // Now populate with template data - this ensures clean application
-          setValue('mode', inputData.mode || 'easy_mode');
-          setValue('prompt', inputData.prompt || '');
-          setValue('creativity_level', inputData.creativity_level || 1);
-          setValue('platform_name', inputData.platform_name || '');
-          setValue('num_variants', inputData.num_variants || 3);
-          setValue('task_type', inputData.task_type || '');
-          setValue('task_description', inputData.task_description || '');
-          setValue('branding_elements', inputData.branding_elements || '');
-          setValue('render_text', inputData.render_text || false);
-          setValue('apply_branding', inputData.apply_branding || false);
-          setValue('language', inputData.language || 'en');
-          setValue('marketing_audience', inputData.marketing_audience || '');
-          setValue('marketing_objective', inputData.marketing_objective || '');
-          setValue('marketing_voice', inputData.marketing_voice || '');
-          setValue('marketing_niche', inputData.marketing_niche || '');
-          setValue('image_instruction', inputData.image_instruction || '');
-        }, 0);
+        // Apply template data immediately without setTimeout to avoid race conditions
+        // Reset form to clean state first
+        reset({
+          mode: (inputData.mode as 'easy_mode' | 'custom_mode' | 'task_specific_mode') || 'easy_mode',
+          prompt: inputData.prompt || '',
+          creativity_level: (inputData.creativity_level as 1 | 2 | 3) || 1,
+          platform_name: inputData.platform_name || '',
+          num_variants: inputData.num_variants || 3,
+          task_type: inputData.task_type || '',
+          task_description: inputData.task_description || '',
+          brand_kit: inputData.brand_kit || undefined,
+          render_text: inputData.render_text || false,
+          apply_branding: inputData.apply_branding || false,
+          language: inputData.language || 'en',
+          marketing_audience: inputData.marketing_audience || '',
+          marketing_objective: inputData.marketing_objective || '',
+          marketing_voice: inputData.marketing_voice || '',
+          marketing_niche: inputData.marketing_niche || '',
+          image_instruction: inputData.image_instruction || '',
+        });
       }
       setIsRecipeActive(false);
     } else if (preset.preset_type === 'STYLE_RECIPE') {
@@ -281,6 +306,18 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       return { isValid: false, error: 'Platform selection is required' };
     }
     
+    // Special validation for recipe mode
+    if (isRecipeActive) {
+      const hasPathA = uploadedFile; // Path A: image upload
+      const hasPathB = recipeOverrides.prompt && recipeOverrides.prompt.trim(); // Path B: text prompt
+      
+      if (!hasPathA && !hasPathB) {
+        return { isValid: false, error: 'Recipe mode requires either a new image (Path A) or a new prompt (Path B)' };
+      }
+      
+      return { isValid: true };
+    }
+    
     if (selectedMode === 'easy_mode' && !data.prompt && !uploadedFile) {
       return { isValid: false, error: 'Easy mode requires either a prompt or an image' };
     }
@@ -292,6 +329,10 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     return { isValid: true };
   };
 
+
+
+
+
   const onSubmit = async (data: PipelineFormData) => {
     setIsSubmitting(true);
     
@@ -302,11 +343,13 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         throw new Error(validation.error);
       }
 
-      // Add preset data if active - only send preset_id and overrides for STYLE_RECIPE
+      // Prepare submit data - don't overwrite form data with preset data
       const submitData = {
         ...data,
-        preset_id: activePreset?.preset_type === 'STYLE_RECIPE' ? activePreset.id : undefined,
+        // Add preset information if active
+        preset_id: activePreset?.id,
         preset_type: activePreset?.preset_type,
+        // For STYLE_RECIPE presets, include overrides
         overrides: (activePreset?.preset_type === 'STYLE_RECIPE' && isRecipeActive) ? recipeOverrides : undefined,
       };
 
@@ -341,7 +384,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       prompt: '', // Clear prompt field with empty string
       task_type: '',
       task_description: '',
-      branding_elements: '',
+      brand_kit: undefined,
       image_instruction: '',
       render_text: false,
       apply_branding: false,
@@ -409,7 +452,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         language: currentValues.language || 'en',
         task_type: currentValues.task_type || null,
         task_description: currentValues.task_description || null,
-        branding_elements: currentValues.branding_elements || null,
+        brand_kit: currentValues.brand_kit || null,
         image_instruction: currentValues.image_instruction || null,
         marketing_audience: currentValues.marketing_audience || null,
         marketing_objective: currentValues.marketing_objective || null,
@@ -436,6 +479,87 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     }
   };
 
+  // Brand Kit Preset handlers
+  const hasBrandKitData = () => {
+    const brandKit = watch('brand_kit');
+    return Boolean(
+      brandKit?.colors?.length || 
+      brandKit?.brand_voice_description?.trim() ||
+      brandKit?.logo_file_base64
+    );
+  };
+
+  const handleLoadBrandKitPreset = () => {
+    setBrandKitPresetModalOpen(true);
+  };
+
+  const handleSaveBrandKitPreset = async () => {
+    const brandKit = watch('brand_kit');
+    if (!hasBrandKitData()) {
+      toast.error('No brand kit data to save');
+      return;
+    }
+
+    // Validate character limits for brand voice
+    if (brandKit?.brand_voice_description && brandKit.brand_voice_description.length > 250) {
+      toast.error('Brand voice description must be 250 characters or less');
+      return;
+    }
+
+    // Validate colors format (basic hex validation)
+    if (brandKit?.colors) {
+      for (const color of brandKit.colors) {
+        const hexRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
+        if (!hexRegex.test(color)) {
+          toast.error(`Invalid color format: ${color}. Please use valid hex colors (e.g., #FF0000)`);
+          return;
+        }
+      }
+    }
+
+    const name = prompt('Enter a name for this brand kit:');
+    if (!name?.trim()) return;
+
+    try {
+      await PipelineAPI.createBrandPreset({
+        name: name.trim(),
+        preset_type: 'INPUT_TEMPLATE',
+        brand_kit: brandKit,
+        // Minimal input_snapshot for brand kit presets - only required fields, no execution preferences
+        input_snapshot: {
+          platform_name: 'Brand Kit (Universal)', // Generic platform name indicating this is brand-agnostic
+          creativity_level: 2, // Neutral default
+          num_variants: 1, // Minimal default  
+          render_text: false, // No text rendering for brand kit
+          apply_branding: false, // Brand kit definition doesn't apply itself
+          language: 'en', // Default language
+        },
+        model_id: 'brand-kit-preset',
+        pipeline_version: '1.0.0',
+      });
+      toast.success(`Brand kit "${name}" saved successfully!`);
+    } catch (error: any) {
+      console.error('Failed to save brand kit:', error);
+      toast.error(error.message || 'Failed to save brand kit');
+    }
+  };
+
+  const handleApplyBrandKitPreset = (preset: BrandPresetResponse) => {
+    if (preset.brand_kit) {
+      // Apply brand kit data without resetting entire form
+      setValue('brand_kit', preset.brand_kit);
+      
+      // Only toggle apply_branding if it wasn't already enabled
+      const currentApplyBranding = watch('apply_branding');
+      if (!currentApplyBranding) {
+        setValue('apply_branding', true);
+      }
+      
+      setBrandKitPresetModalOpen(false);
+      toast.success(`Brand kit "${preset.name}" applied`);
+    }
+  };
+
   // Check if user is returning from a successful submission when component mounts/becomes visible
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -457,6 +581,23 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     };
   }, [previewUrl]);
 
+  // Smart Brand Kit Auto-Application: Auto-enable apply_branding when brand kit data is present
+  useEffect(() => {
+    const brandKit = watch('brand_kit');
+    const hasKitData = Boolean(
+      brandKit?.colors?.length || 
+      brandKit?.brand_voice_description?.trim() || 
+      brandKit?.logo_file_base64
+    );
+    
+    const applyBrandingCurrentValue = watch('apply_branding');
+    
+    if (hasKitData && !applyBrandingCurrentValue) {
+      setValue('apply_branding', true);
+      toast.success('Apply branding enabled automatically');
+    }
+  }, [watch('brand_kit'), setValue]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -466,9 +607,12 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       <Card elevation={1} sx={{ maxWidth: 1400, mx: 'auto' }}>
         <CardContent sx={{ p: 4 }}>
           {/* Header */}
-          <Typography variant="h4" gutterBottom sx={{ fontWeight: 600, mb: 4, textAlign: 'center', letterSpacing: '-0.02em' }}>
-            Create New Pipeline Run
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+            <Typography variant="h4" sx={{ fontWeight: 600, textAlign: 'center', letterSpacing: '-0.02em', flexGrow: 1 }}>
+              Create New Pipeline Run
+            </Typography>
+
+          </Box>
 
           {/* Preset Section */}
           <Box sx={{ mb: 4 }}>
@@ -556,9 +700,71 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                         <Typography variant="subtitle1" gutterBottom>
                           🖼️ Path A: Swap the Subject
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                           Upload a new image to apply this style recipe to a different subject
                         </Typography>
+                        
+                        {/* Path A Image Upload */}
+                        <Box sx={{ mt: 2 }}>
+                          {!uploadedFile ? (
+                            <Paper
+                              {...getRootProps()}
+                              sx={{
+                                p: 2,
+                                border: 1,
+                                borderStyle: 'dashed',
+                                borderColor: isDragActive ? 'primary.main' : 'grey.300',
+                                backgroundColor: isDragActive ? 'primary.50' : 'grey.50',
+                                cursor: 'pointer',
+                                textAlign: 'center',
+                                minHeight: 100,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                borderRadius: 1,
+                                '&:hover': {
+                                  borderColor: 'primary.main',
+                                  backgroundColor: 'primary.50',
+                                },
+                              }}
+                            >
+                              <input {...getInputProps()} />
+                              <CloudUploadIcon sx={{ fontSize: 32, color: 'grey.400', mb: 1 }} />
+                              <Typography variant="body2" color="text.secondary">
+                                {isDragActive ? 'Drop image here' : 'Upload new subject image'}
+                              </Typography>
+                            </Paper>
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                              {previewUrl && (
+                                <Box
+                                  component="img"
+                                  src={previewUrl}
+                                  sx={{
+                                    width: 60,
+                                    height: 60,
+                                    objectFit: 'cover',
+                                    borderRadius: 1,
+                                    border: 1,
+                                    borderColor: 'divider'
+                                  }}
+                                />
+                              )}
+                              <Box sx={{ flexGrow: 1 }}>
+                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                  {uploadedFile.name}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {(uploadedFile.size / (1024 * 1024)).toFixed(2)} MB
+                                </Typography>
+                              </Box>
+                              <Button size="small" onClick={removeImage} color="error">
+                                Remove
+                              </Button>
+                            </Box>
+                          )}
+                        </Box>
                       </Paper>
                     </Grid>
                     <Grid item xs={12} md={6}>
@@ -566,12 +772,33 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                         <Typography variant="subtitle1" gutterBottom>
                           ✏️ Path B: Create with Style
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                           Write a new prompt to create something new with this style
                         </Typography>
+                        
+                        {/* Path B Text Input */}
+                        <Box sx={{ mt: 2 }}>
+                          <TextField
+                            fullWidth
+                            multiline
+                            rows={3}
+                            label="New Concept Prompt"
+                            value={recipeOverrides.prompt || ''}
+                            onChange={(e) => handleRecipeOverride('prompt', e.target.value)}
+                            placeholder="e.g., 'A coffee cup on a wooden table', 'A modern smartphone', 'A vintage bicycle'..."
+                            variant="outlined"
+                            size="small"
+                          />
+                        </Box>
                       </Paper>
                     </Grid>
                   </Grid>
+                  
+                  <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', border: 1, borderColor: 'info.200', borderRadius: 1 }}>
+                    <Typography variant="body2" color="info.main">
+                      <strong>Tip:</strong> Use Path A for simple subject swaps (faster) or Path B for creating entirely new concepts with this style (more creative flexibility).
+                    </Typography>
+                  </Box>
                 </Paper>
               </motion.div>
             )}
@@ -807,32 +1034,35 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                     </Typography>
                   </Box>
 
-                  {/* Prompt */}
-                  <Box sx={{ mb: 4 }}>
-                    <Controller
-                      name="prompt"
-                      control={control}
-                      render={({ field }) => (
-                        <TextField
-                          {...field}
-                          key={`prompt-${activePreset?.id || 'default'}`} // Force re-render when preset changes
-                          fullWidth
-                          multiline
-                          rows={4}
-                          label="Prompt"
-                          placeholder="Describe your product or what you want to generate... (e.g., 'roti canai, cartoon style')"
-                          error={!!errors.prompt}
-                          helperText={errors.prompt?.message}
-                        />
-                      )}
-                    />
-                  </Box>
+                  {/* Prompt - Hidden in Recipe Active Mode */}
+                  {!isRecipeActive && (
+                    <Box sx={{ mb: 4 }}>
+                      <Controller
+                        name="prompt"
+                        control={control}
+                        render={({ field }) => (
+                          <TextField
+                            {...field}
+                            key={`prompt-${activePreset?.id || 'default'}`} // Force re-render when preset changes
+                            fullWidth
+                            multiline
+                            rows={4}
+                            label="Prompt"
+                            placeholder="Describe your product or what you want to generate... (e.g., 'roti canai, cartoon style')"
+                            error={!!errors.prompt}
+                            helperText={errors.prompt?.message}
+                          />
+                        )}
+                      />
+                    </Box>
+                  )}
 
-                  {/* Image Upload */}
-                  <Box sx={{ mb: 4 }}>
-                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mb: 2 }}>
-                      Reference Image (Optional)
-                    </Typography>
+                  {/* Image Upload - Hidden in Recipe Active Mode */}
+                  {!isRecipeActive && (
+                    <Box sx={{ mb: 4 }}>
+                      <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mb: 2 }}>
+                        Reference Image (Optional)
+                      </Typography>
                     
                     {!uploadedFile ? (
                       <Paper
@@ -920,8 +1150,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       </Box>
                     )}
                   </Box>
+                  )}
 
-                  {/* Basic Options */}
+                  {/* Global Options */}
                   <Box sx={{ mb: 4 }}>
                     <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mb: 2 }}>
                       Options
@@ -952,17 +1183,157 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                 </Box>
               </Grid>
 
-              {/* RIGHT SIDE - Advanced Settings Only */}
+              {/* RIGHT SIDE - Brand Kit & Advanced Settings */}
               <Grid item xs={12} lg={5}>
                 <Box sx={{ pl: { lg: 2 } }}>
+                  {/* Brand Kit - Available in all modes when toggle is ON */}
+                  <AnimatePresence>
+                    {applyBranding && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        <Paper sx={{ p: 2.5, mb: 2.5, border: '1px solid', borderColor: 'divider' }}>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+                            <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontSize: '1.1rem' }}>
+                              <PaletteIcon sx={{ fontSize: '1.2rem' }} /> Brand Kit
+                            </Typography>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={handleLoadBrandKitPreset}
+                                startIcon={<BookmarkAddIcon />}
+                                sx={{ fontSize: '0.75rem', py: 0.5, px: 1 }}
+                              >
+                                Load Kit
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={handleSaveBrandKitPreset}
+                                startIcon={<BookmarkAddIcon />}
+                                disabled={!hasBrandKitData()}
+                                sx={{ fontSize: '0.75rem', py: 0.5, px: 1 }}
+                              >
+                                Save Kit
+                              </Button>
+                            </Box>
+                          </Box>
+                          <Grid container spacing={2}>
+                            {/* Color Palette Editor */}
+                            <Grid item xs={12}>
+                              <Controller
+                                name="brand_kit"
+                                control={control}
+                                render={({ field }) => (
+                                  <ColorPaletteEditor
+                                    colors={field.value?.colors || []}
+                                    onChange={(colors) => field.onChange({
+                                      ...field.value,
+                                      colors
+                                    })}
+                                  />
+                                )}
+                              />
+                            </Grid>
+                            
+                            {/* Brand Voice */}
+                            <Grid item xs={12}>
+                              <Controller
+                                name="brand_kit"
+                                control={control}
+                                render={({ field }) => {
+                                  const currentValue = field.value?.brand_voice_description || '';
+                                  const maxLength = 250;
+                                  const isOverLimit = currentValue.length > maxLength;
+                                  
+                                  return (
+                                    <TextField
+                                      fullWidth
+                                      size="small"
+                                      label="Brand Voice"
+                                      placeholder="e.g., 'Friendly and approachable'"
+                                      value={currentValue}
+                                      onChange={(e) => field.onChange({
+                                        ...field.value,
+                                        brand_voice_description: e.target.value
+                                      })}
+                                      inputProps={{ maxLength: maxLength + 50 }} // Allow some overflow for user feedback
+                                      helperText={
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <span>Describe your brand's tone and personality</span>
+                                          <span style={{ color: isOverLimit ? 'error.main' : 'text.secondary' }}>
+                                            {currentValue.length}/{maxLength}
+                                          </span>
+                                        </Box>
+                                      }
+                                      error={isOverLimit}
+                                    />
+                                  );
+                                }}
+                              />
+                            </Grid>
+                            
+                            {/* Logo Upload/Display */}
+                            <Grid item xs={12}>
+                              <Controller
+                                name="brand_kit"
+                                control={control}
+                                render={({ field }) => {
+                                  const hasLogo = field.value?.logo_file_base64;
+                                  
+                                  return hasLogo ? (
+                                    <CompactLogoDisplay
+                                      logo={field.value.logo_analysis || {
+                                        preview_url: field.value.logo_file_base64,
+                                        filename: 'Brand Logo'
+                                      }}
+                                      onRemove={() => field.onChange({
+                                        ...field.value,
+                                        logo_file_base64: undefined,
+                                        logo_analysis: undefined
+                                      })}
+                                      showRemoveButton={true}
+                                    />
+                                  ) : (
+                                    <LogoUploader
+                                      onLogoUpload={(file, analysis) => {
+                                        // Store both base64 data and analysis details
+                                        field.onChange({
+                                          ...field.value,
+                                          logo_file_base64: analysis.preview_url, // Use analysis preview_url
+                                          logo_analysis: analysis // Store full analysis for details display
+                                        });
+                                      }}
+                                      onLogoRemove={() => field.onChange({
+                                        ...field.value,
+                                        logo_file_base64: undefined,
+                                        logo_analysis: undefined
+                                      })}
+                                      currentLogo={null}
+                                    />
+                                  );
+                                }}
+                              />
+                            </Grid>
+                          </Grid>
+                        </Paper>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Advanced Settings */}
                   {showAdvancedFields ? (
                     <Box>
-                      <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, mb: 3, letterSpacing: '-0.01em' }}>
+                      <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mb: 2, fontSize: '1.1rem' }}>
                         Advanced Settings
                       </Typography>
                       
-                      <Paper sx={{ p: 4, backgroundColor: 'grey.50', borderRadius: 3, border: 1, borderColor: 'grey.200' }}>
-                        <Grid container spacing={3}>
+                      <Paper sx={{ p: 2.5, backgroundColor: 'grey.50', borderRadius: 2, border: 1, borderColor: 'grey.200' }}>
+                        <Grid container spacing={2.5}>
                           {/* Task Description */}
                           <Grid item xs={12}>
                             <Controller
@@ -974,7 +1345,8 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                   key={`task_description-${activePreset?.id || 'default'}`}
                                   fullWidth
                                   multiline
-                                  rows={3}
+                                  rows={2}
+                                  size="small"
                                   label="Task Content/Description"
                                   placeholder="e.g., 'Promo: 2-for-1 Coffee!', 'Menu: Signature Pasta'"
                                 />
@@ -982,32 +1354,13 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                             />
                           </Grid>
 
-                          {/* Branding Elements */}
-                          <Grid item xs={12}>
-                            <Controller
-                              name="branding_elements"
-                              control={control}
-                              render={({ field }) => (
-                                <TextField
-                                  {...field}
-                                  key={`branding_elements-${activePreset?.id || 'default'}`}
-                                  fullWidth
-                                  multiline
-                                  rows={3}
-                                  label="Branding Elements"
-                                  placeholder="e.g., 'Logo Icon: indian mustache', 'Use #FFC107 for accents'"
-                                />
-                              )}
-                            />
-                          </Grid>
-
                           {/* Marketing Goals */}
                           <Grid item xs={12}>
-                            <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mt: 2, mb: 2 }}>
+                            <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600, mb: 1.5, fontSize: '1rem' }}>
                               Marketing Goals
                             </Typography>
-                            <Grid container spacing={2}>
-                              <Grid item xs={12}>
+                            <Grid container spacing={1.5}>
+                              <Grid item xs={12} sm={6}>
                                 <Controller
                                   name="marketing_audience"
                                   control={control}
@@ -1016,13 +1369,14 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                       {...field}
                                       key={`marketing_audience-${activePreset?.id || 'default'}`}
                                       fullWidth
+                                      size="small"
                                       label="Target Audience"
-                                      placeholder="e.g., Young professionals, families"
+                                      placeholder="e.g., Young professionals"
                                     />
                                   )}
                                 />
                               </Grid>
-                              <Grid item xs={12}>
+                              <Grid item xs={12} sm={6}>
                                 <Controller
                                   name="marketing_objective"
                                   control={control}
@@ -1031,13 +1385,14 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                       {...field}
                                       key={`marketing_objective-${activePreset?.id || 'default'}`}
                                       fullWidth
+                                      size="small"
                                       label="Objective"
-                                      placeholder="e.g., Increase engagement, drive sales"
+                                      placeholder="e.g., Drive sales"
                                     />
                                   )}
                                 />
                               </Grid>
-                              <Grid item xs={12}>
+                              <Grid item xs={12} sm={6}>
                                 <Controller
                                   name="marketing_voice"
                                   control={control}
@@ -1046,13 +1401,14 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                       {...field}
                                       key={`marketing_voice-${activePreset?.id || 'default'}`}
                                       fullWidth
+                                      size="small"
                                       label="Voice"
-                                      placeholder="e.g., Playful, casual, professional"
+                                      placeholder="e.g., Playful, casual"
                                     />
                                   )}
                                 />
                               </Grid>
-                              <Grid item xs={12}>
+                              <Grid item xs={12} sm={6}>
                                 <Controller
                                   name="marketing_niche"
                                   control={control}
@@ -1061,8 +1417,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                                       {...field}
                                       key={`marketing_niche-${activePreset?.id || 'default'}`}
                                       fullWidth
+                                      size="small"
                                       label="Niche"
-                                      placeholder="e.g., Fast food, fine dining, coffee shop"
+                                      placeholder="e.g., Fast food, cafe"
                                     />
                                   )}
                                 />
@@ -1209,6 +1566,13 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         open={presetModalOpen}
         onClose={() => setPresetModalOpen(false)}
         onPresetSelected={handlePresetSelected}
+      />
+
+      {/* Brand Kit Preset Modal */}
+      <BrandKitPresetModal
+        open={brandKitPresetModalOpen}
+        onClose={() => setBrandKitPresetModalOpen(false)}
+        onPresetSelected={handleApplyBrandKitPreset}
       />
     </motion.div>
   );

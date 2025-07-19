@@ -311,14 +311,28 @@ class PipelineExecutor:
         
         # Handle preset loading if preset_id is provided
         if ctx.preset_id and session:
-            preset_loader = PresetLoader(session)
-            await preset_loader.load_and_apply_preset(
-                ctx, 
-                ctx.preset_id, 
-                user_id="dev_user_1",  # TODO: Get from auth context
-                overrides=ctx.overrides
-            )
-            logger.info(f"Preset {ctx.preset_id} loaded and applied to context")
+            try:
+                logger.info(f"Loading preset {ctx.preset_id} with overrides: {ctx.overrides}")
+                preset_loader = PresetLoader(session)
+                await preset_loader.load_and_apply_preset(
+                    ctx, 
+                    ctx.preset_id, 
+                    user_id="dev_user_1",  # TODO: Get from auth context
+                    overrides=ctx.overrides
+                )
+                logger.info(f"Preset {ctx.preset_id} loaded and applied to context")
+            except Exception as e:
+                logger.error(f"Failed to load preset {ctx.preset_id}: {str(e)}")
+                logger.error(f"Error details: {type(e).__name__}: {str(e)}")
+                logger.warning("Continuing pipeline execution without preset")
+                # Clear preset information to prevent further issues
+                ctx.preset_id = None
+                ctx.preset_type = None
+                ctx.overrides = {}
+        elif ctx.preset_id and not session:
+            logger.warning(f"Preset {ctx.preset_id} specified but no database session provided")
+        else:
+            logger.info("No preset specified, continuing with normal pipeline execution")
         
         overall_start_time = time.time()
         

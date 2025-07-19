@@ -536,6 +536,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     type: 'original' | 'refinement';
     refinementData?: any;
     parentImagePath?: string;
+    parentImageBlobUrl?: string;
   } | null>(null);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
   const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
@@ -1534,24 +1535,40 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   // Helper function to get the correct immediate parent image path for comparison
   const getImmediateParentImagePath = (refinement: any): string => {
-    if (refinement.parent_image_type === 'original') {
-      // Parent is an original generated image
-      const originalImage = generatedImages[refinement.generation_index || 0];
-      return originalImage?.image_path || '';
-    } else {
-      // Parent is another refinement - find it in the refinements list
-      const parentRefinement = refinements.find(r => r.job_id === refinement.parent_image_id);
-      if (parentRefinement && parentRefinement.image_path) {
-        return parentRefinement.image_path;
-      } else {
-        // Fallback: try to get from the ultimate parent
-        const ultimateParent = refinement.ultimateParent;
-        if (ultimateParent && ultimateParent.generationIndex !== undefined) {
-          const originalImage = generatedImages[ultimateParent.generationIndex];
-          return originalImage?.image_path || '';
+    try {
+      if (refinement.parent_image_type === 'original') {
+        // Parent is an original generated image
+        // Find by strategy_index instead of assuming array index
+        const originalImage = generatedImages.find(img => img.strategy_index === refinement.generation_index);
+        if (originalImage?.image_path) {
+          console.log(`Found parent image for refinement: ${originalImage.image_path}`);
+          return originalImage.image_path;
+        } else {
+          console.warn(`Could not find original image for generation_index: ${refinement.generation_index}`);
+          // Fallback to array index if strategy_index doesn't match
+          const fallbackImage = generatedImages[refinement.generation_index || 0];
+          return fallbackImage?.image_path || '';
         }
-        return '';
+      } else {
+        // Parent is another refinement - find it in the refinements list
+        const parentRefinement = refinements.find(r => r.job_id === refinement.parent_image_id);
+        if (parentRefinement && parentRefinement.image_path) {
+          console.log(`Found parent refinement: ${parentRefinement.image_path}`);
+          return parentRefinement.image_path;
+        } else {
+          console.warn(`Could not find parent refinement with job_id: ${refinement.parent_image_id}`);
+          // Fallback: try to get from the ultimate parent
+          const ultimateParent = refinement.ultimateParent;
+          if (ultimateParent && ultimateParent.generationIndex !== undefined) {
+            const originalImage = generatedImages.find(img => img.strategy_index === ultimateParent.generationIndex);
+            return originalImage?.image_path || '';
+          }
+          return '';
+        }
       }
+    } catch (error) {
+      console.error('Error getting immediate parent image path:', error);
+      return '';
     }
   };
 
@@ -1563,17 +1580,41 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     refinementData?: any
   ) => {
     try {
+      console.log(`Loading image for modal: type=${type}, imagePath=${imagePath}`);
+      
       // Get blob URL for the image
       const blobUrl = await PipelineAPI.getImageBlobUrl(runId, imagePath);
       setSelectedImage(blobUrl);
       
       if (type === 'refinement' && refinementData) {
+        console.log('Refinement data:', refinementData);
         const parentImagePath = getImmediateParentImagePath(refinementData);
+        console.log(`Parent image path: ${parentImagePath}`);
+        
+        // If we have a parent image path, also get its blob URL for the comparison slider
+        let parentImageBlobUrl = '';
+        if (parentImagePath) {
+          try {
+            parentImageBlobUrl = await PipelineAPI.getImageBlobUrl(runId, parentImagePath);
+            console.log('Successfully loaded parent image blob URL for comparison');
+          } catch (parentError) {
+            console.error('Failed to load parent image blob URL:', parentError);
+            // Fallback to direct URL
+            parentImageBlobUrl = PipelineAPI.getFileUrl(runId, parentImagePath);
+            console.log(`Using fallback URL for parent image: ${parentImageBlobUrl}`);
+          }
+        } else {
+          console.warn('No parent image path found - comparison will not be available');
+        }
+        
         setSelectedImageContext({
           type: 'refinement',
           refinementData,
-          parentImagePath
+          parentImagePath,
+          parentImageBlobUrl // Add blob URL for comparison slider
         });
+        
+        console.log(`Modal will show: ${parentImagePath ? 'comparison slider' : 'single image'}`);
       } else {
         setSelectedImageContext({
           type: 'original'
@@ -1581,6 +1622,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       }
     } catch (error) {
       console.error('Failed to load image for modal:', error);
+      toast.error(`Failed to load image: ${error.message}`);
       // Fallback to direct URL (might not work with ngrok but better than nothing)
       setSelectedImage(PipelineAPI.getFileUrl(runId, imagePath));
       setSelectedImageContext({
@@ -2637,18 +2679,175 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                         </Typography>
                       </Grid>
 
-                      {runDetails.branding_elements && (
-                        <Grid item xs={12}>
-                          <Typography variant="caption" color="textSecondary">Branding Elements</Typography>
-                          <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
-                              {runDetails.branding_elements}
-                            </Typography>
-                          </Paper>
-                        </Grid>
-                      )}
+
                     </Grid>
                   </Grid>
+
+                  {/* Brand Kit Section */}
+                  {runDetails.apply_branding && runDetails.brand_kit && (
+                    <Grid item xs={12}>
+                      <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
+                        Brand Kit Applied
+                      </Typography>
+                      <Paper sx={{ p: 3, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2 }}>
+                        <Grid container spacing={3}>
+                          {/* Brand Colors */}
+                          {runDetails.brand_kit.colors && runDetails.brand_kit.colors.length > 0 && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 1, fontWeight: 600 }}>
+                                Brand Colors ({runDetails.brand_kit.colors.length})
+                              </Typography>
+                              <Box sx={{ 
+                                display: 'flex', 
+                                flexWrap: 'wrap',
+                                gap: 1,
+                                alignItems: 'center'
+                              }}>
+                                {runDetails.brand_kit.colors.map((color, index) => (
+                                  <Box key={index} sx={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: 1,
+                                    p: 1,
+                                    backgroundColor: 'background.paper',
+                                    borderRadius: 1,
+                                    border: 1,
+                                    borderColor: 'divider'
+                                  }}>
+                                    <Box
+                                      sx={{
+                                        width: 20,
+                                        height: 20,
+                                        backgroundColor: color,
+                                        borderRadius: '50%',
+                                        border: 1,
+                                        borderColor: 'grey.300',
+                                        boxShadow: 1,
+                                        flexShrink: 0
+                                      }}
+                                    />
+                                    <Typography variant="caption" sx={{ 
+                                      fontFamily: 'monospace', 
+                                      fontSize: '0.75rem',
+                                      fontWeight: 500,
+                                      color: 'text.primary'
+                                    }}>
+                                      {color.toUpperCase()}
+                                    </Typography>
+                                  </Box>
+                                ))}
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {/* Brand Voice */}
+                          {runDetails.brand_kit.brand_voice_description && (
+                            <Grid item xs={12} md={runDetails.brand_kit.colors?.length ? 12 : 6}>
+                              <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 1, fontWeight: 600 }}>
+                                Brand Voice & Tone
+                              </Typography>
+                              <Box sx={{ 
+                                p: 2, 
+                                backgroundColor: 'background.paper', 
+                                borderRadius: 1, 
+                                border: 1, 
+                                borderColor: 'divider' 
+                              }}>
+                                <Typography variant="body2" sx={{ 
+                                  fontSize: '0.9rem', 
+                                  lineHeight: 1.5,
+                                  fontStyle: 'italic',
+                                  color: 'text.primary'
+                                }}>
+                                  "{runDetails.brand_kit.brand_voice_description}"
+                                </Typography>
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {/* Logo Information */}
+                          {(runDetails.brand_kit.logo_analysis || runDetails.brand_kit.saved_logo_path_in_run_dir) && (
+                            <Grid item xs={12} md={runDetails.brand_kit.brand_voice_description ? 12 : 6}>
+                              <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 1, fontWeight: 600 }}>
+                                Brand Logo
+                              </Typography>
+                              <Box sx={{ 
+                                p: 2, 
+                                backgroundColor: 'background.paper', 
+                                borderRadius: 1, 
+                                border: 1, 
+                                borderColor: 'divider' 
+                              }}>
+                                {runDetails.brand_kit.saved_logo_path_in_run_dir && (
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                    <Box sx={{ 
+                                      width: 40, 
+                                      height: 40, 
+                                      borderRadius: 1,
+                                      overflow: 'hidden',
+                                      border: 1,
+                                      borderColor: 'divider',
+                                      backgroundColor: 'background.default',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      padding: 0.5
+                                    }}>
+                                      <ImageWithAuth
+                                        runId={runId}
+                                        imagePath={runDetails.brand_kit.saved_logo_path_in_run_dir.split('/').pop() || 'logo.png'}
+                                        alt="Brand logo"
+                                        sx={{ 
+                                          maxWidth: '100%', 
+                                          maxHeight: '100%', 
+                                          objectFit: 'contain',
+                                          display: 'block'
+                                        }}
+                                      />
+                                    </Box>
+                                    <Typography variant="body2" sx={{ fontSize: '0.9rem', fontWeight: 500 }}>
+                                      {runDetails.brand_kit.saved_logo_path_in_run_dir.split('/').pop() || 'Logo file'}
+                                    </Typography>
+                                  </Box>
+                                )}
+                                {runDetails.brand_kit.logo_analysis?.style_description && (
+                                  <Typography variant="body2" sx={{ 
+                                    fontSize: '0.85rem', 
+                                    color: 'text.secondary',
+                                    fontStyle: 'italic' 
+                                  }}>
+                                    Style: {runDetails.brand_kit.logo_analysis.style_description}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {/* Empty state */}
+                          {(!runDetails.brand_kit.colors || runDetails.brand_kit.colors.length === 0) && 
+                           !runDetails.brand_kit.brand_voice_description && 
+                           !runDetails.brand_kit.logo_analysis && 
+                           !runDetails.brand_kit.saved_logo_path_in_run_dir && (
+                            <Grid item xs={12}>
+                              <Box sx={{ 
+                                p: 3, 
+                                textAlign: 'center',
+                                backgroundColor: 'background.paper', 
+                                borderRadius: 1, 
+                                border: 1, 
+                                borderColor: 'divider',
+                                borderStyle: 'dashed'
+                              }}>
+                                <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
+                                  Brand kit was applied but no specific details are available for display
+                                </Typography>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Paper>
+                    </Grid>
+                  )}
 
                   {/* Marketing Goals Section */}
                   {(runDetails.marketing_audience || runDetails.marketing_objective || runDetails.marketing_voice || runDetails.marketing_niche) && (
@@ -2868,8 +3067,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         }}>
           {selectedImage && (
             <>
-              {selectedImageContext?.type === 'refinement' && selectedImageContext.parentImagePath ? (
-                // Show comparison slider for refined images
+              {selectedImageContext?.type === 'refinement' && selectedImageContext.parentImagePath && selectedImageContext.parentImageBlobUrl ? (
+                // Show comparison slider for refined images when we have both images
                 <Box sx={{ 
                   maxWidth: 'calc(100vw - 32px)',
                   maxHeight: 'calc(100vh - 160px)',
@@ -2880,9 +3079,41 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                   justifyContent: 'center'
                 }}>
                   <ImageCompareSlider
-                    beforeImageUrl={PipelineAPI.getFileUrl(runId, selectedImageContext.parentImagePath)}
+                    beforeImageUrl={selectedImageContext.parentImageBlobUrl}
                     afterImageUrl={selectedImage}
                     height={Math.min(window.innerHeight - 200, 800)}
+                  />
+                </Box>
+              ) : selectedImageContext?.type === 'refinement' && selectedImageContext.parentImagePath ? (
+                // Fallback: Try to show comparison with direct URL if blob URL failed
+                <Box sx={{ 
+                  maxWidth: 'calc(100vw - 32px)',
+                  maxHeight: 'calc(100vh - 160px)',
+                  width: 'auto',
+                  height: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 2
+                }}>
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    Comparison view unavailable. Showing refined image only.
+                  </Alert>
+                  <Box
+                    component="img"
+                    src={selectedImage}
+                    sx={{
+                      maxWidth: '100%',
+                      maxHeight: 'calc(100vh - 220px)',
+                      width: 'auto',
+                      height: 'auto',
+                      objectFit: 'contain',
+                      borderRadius: 1,
+                      backgroundColor: 'white',
+                      boxShadow: 3,
+                      display: 'block'
+                    }}
                   />
                 </Box>
               ) : (
@@ -2982,6 +3213,50 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                         </Typography>
                       </Grid>
                     </Grid>
+                  </Paper>
+                </Grid>
+              )}
+
+              {/* Alt Text */}
+              {optionDetails.visualConcept?.visual_concept?.suggested_alt_text && (
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    Alt Text
+                  </Typography>
+                  <Paper sx={{ p: 3, backgroundColor: 'grey.900', color: 'grey.100', borderRadius: 2, position: 'relative' }}>
+                    <Typography 
+                      variant="body2" 
+                      sx={{ 
+                        fontFamily: 'monospace',
+                        whiteSpace: 'pre-wrap',
+                        lineHeight: 1.5,
+                        fontSize: '0.85rem',
+                        maxHeight: '300px',
+                        overflow: 'auto'
+                      }}
+                    >
+                      {optionDetails.visualConcept.visual_concept.suggested_alt_text}
+                    </Typography>
+                    
+                    <Tooltip title="Copy alt text to clipboard">
+                      <IconButton
+                        onClick={() => copyPromptToClipboard(optionDetails.visualConcept.visual_concept.suggested_alt_text || '')}
+                        sx={{
+                          position: 'absolute',
+                          top: 8,
+                          right: 8,
+                          color: 'grey.300',
+                          backgroundColor: 'rgba(255,255,255,0.1)',
+                          '&:hover': {
+                            backgroundColor: 'rgba(255,255,255,0.2)',
+                            color: 'white'
+                          }
+                        }}
+                        size="small"
+                      >
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </Paper>
                 </Grid>
               )}

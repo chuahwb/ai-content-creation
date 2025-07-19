@@ -26,6 +26,46 @@ export interface MarketingGoalsInput {
   niche?: string;
 }
 
+// Brand Kit interface for unified brand management
+export interface BrandKitInput {
+  colors?: string[];
+  brand_voice_description?: string;
+  logo_file_base64?: string;
+  // Runtime fields - populated during processing
+  saved_logo_path_in_run_dir?: string;
+  logo_analysis?: Record<string, any>;
+}
+
+// Style Recipe interface for structured creative output
+export interface StyleRecipeData {
+  visual_concept: Record<string, any>;
+  strategy: Record<string, any>;
+  style_guidance: Record<string, any>;
+  final_prompt: string;
+  generation_seed?: string;
+  model_parameters?: Record<string, any>;
+}
+
+// Pipeline Input Snapshot interface
+export interface PipelineInputSnapshot {
+  mode?: string;
+  prompt?: string;
+  creativity_level: number;
+  platform_name: string;
+  num_variants: number;
+  task_type?: string;
+  task_description?: string;
+  image_instruction?: string;
+  brand_kit?: BrandKitInput;
+  marketing_audience?: string;
+  marketing_objective?: string;
+  marketing_voice?: string;
+  marketing_niche?: string;
+  render_text: boolean;
+  apply_branding: boolean;
+  language: string;
+}
+
 export interface PipelineRunRequest {
   mode: 'easy_mode' | 'custom_mode' | 'task_specific_mode';
   platform_name: string;
@@ -34,14 +74,16 @@ export interface PipelineRunRequest {
   prompt?: string;
   task_type?: string;
   task_description?: string;
-  branding_elements?: string;
   image_reference?: ImageReferenceInput;
   render_text: boolean;
   apply_branding: boolean;
   marketing_goals?: MarketingGoalsInput;
   language?: string;
   preset_id?: string;
+  preset_type?: PresetType;
   overrides?: Record<string, any>;
+  // Brand kit data (UPDATED: unified brand kit structure)
+  brand_kit?: BrandKitInput;
 }
 
 export interface StageProgressUpdate {
@@ -86,13 +128,15 @@ export interface PipelineRunDetail extends PipelineRunResponse {
   has_image_reference: boolean;
   image_filename?: string;
   image_instruction?: string;
-  branding_elements?: string;
   task_description?: string;
   marketing_audience?: string;
   marketing_objective?: string;
   marketing_voice?: string;
   marketing_niche?: string;
   language?: string;
+  
+  // Brand Kit data (UPDATED: unified brand kit structure)
+  brand_kit?: BrandKitInput;
 }
 
 // NEW: Assessment data structure
@@ -258,7 +302,7 @@ export interface PipelineFormData {
   prompt?: string;
   task_type?: string;
   task_description?: string;
-  branding_elements?: string;
+  brand_kit?: BrandKitInput;
   image_file?: File;
   image_instruction?: string;
   render_text: boolean;
@@ -292,10 +336,9 @@ export type PresetType = 'INPUT_TEMPLATE' | 'STYLE_RECIPE';
 export interface BrandPresetCreateRequest {
   name: string;
   preset_type: PresetType;
-  brand_colors?: string[];
-  brand_voice_description?: string;
-  input_snapshot?: Record<string, any>;
-  style_recipe?: Record<string, any>;
+  brand_kit?: BrandKitInput;
+  input_snapshot?: PipelineInputSnapshot;
+  style_recipe?: StyleRecipeData;
   model_id: string;
   pipeline_version: string;
 }
@@ -303,8 +346,7 @@ export interface BrandPresetCreateRequest {
 export interface BrandPresetUpdateRequest {
   name?: string;
   version: number;
-  brand_colors?: string[];
-  brand_voice_description?: string;
+  brand_kit?: BrandKitInput;
 }
 
 export interface BrandPresetResponse {
@@ -317,10 +359,9 @@ export interface BrandPresetResponse {
   usage_count: number;
   created_at: string;
   last_used_at?: string;
-  brand_colors?: string[];
-  brand_voice_description?: string;
-  input_snapshot?: Record<string, any>;
-  style_recipe?: Record<string, any>;
+  brand_kit?: BrandKitInput;
+  input_snapshot?: PipelineInputSnapshot;
+  style_recipe?: StyleRecipeData;
 }
 
 export interface BrandPresetListResponse {
@@ -331,8 +372,7 @@ export interface BrandPresetListResponse {
 export interface SavePresetFromResultRequest {
   name: string;
   generation_index: number;
-  brand_colors?: string[];
-  brand_voice_description?: string;
+  brand_kit?: BrandKitInput;
 }
 
 export interface BrandPreset {
@@ -345,8 +385,7 @@ export interface BrandPreset {
   usage_count: number;
   created_at: string;
   last_used_at?: string;
-  brand_colors?: string[];
-  brand_voice_description?: string;
-  input_snapshot?: Record<string, any>;
-  style_recipe?: Record<string, any>;
+  brand_kit?: BrandKitInput;
+  input_snapshot?: PipelineInputSnapshot;
+  style_recipe?: StyleRecipeData;
 } 

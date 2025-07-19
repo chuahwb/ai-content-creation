@@ -17,9 +17,10 @@ from openai.types.chat import ChatCompletionMessageParam
 from tenacity import RetryError
 from pydantic import ValidationError
 import base64
+import asyncio
 
 from ..pipeline.context import PipelineContext
-from ..models import ImageAnalysisResult
+from ..models import ImageAnalysisResult, LogoAnalysisResult
 from ..core.json_parser import (
     RobustJSONParser, 
     JSONExtractionError,
@@ -39,6 +40,81 @@ INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 _json_parser = RobustJSONParser(debug_mode=False)
 
 # Old manual JSON extraction function removed - now using centralized parser
+
+
+async def _run_logo_analysis(ctx: PipelineContext):
+    """Performs VLM analysis on an uploaded brand logo, if present and not already analyzed."""
+    if not (ctx.brand_kit and ctx.brand_kit.get("saved_logo_path_in_run_dir") and not ctx.brand_kit.get("logo_analysis")):
+        return  # No logo to analyze or analysis already done
+
+    ctx.log("Starting logo evaluation sub-task...")
+    logo_path = ctx.brand_kit.get("saved_logo_path_in_run_dir")
+    
+    try:
+        with open(logo_path, "rb") as image_file:
+            logo_content_base64 = base64.b64encode(image_file.read()).decode('utf-8')
+    except Exception as e:
+        ctx.log(f"ERROR: Could not read and encode logo file at {logo_path}: {e}")
+        return
+
+    # Determine which client to use
+    use_manual_parsing_logo = should_use_manual_parsing(IMG_EVAL_MODEL_ID)
+    client_to_use = base_llm_client_img_eval if use_manual_parsing_logo else instructor_client_img_eval
+    use_instructor_for_call = bool(instructor_client_img_eval and not use_manual_parsing_logo)
+
+    if not client_to_use:
+        ctx.log("WARNING: Client for logo evaluation not available. Skipping.")
+        return
+
+    system_prompt_logo = "You are an expert logo analyst. Your task is to analyze the provided logo image and return a structured analysis of its key visual properties. Focus ONLY on the logo itself. Adhere strictly to the `LogoAnalysisResult` Pydantic response model. Identify the logo's overall style, whether it contains text, and if so, what that text is. Also, extract the dominant colors of the logo."
+    
+    messages: List[ChatCompletionMessageParam] = [
+        {"role": "system", "content": system_prompt_logo},
+        {"role": "user", "content": [
+            {"type": "text", "text": "Analyze this logo."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{logo_content_base64}"}}
+        ]}
+    ]
+
+    llm_args: Dict[str, Any] = {
+        "model": IMG_EVAL_MODEL_ID, 
+        "messages": messages,
+        "temperature": 0.1, 
+        "max_tokens": 1000,
+    }
+    if use_instructor_for_call:
+        llm_args["response_model"] = LogoAnalysisResult
+
+    try:
+        completion = await asyncio.to_thread(
+            client_to_use.chat.completions.create,
+            **llm_args
+        )
+
+        logo_analysis_result_dict = None
+        if use_instructor_for_call:
+            logo_analysis_result_dict = completion.model_dump()
+        else:
+            raw_content = completion.choices[0].message.content
+            logo_analysis_result_dict = _json_parser.extract_and_parse(
+                raw_content,
+                expected_schema=LogoAnalysisResult
+            )
+        
+        ctx.brand_kit['logo_analysis'] = logo_analysis_result_dict
+        ctx.log(f"✅ Logo analysis successful. Style: {logo_analysis_result_dict.get('logo_style')}")
+        
+        raw_response_obj = getattr(completion, '_raw_response', completion)
+        if hasattr(raw_response_obj, 'usage') and raw_response_obj.usage:
+            usage_info = raw_response_obj.usage.model_dump()
+            if not hasattr(ctx, 'llm_usage'):
+                 ctx.llm_usage = {}
+            ctx.llm_usage["logo_eval"] = usage_info
+            ctx.log(f"Token Usage (Logo Eval): {usage_info}")
+
+    except Exception as e:
+        ctx.log(f"❌ ERROR during logo analysis: {e}")
+        ctx.log(traceback.format_exc())
 
 
 def simulate_image_evaluation_fallback(user_has_provided_instruction: bool) -> Dict[str, Any]:
@@ -66,6 +142,9 @@ def simulate_image_evaluation_fallback(user_has_provided_instruction: bool) -> D
 
 async def run(ctx: PipelineContext) -> None:
     """Performs image analysis using VLM, updates pipeline context."""
+    # Run logo analysis first if applicable. This operates independently of the main image analysis.
+    await _run_logo_analysis(ctx)
+    
     ctx.log("Starting image evaluation stage")
     
     image_ref = ctx.image_reference
@@ -137,7 +216,10 @@ async def run(ctx: PipelineContext) -> None:
             if use_instructor_for_call:
                 llm_args["response_model"] = ImageAnalysisResult
 
-            completion = client_to_use.chat.completions.create(**llm_args)
+            completion = await asyncio.to_thread(
+                client_to_use.chat.completions.create,
+                **llm_args
+            )
 
             if use_instructor_for_call:
                 analysis_result_dict = completion.model_dump()
@@ -194,6 +276,8 @@ async def run(ctx: PipelineContext) -> None:
 
     ctx.image_analysis_result = analysis_result_dict
     if usage_info:
+        if not hasattr(ctx, 'llm_usage'):
+            ctx.llm_usage = {}
         ctx.llm_usage["image_eval"] = usage_info
     
     ctx.log(f"Status: {status_message}")

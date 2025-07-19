@@ -6,6 +6,16 @@ All models copied verbatim from the original combined_pipeline.py
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
+# --- Brand Kit Models ---
+class BrandKitInput(BaseModel):
+    """Brand Kit input structure for unified brand management"""
+    colors: Optional[List[str]] = Field(None, description="Array of HEX color strings (e.g., ['#1A2B3C', '#FFD700'])")
+    brand_voice_description: Optional[str] = Field(None, description="Brand voice description")
+    logo_file_base64: Optional[str] = Field(None, description="Base64 encoded logo file")
+    # Runtime fields - populated during processing
+    saved_logo_path_in_run_dir: Optional[str] = Field(None, description="Path to saved logo in run directory")
+    logo_analysis: Optional[Dict[str, Any]] = Field(None, description="Logo analysis result from image_eval stage")
+
 # --- Models from Upstream (user_input_and_image_eval) ---
 class ImageAnalysisResult(BaseModel):
     """Structured result of the objective visual analysis of the image."""
@@ -107,6 +117,13 @@ class ImageAssessmentResult(BaseModel):
     """Structured result of image quality assessment."""
     assessment_scores: Dict[str, int] = Field(..., description="Scores for different assessment criteria (1-5 scale)")
     assessment_justification: Dict[str, str] = Field(..., description="Detailed justification for each score")
+
+class LogoAnalysisResult(BaseModel):
+    """Structured result of the visual analysis of a brand logo."""
+    logo_style: str = Field(..., description="A concise description of the logo's style (e.g., 'minimalist wordmark', 'abstract geometric icon', 'vintage-style emblem').")
+    contains_text: bool = Field(..., description="True if the logo contains legible text, False otherwise.")
+    extracted_text: Optional[str] = Field(None, description="The text extracted from the logo, if any.")
+    dominant_colors: List[str] = Field(..., description="A list of dominant colors found in the logo, in hexadecimal format (e.g., ['#FFFFFF', '#000000']).")
 
 # --- Models for Caption Feature ---
 class CaptionBrief(BaseModel):

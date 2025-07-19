@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import Column, DateTime, Text, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -7,7 +7,8 @@ from sqlmodel import SQLModel, Field
 import uuid
 from datetime import datetime
 from enum import Enum
-from churns.models.presets import PipelineInputSnapshot, StyleRecipeData, BrandColors, LogoAnalysis
+from churns.models.presets import PipelineInputSnapshot, StyleRecipeData
+from churns.models import LogoAnalysisResult
 
 
 class RunStatus(str, Enum):
@@ -60,9 +61,11 @@ class PipelineRun(SQLModel, table=True):
     has_image_reference: bool = Field(default=False)
     image_filename: Optional[str] = Field(default=None)
     image_instruction: Optional[str] = Field(default=None)
-    
+
+    # Brand Kit data (UPDATED: unified brand kit structure)
+    brand_kit: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of BrandKitInput including colors, voice, and logo analysis")
+
     # Optional inputs
-    branding_elements: Optional[str] = Field(default=None)
     task_description: Optional[str] = Field(default=None)
     marketing_audience: Optional[str] = Field(default=None)
     marketing_objective: Optional[str] = Field(default=None)
@@ -162,10 +165,8 @@ class BrandPreset(SQLModel, table=True):
     model_id: str = Field(description="Model identifier used (e.g., 'dall-e-3')")
     pipeline_version: str = Field(description="Version of the pipeline used")
     
-    # Brand Kit fields
-    brand_colors: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of BrandColors")
-    brand_voice_description: Optional[str] = Field(default=None, sa_column=Column(Text), description="Brand voice description")
-    logo_asset_analysis: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of LogoAnalysis")
+    # Brand Kit fields (UPDATED: unified brand kit structure)
+    brand_kit: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of BrandKitInput, which includes colors, voice, and logo analysis.")
     
     # Preset data fields
     preset_type: PresetType = Field(description="Type of preset: INPUT_TEMPLATE or STYLE_RECIPE")

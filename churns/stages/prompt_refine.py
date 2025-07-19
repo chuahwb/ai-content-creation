@@ -137,7 +137,9 @@ async def run(ctx: PipelineContext) -> None:
             enhanced_prompt=refined_prompt,
             image_size=image_size,
             mask_path=mask_path,
-            image_gen_client=image_gen_client
+            image_gen_client=image_gen_client,
+            image_quality_setting="medium",  # Use high quality for prompt refinements
+            input_fidelity="high"  # High fidelity for all refinement operations
         )
         
         
@@ -310,7 +312,7 @@ def _crop_image_with_mask(base_image_path: str, mask_path: str) -> Optional[Tupl
 async def _refine_user_prompt(ctx: PipelineContext) -> str:
     logger.info("-----Performing prompt refinement-----")
     
-    # Create Object Idenfitifaction Agent
+    # Create Object Identification Agent
     prompt_identify_agent = Agent(
         'openai:gpt-4.1-mini',
         retries=3,
@@ -326,9 +328,9 @@ async def _refine_user_prompt(ctx: PipelineContext) -> str:
         - If there are no vague reference then return the main subject from the input caption
                 
         Example:
-        Original prompt: “Replace this with a book”
+        Original prompt: "Replace this with a book"
         Cropped image shows a cup
-        Identification: “cup”
+        Identification: "cup"
         """
     )
     
@@ -344,44 +346,84 @@ async def _refine_user_prompt(ctx: PipelineContext) -> str:
         2. Visual context about the image
 
         Your task is to refine the user's original prompt by:
-        - Resolve any vague references (e.g., “this,” “that,” “the object”) in the original prompt by substituting them with the explicit object description provided
+        - Resolve any vague references (e.g., "this," "that," "the object") in the original prompt by substituting them with the explicit object description provided
         - Preserving the original intent and any technical constraints
-        - Ensuring the refined prompt is clear, concise, and actionable, with specific references to objects or elements in the visual contex
+        - For removal tasks, keep prompts concise and direct (e.g., "Remove the [object]" rather than lengthy descriptions)
+        - For other edits, ensure the refined prompt is clear and actionable with specific references to objects or elements in the visual context
         - Keep the refined prompt concise and actionable
         
-        Example:
-        Original prompt: “Replace this with a book”
-        Identified object: “a white ceramic mug”
-        Refined prompt: “Replace the white ceramic mug with a closed hardcover book”
+        Examples:
+        Original prompt: "Replace this with a book"
+        Identified object: "a white ceramic mug"
+        Refined prompt: "Replace the white ceramic mug with a closed hardcover book"
+        
+        Original prompt: "Remove this"
+        Identified object: "bowl of raspberries"
+        Refined prompt: "Remove the bowl of raspberries"
         """
     )
 
     
-    # Get Image Visualization Context
-    image_ctx, _ = get_image_ctx_and_main_object(ctx)
+    # Get Image Visualization Context with error handling
+    try:
+        image_ctx, _ = get_image_ctx_and_main_object(ctx)
+    except Exception as e:
+        logger.warning(f"Error accessing image context: {e}, using minimal context")
+        image_ctx = {"visual_concept": {"main_subject": "Unknown Subject"}}
     
     # Get Object Identification
     identification_input = [
         f"Original Prompt: {ctx.prompt}",
     ]
     
-        # Add cropped region if mask is available
+    # Add cropped region if mask is available
     if ctx.mask_file_path and os.path.exists(ctx.mask_file_path):
-        cropped_path = _crop_image_with_mask(ctx.base_image_path, ctx.mask_file_path)
-        image_bytes = open(cropped_path, "rb").read()
-        binary_content = BinaryContent(data=image_bytes, media_type='image/png')
-        identification_input.append(binary_content)
+        try:
+            cropped_path = _crop_image_with_mask(ctx.base_image_path, ctx.mask_file_path)
+            if cropped_path and os.path.exists(cropped_path):
+                image_bytes = open(cropped_path, "rb").read()
+                binary_content = BinaryContent(data=image_bytes, media_type='image/png')
+                identification_input.append(binary_content)
+        except Exception as e:
+            logger.warning(f"Error processing mask for prompt refinement: {e}")
 
-    object_identification = await prompt_identify_agent.run(identification_input)
-    logger.info(f"Refine Object Identification = {object_identification.output}")
+    try:
+        object_identification = await prompt_identify_agent.run(identification_input)
+        logger.info(f"Refine Object Identification = {object_identification.output}")
+        identified_object = object_identification.output
+    except Exception as e:
+        logger.warning(f"Error in object identification: {e}, using fallback")
+        identified_object = "the main subject"
     
-    # Prepare user input with prompt and visual context
-    base_prompt = f"Original Prompt: {ctx.prompt}\nIdentified Object: {object_identification.output}\nVisual Context: {image_ctx}"
+    # Prepare user input with prompt and visual context (with safe serialization)
+    try:
+        # Convert image_ctx to string safely
+        if isinstance(image_ctx, dict):
+            # Create a simplified string representation of the visual context
+            visual_concept = image_ctx.get('visual_concept', {})
+            if isinstance(visual_concept, dict):
+                main_subject = visual_concept.get('main_subject', 'Unknown Subject')
+                composition = visual_concept.get('composition_and_framing', 'Standard composition')
+                visual_style = visual_concept.get('visual_style', 'Standard style')
+                context_str = f"Main Subject: {main_subject}, Composition: {composition}, Style: {visual_style}"
+            else:
+                context_str = "Basic visual context available"
+        else:
+            context_str = "Limited visual context available"
+        
+        base_prompt = f"Original Prompt: {ctx.prompt}\nIdentified Object: {identified_object}\nVisual Context: {context_str}"
+    except Exception as e:
+        logger.warning(f"Error preparing visual context: {e}, using simplified context")
+        base_prompt = f"Original Prompt: {ctx.prompt}\nIdentified Object: {identified_object}\nVisual Context: Standard image context"
     
     # Refine Prompt with visual context
-    response = await prompt_refinement_agent.run(base_prompt)
-    logger.info(f"Refined Prompt = {response.output}")
-    return response.output
+    try:
+        response = await prompt_refinement_agent.run(base_prompt)
+        logger.info(f"Refined Prompt = {response.output}")
+        return response.output
+    except Exception as e:
+        logger.error(f"Error in prompt refinement: {e}, returning original prompt")
+        return ctx.prompt or "Enhance the image quality and visual appeal"
 
 
 def _convert_region_alpha(mask_path: str) -> None:

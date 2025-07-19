@@ -14,7 +14,8 @@ from sqlalchemy.orm import sessionmaker
 
 from churns.api.main import app
 from churns.api.database import BrandPreset, PresetType
-from churns.models.presets import PipelineInputSnapshot, StyleRecipeData, BrandColors, LogoAnalysis
+from churns.models.presets import PipelineInputSnapshot, StyleRecipeData
+from churns.models import LogoAnalysisResult, BrandKitInput
 from sqlmodel import SQLModel, Session, create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker

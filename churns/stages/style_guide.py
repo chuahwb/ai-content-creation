@@ -111,6 +111,7 @@ def _get_style_guider_user_prompt(
     image_analysis: Optional[Dict[str, Any]],
     image_instruction: Optional[str],
     user_prompt_original: Optional[str],
+    brand_kit: Optional[Dict[str, Any]],
     num_strategies: int,
     use_instructor_parsing: bool
 ) -> str:
@@ -126,6 +127,16 @@ def _get_style_guider_user_prompt(
         prompt_parts.append(f"  - Niche: {strategy.get('target_niche', 'N/A')}")
         prompt_parts.append(f"  - Objective: {strategy.get('target_objective', 'N/A')}")
         prompt_parts.append(f"  - Voice: {strategy.get('target_voice', 'N/A')}")
+
+    if brand_kit:
+        prompt_parts.append("\n**Brand Kit Context for Style Generation:**")
+        prompt_parts.append("A brand kit has been provided. All style suggestions MUST be compatible with this kit.")
+        if brand_kit.get('colors'):
+            prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`. Your suggested color palettes should complement or incorporate these colors.")
+        if brand_kit.get('brand_voice_description'):
+            prompt_parts.append(f"- **Brand Voice:** `'{brand_kit.get('brand_voice_description')}'`. Your style descriptions should reflect this voice.")
+        if brand_kit.get('logo_analysis') and brand_kit['logo_analysis'].get('logo_style'):
+            prompt_parts.append(f"- **Logo Style:** `'{brand_kit['logo_analysis']['logo_style']}'`. Ensure your suggested styles do not clash with the logo's aesthetic.")
 
     if image_instruction and image_analysis:
         prompt_parts.append("\n**MANDATORY CONTEXT & CONSTRAINTS FOR STYLE GENERATION:**")
@@ -196,6 +207,7 @@ async def run(ctx: PipelineContext) -> None:
     image_analysis = ctx.image_analysis_result
     image_instruction = ctx.image_reference.get("instruction") if ctx.image_reference else None
     user_prompt_original = ctx.prompt
+    brand_kit = ctx.brand_kit
 
     ctx.log(f"Generating style guidance for {num_strategies} strategies (Creativity: {creativity_level})")
 
@@ -222,7 +234,7 @@ async def run(ctx: PipelineContext) -> None:
     
     user_prompt_sg = _get_style_guider_user_prompt(
         strategies, task_type, image_analysis, image_instruction,
-        user_prompt_original, num_strategies, use_instructor_for_sg_call
+        user_prompt_original, brand_kit, num_strategies, use_instructor_for_sg_call
     )
 
     # Prepare LLM arguments

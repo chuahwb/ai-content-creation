@@ -32,6 +32,7 @@ import {
 } from '@mui/icons-material';
 import toast from 'react-hot-toast';
 import { PipelineAPI } from '@/lib/api';
+import ImageWithAuth from '@/components/ImageWithAuth';
 
 interface RefinementModalProps {
   open: boolean;
@@ -62,7 +63,6 @@ export default function RefinementModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRepairSubmitting, setIsRepairSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
 
   // Form state
   const [promptInstructions, setPromptInstructions] = useState('');
@@ -94,10 +94,12 @@ export default function RefinementModal({
   };
 
   const getImageCoordinates = (event: React.MouseEvent<HTMLElement>) => {
-    if (!imageRef.current) return null;
+    // Find the image element within the container since ImageWithAuth doesn't expose imageRef
+    const container = event.currentTarget;
+    const img = container.querySelector('img');
+    if (!img) return null;
     
-    const img = imageRef.current;
-    const containerRect = img.parentElement?.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
     if (!containerRect) return null;
     
     // Get actual displayed image dimensions (accounting for object-fit: contain)
@@ -182,10 +184,14 @@ export default function RefinementModal({
   };
 
   const generateMaskFile = async (): Promise<File | null> => {
-    if (!maskCoordinates || !imageRef.current) return null;
+    if (!maskCoordinates) return null;
     
     try {
-      const img = imageRef.current;
+      const img = document.querySelector('[data-mask-container="true"]')?.querySelector('img');
+      if (!img) {
+        throw new Error('Could not find image element for mask generation');
+      }
+
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       
@@ -468,15 +474,16 @@ export default function RefinementModal({
                         animation: 'pulse 2s infinite',
                       } : {},
                     }}
+                    data-mask-container="true"
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
                     onMouseLeave={handleMouseUp}
                   >
-                    <Box
-                      ref={imageRef}
-                      component="img"
-                      src={PipelineAPI.getFileUrl(runId, imagePath)}
+                    <ImageWithAuth
+                      runId={runId}
+                      imagePath={imagePath}
+                      alt="Current Image"
                       sx={{
                         maxWidth: '100%',
                         maxHeight: '100%',
@@ -488,16 +495,17 @@ export default function RefinementModal({
                         userSelect: 'none',
                         pointerEvents: 'none',
                       }}
-                      draggable={false}
                     />
                     
                     {/* Mask overlay */}
-                    {maskCoordinates && imageRef.current && (
+                    {maskCoordinates && (
                       (() => {
-                        const img = imageRef.current;
-                        if (!img || !img.parentElement) return null;
+                        // Find the image element within the container
+                        const container = document.querySelector('[data-mask-container="true"]');
+                        const img = container?.querySelector('img');
+                        if (!img || !container) return null;
                         
-                        const containerRect = img.parentElement.getBoundingClientRect();
+                        const containerRect = container.getBoundingClientRect();
                         const containerWidth = containerRect.width;
                         const containerHeight = containerRect.height;
                         const imageAspectRatio = img.naturalWidth / img.naturalHeight;
