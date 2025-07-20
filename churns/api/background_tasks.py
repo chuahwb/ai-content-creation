@@ -33,6 +33,7 @@ from churns.core.constants import (
     CAPTION_MODEL_PROVIDER,
     STYLE_ADAPTATION_MODEL_ID
 )
+from churns.core.model_selector import get_caption_model_for_processing_mode
 from churns.core.token_cost_manager import get_token_cost_manager, calculate_stage_cost_from_usage
 
 logger = logging.getLogger(__name__)
@@ -1550,7 +1551,18 @@ class PipelineTaskProcessor:
             settings = caption_data.get("settings", {})
             version = caption_data.get("version", 0)
             writer_only = caption_data.get("writer_only", False)
-            model_id = caption_data.get("model_id", CAPTION_MODEL_ID)
+            # Determine model_id based on processing_mode or explicit model_id
+            settings = caption_data.get("settings", {})
+            processing_mode = settings.get("processing_mode")
+            
+            if processing_mode:
+                # Use processing_mode to select appropriate model
+                model_id = get_caption_model_for_processing_mode(processing_mode)
+                logger.info(f"Selected model {model_id} for processing_mode: {processing_mode}")
+            else:
+                # Fallback to explicitly provided model_id or default
+                model_id = caption_data.get("model_id", CAPTION_MODEL_ID)
+                logger.info(f"Using model {model_id} (no processing_mode specified)")
             
             logger.info(f"Starting caption generation for image {image_id} in run {run_id} using model {model_id}")
             
