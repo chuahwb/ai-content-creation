@@ -257,7 +257,7 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
         image_size=image_size,
         mask_path=None,
         image_gen_client=image_gen_client,
-        image_quality_setting="medium",  # Use high quality for subject repair refinements
+        image_quality_setting="medium",  # Use same quality as original generation to maintain consistency
         input_fidelity="high"  # High fidelity for all refinement operations
     )
     

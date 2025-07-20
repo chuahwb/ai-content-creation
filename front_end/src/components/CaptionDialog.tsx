@@ -127,7 +127,7 @@ export default function CaptionDialog({
   ];
 
   const hashtagOptions = [
-    { value: 'none', label: 'None (No hashtags)' },
+    { value: 'none', label: 'None' },
     { value: 'niche', label: 'Niche & Specific' },
     { value: 'broad', label: 'Broad & Trending' },
     { value: 'balanced', label: 'Balanced Mix' },
@@ -141,8 +141,9 @@ export default function CaptionDialog({
       fullWidth
       PaperProps={{
         sx: {
-          borderRadius: 3,
+          borderRadius: 2,
           maxHeight: '90vh',
+          boxShadow: 4,
         }
       }}
     >
@@ -150,52 +151,87 @@ export default function CaptionDialog({
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center',
-        pb: 1,
-        borderBottom: 1,
-        borderColor: 'divider'
+        pb: 2,
+        borderBottom: '1px solid',
+        borderColor: 'grey.200',
+        backgroundColor: 'white'
       }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <AutoAwesomeIcon color="primary" />
-          <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Typography variant="h6" component="div" sx={{ fontWeight: 600, color: 'text.primary' }}>
             {initialSettings ? 'Regenerate Caption' : 'Generate Caption'}
           </Typography>
           <Chip 
-            label={`Option ${imageIndex + 1}`} 
+            label={`Image ${imageIndex + 1}`} 
             size="small" 
-            color="primary" 
             variant="outlined"
+            sx={{ 
+              borderColor: 'primary.main',
+              color: 'primary.main',
+              fontWeight: 500,
+              fontSize: '0.6875rem'
+            }}
           />
         </Box>
         <IconButton 
           onClick={handleClose} 
           disabled={isGenerating}
-          sx={{ color: 'grey.500' }}
+          sx={{ 
+            color: 'grey.400',
+            '&:hover': { 
+              backgroundColor: 'grey.100',
+              color: 'grey.600'
+            }
+          }}
         >
-          <CloseIcon />
+          <CloseIcon fontSize="small" />
         </IconButton>
       </DialogTitle>
 
-      <DialogContent sx={{ pt: 3, pb: 2 }}>
+      <DialogContent sx={{ pt: 3, pb: 2, px: 3 }}>
         {/* Error Display */}
         {error && (
-          <Alert severity="error" sx={{ mb: 3 }}>
+          <Alert 
+            severity="error" 
+            sx={{ 
+              mb: 3,
+              borderRadius: 2,
+              border: '1px solid',
+              borderColor: 'error.200'
+            }}
+          >
             <Typography variant="body2" sx={{ fontWeight: 500 }}>
               Caption Generation Error
             </Typography>
-            <Typography variant="body2" color="textSecondary" sx={{ mt: 0.5 }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.5 }}>
               {error}
             </Typography>
           </Alert>
         )}
 
         {/* Auto Mode Description */}
-        <Box sx={{ mb: 3, p: 2, backgroundColor: 'primary.50', borderRadius: 2, border: 1, borderColor: 'primary.100' }}>
-          <Typography variant="body2" sx={{ fontWeight: 500, color: 'primary.main', mb: 1 }}>
-            ✨ Auto Mode (Recommended)
+        <Box sx={{ 
+          mb: 3, 
+          p: 2.5, 
+          backgroundColor: 'primary.25', 
+          borderRadius: 2, 
+          border: '1px solid', 
+          borderColor: 'primary.100' 
+        }}>
+          <Typography variant="body2" sx={{ 
+            fontWeight: 600, 
+            color: 'primary.main', 
+            mb: 1,
+            fontSize: '0.8125rem'
+          }}>
+            Recommended: Auto Mode
           </Typography>
-          <Typography variant="body2" color="textSecondary">
-            Our AI will analyze your image, marketing strategy, and visual style to create the perfect caption automatically. 
-            No configuration needed!
+          <Typography variant="body2" sx={{ 
+            color: 'text.secondary', 
+            lineHeight: 1.5,
+            fontSize: '0.8125rem'
+          }}>
+            Our AI analyzes your image, marketing strategy, and visual style to create optimized captions automatically. 
+            Expand Advanced Options below only if you need specific customizations.
           </Typography>
         </Box>
 
@@ -205,25 +241,33 @@ export default function CaptionDialog({
           onChange={(_, expanded) => setAdvancedOpen(expanded)}
           sx={{ 
             boxShadow: 'none', 
-            border: 1, 
-            borderColor: 'divider',
+            border: '1px solid', 
+            borderColor: 'grey.200',
             borderRadius: 2,
+            backgroundColor: 'white',
             '&:before': { display: 'none' },
             '&.Mui-expanded': { margin: 0 }
           }}
         >
           <AccordionSummary
-            expandIcon={<ExpandMoreIcon />}
+            expandIcon={<ExpandMoreIcon sx={{ color: 'text.secondary' }} />}
             sx={{ 
               backgroundColor: 'grey.50',
               borderRadius: advancedOpen ? '8px 8px 0 0' : 2,
               minHeight: 56,
+              transition: 'background-color 0.2s ease-in-out',
+              '&:hover': {
+                backgroundColor: 'grey.100'
+              },
               '&.Mui-expanded': { minHeight: 56 }
             }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <TuneIcon color="action" fontSize="small" />
-              <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Typography variant="subtitle2" sx={{ 
+                fontWeight: 600,
+                color: 'text.primary',
+                fontSize: '0.875rem'
+              }}>
                 Advanced Options
               </Typography>
               {!advancedOpen && (
@@ -231,27 +275,41 @@ export default function CaptionDialog({
                   label="Optional" 
                   size="small" 
                   variant="outlined" 
-                  sx={{ ml: 1, fontSize: '0.7rem' }}
+                  sx={{ 
+                    fontSize: '0.6875rem',
+                    height: 20,
+                    borderColor: 'grey.300',
+                    color: 'text.secondary'
+                  }}
                 />
               )}
             </Box>
           </AccordionSummary>
           
-          <AccordionDetails sx={{ pt: 3, pb: 2 }}>
+          <AccordionDetails sx={{ pt: 3, pb: 3, px: 3 }}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Generation Mode Selection */}
+              {/* Model Selection */}
               <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <AutoAwesomeIcon fontSize="small" color="primary" />
-                  Generation Mode
+                <Typography variant="subtitle2" sx={{ 
+                  fontWeight: 600, 
+                  mb: 1.5, 
+                  color: 'text.primary',
+                  fontSize: '0.8125rem'
+                }}>
+                  Processing Model
                 </Typography>
-                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                  Choose between quick results or deeper analysis for your caption
+                <Typography variant="body2" sx={{ 
+                  color: 'text.secondary', 
+                  mb: 2,
+                  fontSize: '0.75rem',
+                  lineHeight: 1.4
+                }}>
+                  Choose between speed-optimized or capability-enhanced processing
                 </Typography>
                 
                 {loadingModels ? (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                    <CircularProgress size={20} />
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                    <CircularProgress size={24} />
                   </Box>
                 ) : (
                   <RadioGroup
@@ -262,16 +320,16 @@ export default function CaptionDialog({
                       <Box
                         key={model.id}
                         sx={{
-                          border: 1,
-                          borderColor: selectedModelId === model.id ? 'primary.main' : 'grey.300',
+                          border: '1px solid',
+                          borderColor: selectedModelId === model.id ? 'primary.main' : 'grey.200',
                           borderRadius: 2,
-                          backgroundColor: selectedModelId === model.id ? 'primary.50' : 'white',
+                          backgroundColor: selectedModelId === model.id ? 'primary.25' : 'white',
                           cursor: 'pointer',
-                          transition: 'all 0.2s ease',
+                          transition: 'all 0.2s ease-in-out',
                           mb: 1,
                           '&:hover': {
                             borderColor: 'primary.main',
-                            backgroundColor: 'primary.25',
+                            backgroundColor: selectedModelId === model.id ? 'primary.50' : 'primary.25',
                           }
                         }}
                         onClick={() => setSelectedModelId(model.id)}
@@ -282,24 +340,37 @@ export default function CaptionDialog({
                               checked={selectedModelId === model.id}
                               value={model.id}
                               size="small"
+                              sx={{ color: 'primary.main' }}
                             />
                           }
                           label={
                             <Box sx={{ py: 0.5 }}>
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                <Typography variant="body2" sx={{ 
+                                  fontWeight: 600,
+                                  color: 'text.primary',
+                                  fontSize: '0.8125rem'
+                                }}>
                                   {model.name}
                                 </Typography>
                                 <Chip
-                                  icon={model.latency === 'Low' ? <SpeedIcon /> : <PsychologyIcon />}
                                   label={model.latency === 'Low' ? 'Fast' : 'Analytical'}
                                   size="small"
-                                  color={model.latency === 'Low' ? 'success' : 'secondary'}
                                   variant="outlined"
-                                  sx={{ fontSize: '0.65rem', height: 18 }}
+                                  sx={{ 
+                                    fontSize: '0.6875rem', 
+                                    height: 20,
+                                    borderColor: model.latency === 'Low' ? 'info.main' : 'warning.main',
+                                    color: model.latency === 'Low' ? 'info.main' : 'warning.main',
+                                    backgroundColor: 'transparent'
+                                  }}
                                 />
                               </Box>
-                              <Typography variant="caption" color="textSecondary">
+                              <Typography variant="caption" sx={{ 
+                                color: 'text.secondary',
+                                fontSize: '0.6875rem',
+                                lineHeight: 1.3
+                              }}>
                                 {model.description}
                               </Typography>
                             </Box>
@@ -318,71 +389,121 @@ export default function CaptionDialog({
                 )}
               </Box>
 
-              {/* Caption Tone */}
-              <FormControl fullWidth>
-                <InputLabel>Caption Tone</InputLabel>
-                <Select
-                  value={settings.tone || ''}
-                  label="Caption Tone"
-                  onChange={(e) => setSettings(prev => ({ ...prev, tone: e.target.value as string }))}
-                >
-                  <MenuItem value="">
-                    <em>Auto (Let AI decide)</em>
-                  </MenuItem>
-                  {toneOptions.map(option => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              {/* Caption Settings */}
+              <Box>
+                <Typography variant="subtitle2" sx={{ 
+                  fontWeight: 600, 
+                  mb: 2, 
+                  color: 'text.primary',
+                  fontSize: '0.8125rem'
+                }}>
+                  Caption Settings
+                </Typography>
 
-              {/* Call to Action */}
-              <TextField
-                fullWidth
-                label="Call to Action (CTA)"
-                placeholder="e.g., Shop Now, Learn More, Link in Bio"
-                value={settings.call_to_action || ''}
-                onChange={(e) => setSettings(prev => ({ ...prev, call_to_action: e.target.value }))}
-                helperText="Leave blank for AI to generate automatically"
-              />
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+                  {/* Caption Tone */}
+                  <FormControl fullWidth size="small">
+                    <InputLabel sx={{ fontSize: '0.875rem' }}>Tone of Voice</InputLabel>
+                    <Select
+                      value={settings.tone || ''}
+                      label="Tone of Voice"
+                      onChange={(e) => setSettings(prev => ({ ...prev, tone: e.target.value as string }))}
+                      sx={{ 
+                        '& .MuiSelect-select': { fontSize: '0.875rem' },
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.300' }
+                      }}
+                    >
+                      <MenuItem value="">
+                        <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
+                          Auto (AI decides)
+                        </Typography>
+                      </MenuItem>
+                      {toneOptions.map(option => (
+                        <MenuItem key={option.value} value={option.value}>
+                          <Typography variant="body2">{option.label}</Typography>
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
 
-              {/* Include Emojis Toggle */}
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={settings.include_emojis ?? true}
-                    onChange={(e) => setSettings(prev => ({ ...prev, include_emojis: e.target.checked }))}
-                    color="primary"
+                  {/* Call to Action */}
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Call to Action"
+                    placeholder="e.g., Shop Now, Learn More, Link in Bio"
+                    value={settings.call_to_action || ''}
+                    onChange={(e) => setSettings(prev => ({ ...prev, call_to_action: e.target.value }))}
+                    helperText="Leave blank for automatic generation"
+                    sx={{ 
+                      '& .MuiInputBase-input': { fontSize: '0.875rem' },
+                      '& .MuiFormHelperText-root': { fontSize: '0.6875rem' },
+                      '& .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.300' }
+                    }}
                   />
-                }
-                label="Include Emojis"
-                sx={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  ml: 0,
-                  '& .MuiFormControlLabel-label': { flex: 1 }
-                }}
-              />
 
-              {/* Hashtag Strategy */}
-              <FormControl fullWidth>
-                <InputLabel>Hashtag Strategy</InputLabel>
-                <Select
-                  value={settings.hashtag_strategy || ''}
-                  label="Hashtag Strategy"
-                  onChange={(e) => setSettings(prev => ({ ...prev, hashtag_strategy: e.target.value as string }))}
-                >
-                  <MenuItem value="">
-                    <em>Auto (Balanced Mix)</em>
-                  </MenuItem>
-                  {hashtagOptions.map(option => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+                  {/* Emojis and Hashtags Row */}
+                  <Box sx={{ display: 'flex', gap: 2 }}>
+                    {/* Include Emojis Toggle */}
+                    <Box sx={{ 
+                      flex: 1,
+                      border: '1px solid',
+                      borderColor: 'grey.300',
+                      borderRadius: 1,
+                      p: 1.5,
+                      backgroundColor: 'white'
+                    }}>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={settings.include_emojis ?? true}
+                            onChange={(e) => setSettings(prev => ({ ...prev, include_emojis: e.target.checked }))}
+                            color="primary"
+                            size="small"
+                          />
+                        }
+                        label={
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                            Include Emojis
+                          </Typography>
+                        }
+                        sx={{ 
+                          display: 'flex', 
+                          justifyContent: 'space-between', 
+                          ml: 0,
+                          width: '100%',
+                          '& .MuiFormControlLabel-label': { flex: 1 }
+                        }}
+                      />
+                    </Box>
+
+                    {/* Hashtag Strategy */}
+                    <FormControl size="small" sx={{ flex: 1 }}>
+                      <InputLabel sx={{ fontSize: '0.875rem' }}>Hashtags</InputLabel>
+                      <Select
+                        value={settings.hashtag_strategy || ''}
+                        label="Hashtags"
+                        onChange={(e) => setSettings(prev => ({ ...prev, hashtag_strategy: e.target.value as string }))}
+                        sx={{ 
+                          '& .MuiSelect-select': { fontSize: '0.875rem' },
+                          '& .MuiOutlinedInput-notchedOutline': { borderColor: 'grey.300' }
+                        }}
+                      >
+                        <MenuItem value="">
+                          <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
+                            Auto (Balanced)
+                          </Typography>
+                        </MenuItem>
+                        {hashtagOptions.map(option => (
+                          <MenuItem key={option.value} value={option.value}>
+                            <Typography variant="body2">{option.label}</Typography>
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Box>
+                </Box>
+              </Box>
             </Box>
           </AccordionDetails>
         </Accordion>
@@ -390,15 +511,26 @@ export default function CaptionDialog({
 
       <DialogActions sx={{ 
         px: 3, 
-        py: 2, 
-        borderTop: 1, 
-        borderColor: 'divider',
-        backgroundColor: 'grey.50'
+        py: 2.5, 
+        borderTop: '1px solid', 
+        borderColor: 'grey.200',
+        backgroundColor: 'grey.25',
+        gap: 1.5
       }}>
         <Button 
           onClick={handleClose} 
           disabled={isGenerating}
-          color="inherit"
+          variant="outlined"
+          sx={{ 
+            textTransform: 'none',
+            fontWeight: 500,
+            borderColor: 'grey.300',
+            color: 'text.primary',
+            '&:hover': {
+              borderColor: 'grey.400',
+              backgroundColor: 'grey.50'
+            }
+          }}
         >
           Cancel
         </Button>
@@ -406,13 +538,13 @@ export default function CaptionDialog({
           onClick={handleGenerate}
           variant="contained"
           disabled={isGenerating}
-          startIcon={<AutoAwesomeIcon />}
           sx={{ 
+            textTransform: 'none',
             fontWeight: 600,
             px: 3,
-            background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+            boxShadow: 1,
             '&:hover': {
-              background: 'linear-gradient(45deg, #1976D2 30%, #0288D1 90%)',
+              boxShadow: 2
             }
           }}
         >

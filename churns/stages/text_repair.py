@@ -558,7 +558,7 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
             image_size=image_size,
             mask_path=None,  # Text repair uses global editing
             image_gen_client=image_gen_client,
-            image_quality_setting="high",  # Use high quality for text repair refinements
+            image_quality_setting="medium",  # Use same quality as original generation to prevent quality leap
             input_fidelity="high"  # High fidelity for all refinement operations
         )
         logger.info(f"Text repair API call completed: {result_image_path}")

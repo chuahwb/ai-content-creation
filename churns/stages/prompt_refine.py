@@ -138,7 +138,7 @@ async def run(ctx: PipelineContext) -> None:
             image_size=image_size,
             mask_path=mask_path,
             image_gen_client=image_gen_client,
-            image_quality_setting="medium",  # Use high quality for prompt refinements
+            image_quality_setting="medium",  # Use same quality as original generation to maintain consistency
             input_fidelity="high"  # High fidelity for all refinement operations
         )
         

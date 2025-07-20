@@ -283,8 +283,12 @@ async def call_openai_images_edit(
         image_size: API image size parameter
         mask_path: Optional path to mask file for regional editing
         image_gen_client: OpenAI client instance
-        image_quality_setting: Quality setting for gpt-image-1 (default "medium")
+        image_quality_setting: Quality setting for gpt-image-1 (default "medium" to match original generation)
         input_fidelity: Input fidelity setting (default "high")
+        
+    Note: 
+        Default quality is "medium" to maintain consistency with original image generation.
+        Use "high" if you want enhanced quality refinements that may differ from originals.
     """    
     
     # Use global model ID (same pattern as image_generation.py)

@@ -132,6 +132,7 @@ class CaptionBrief(BaseModel):
     key_themes_to_include: List[str] = Field(..., description="An array of 3-5 key themes or concepts to weave into the caption.")
     seo_keywords: List[str] = Field(..., description="An array of 3-5 important SEO keywords to integrate naturally.")
     target_emotion: str = Field(..., description="The primary emotion the caption should evoke in the reader (e.g., 'Aspirational', 'Trustworthy', 'Excited').")
+    tone_of_voice: str = Field(..., description="The specific tone of voice the writer must adopt (e.g., 'Witty & Playful', 'Professional & Polished'). This is a direct instruction.")
     platform_optimizations: Dict[str, Dict[str, Any]] = Field(..., description="Platform-specific optimization instructions.")
     primary_call_to_action: str = Field(..., description="The final call to action string.")
     hashtags: List[str] = Field(..., description="An array of generated hashtag strings, including the # symbol.")
@@ -144,6 +145,9 @@ class CaptionSettings(BaseModel):
     call_to_action: Optional[str] = Field(None, description="User-defined call to action text")
     include_emojis: Optional[bool] = Field(True, description="Whether to include emojis in the caption")
     hashtag_strategy: Optional[str] = Field(None, description="Hashtag strategy ('None', 'Niche & Specific', 'Broad & Trending', 'Balanced Mix')")
+    # New fields for mode tracking
+    generation_mode: Optional[str] = Field(None, description="Auto or Custom - indicates how the settings were determined")
+    processing_mode: Optional[str] = Field(None, description="Fast or Analytical - indicates the model sophistication level used")
 
 class CaptionResult(BaseModel):
     """Final caption result with metadata."""

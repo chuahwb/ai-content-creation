@@ -205,6 +205,9 @@ export interface CaptionSettings {
   call_to_action?: string;
   include_emojis?: boolean;
   hashtag_strategy?: string;
+  // New fields for mode tracking
+  generation_mode?: string;
+  processing_mode?: string;
 }
 
 export interface CaptionModelOption {

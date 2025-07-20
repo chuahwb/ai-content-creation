@@ -178,7 +178,11 @@ def _get_analyst_system_prompt(language: str = 'en') -> str:
 - ALL fields in the JSON schema are REQUIRED and must be included.
 
 **Auto Mode Logic:**
-- Auto-Tone Selection: Infer optimal tone by synthesizing target_voice from marketing strategy and lighting_and_mood from visual concept.
+- **Auto-Tone Selection:** In auto-mode, you MUST create a *new, refined* `tone_of_voice`.
+  - **Source Hierarchy:** Check for available voice sources in this order: 1. Global Brand Voice, 2. Tactical Marketing Voice. Use the first one you find.
+  - **Synthesis:** Blend the chosen voice source with the 'Visual Mood' to create the final, specific `tone_of_voice`. For example, if the Brand Voice is "professional" and the mood is "dramatic," you could synthesize "An authoritative and compelling tone."
+  - **If no voice source is provided,** create a generally friendly and engaging tone.
+  - **Do not** just copy one of the sources verbatim.
 - Auto-CTA Generation: Generate context-aware CTA based on target_objective.
 - Auto-Emoji Usage: Enable by default, use sparingly and match the selected tone.
 - Auto-Hashtag Strategy: Default to "Balanced Mix" - extract keywords from style and subject for niche hashtags, supplement with 1-2 broader terms.
@@ -197,6 +201,7 @@ You must output a valid JSON object with exactly these fields. Do not omit any f
   "key_themes_to_include": ["Array of 3-5 key themes or concepts"],
   "seo_keywords": ["Array of 3-5 important SEO keywords"],
   "target_emotion": "Primary emotion to evoke (e.g., 'Aspirational', 'Trustworthy')",
+  "tone_of_voice": "The specific tone the writer must adopt. If a user provided a tone, use it verbatim. In auto-mode, state your inferred tone (e.g., 'Witty & Playful').",
   "platform_optimizations": {{
     "[EXACT_PLATFORM_NAME]": {{
       "caption_structure": "Brief instruction on structure for this platform",
@@ -326,6 +331,11 @@ def _get_analyst_user_prompt(
     # Validate we have minimum required data
     _validate_required_data(strategy_data, visual_data, main_subject)
     
+    # Extract Brand Kit voice if available
+    brand_voice = None
+    if hasattr(ctx, 'brand_kit') and ctx.brand_kit:
+        brand_voice = ctx.brand_kit.get('brand_voice_description')
+    
     # Map language codes to readable names
     language_names = {
         'en': 'English',
@@ -336,13 +346,21 @@ def _get_analyst_user_prompt(
     }
     language_name = language_names.get(ctx.language, ctx.language.upper())
     
-    prompt_parts = [
+    prompt_parts = []
+    if brand_voice:
+        prompt_parts.extend([
+            "**Brand Voice Guidelines:**",
+            f'"{brand_voice}"',
+            ""
+        ])
+    
+    prompt_parts.extend([
         f"**Target Platform:** {platform_name}",
         "",
         "**Marketing Strategy:**",
         f"- Target Audience: {strategy_data['target_audience']}",
         f"- Target Objective: {strategy_data['target_objective']}",
-    ]
+    ])
     
     # Add optional strategy fields only if they exist
     if strategy_data['target_voice']:
@@ -401,16 +419,20 @@ def _get_analyst_user_prompt(
     prompt_parts.append("")
     prompt_parts.append("**User Settings:**")
     
-    # Handle user settings vs auto mode
+    # Handle user settings vs auto mode for Caption Tone
     if settings.tone:
         prompt_parts.append(f"- Caption Tone: {settings.tone} (USER OVERRIDE)")
     else:
-        if strategy_data['target_voice'] and visual_data['lighting_mood']:
-            prompt_parts.append(f"- Caption Tone: Auto mode - infer from target_voice ('{strategy_data['target_voice']}') and lighting_mood ('{visual_data['lighting_mood']}')")
-        elif strategy_data['target_voice']:
-            prompt_parts.append(f"- Caption Tone: Auto mode - infer from target_voice ('{strategy_data['target_voice']}')")
-        else:
-            prompt_parts.append("- Caption Tone: Auto mode - use friendly and engaging tone")
+        # Auto mode: Provide the available ingredients for tone synthesis
+        prompt_parts.append("- Caption Tone: Auto mode")
+        if brand_voice:
+            prompt_parts.append(f"  - Available Global Brand Voice: '{brand_voice}' (Primary preference)")
+        if strategy_data['target_voice']:
+            prompt_parts.append(f"  - Available Tactical Marketing Voice: '{strategy_data['target_voice']}' (Use if no Global Brand Voice)")
+        if visual_data['lighting_mood']:
+            prompt_parts.append(f"  - Available Visual Mood: '{visual_data['lighting_mood']}' (Blend with the chosen voice)")
+        if not brand_voice and not strategy_data['target_voice']:
+            prompt_parts.append("  - No specific voice provided. Generate a generally friendly and engaging tone.")
     
     if settings.call_to_action:
         prompt_parts.append(f"- Call to Action: {settings.call_to_action} (USER OVERRIDE)")
@@ -465,8 +487,9 @@ def _get_writer_system_prompt(language: str = 'en') -> str:
 **Instructions:**
 - Your task is to write a compelling social media caption based on the provided Caption Brief.
 - **Language Adherence:** Write the final caption in {language_name}, keeping cultural/brand terms as-is. Only use a different language if explicitly present in those terms.
+- **CRITICAL TONE OF VOICE:** You MUST adopt the following tone: **{{brief.tone_of_voice}}**. This is the most important instruction and is non-negotiable.
+- **CRITICAL STRUCTURE:** You MUST strictly adhere to the `caption_structure` and `style_notes` provided in the `platform_optimizations` section of the brief. This structure is key to the caption's success on that specific platform.
 - Read the entire brief carefully to understand the strategic goals.
-- **CRITICAL:** You MUST strictly adhere to the `caption_structure` and `style_notes` provided in the `platform_optimizations` section of the brief. This structure is non-negotiable and is the key to the caption's success on that specific platform.
 - Write a caption that feels authentic and human, not like it was written by an AI.
 - Seamlessly integrate the `seo_keywords` into the text without making it sound forced.
 - End with the `primary_call_to_action` and the provided `hashtags`.
@@ -499,7 +522,8 @@ def _get_writer_user_prompt(brief: CaptionBrief) -> str:
     prompt_parts = [
         "Write a social media caption based on this strategic brief:",
         "",
-        f"**Core Message:** {brief.core_message}"
+        f"**Core Message:** {brief.core_message}",
+        f"**Tone of Voice:** {brief.tone_of_voice}"
     ]
     
     # Add task type notes if available
@@ -907,6 +931,30 @@ async def run(ctx: PipelineContext) -> None:
         if not caption_text:
             ctx.log(f"Failed to generate caption text for image {i+1}")
             continue
+        
+        # If running in auto-mode, update the settings object with the Analyst's choices for transparency.
+        if not settings.tone and brief.tone_of_voice:
+            settings.tone = brief.tone_of_voice
+        if not settings.call_to_action and brief.primary_call_to_action:
+            settings.call_to_action = brief.primary_call_to_action
+        # This makes the auto-generated settings visible in the UI and pre-populates them for regeneration.
+        
+        # Populate mode tracking fields
+        # Determine generation mode based on original user input
+        original_settings = getattr(ctx, 'caption_settings', {})
+        user_provided_settings = bool(
+            original_settings.get('tone') or 
+            original_settings.get('call_to_action') or 
+            original_settings.get('hashtag_strategy') or 
+            original_settings.get('include_emojis') is False
+        )
+        settings.generation_mode = 'Custom' if user_provided_settings else 'Auto'
+        
+        # Determine processing mode based on model configuration
+        model_id = CAPTION_MODEL_ID or 'unknown'
+        fast_models = ['gpt-3.5', 'gpt-35', 'gemini-1.5-flash', 'gemini-flash', 'claude-3-haiku', 'claude-haiku']
+        is_fast_model = any(pattern in model_id.lower() for pattern in fast_models)
+        settings.processing_mode = 'Fast' if is_fast_model else 'Analytical'
         
         # Create caption result
         caption_result = CaptionResult(
