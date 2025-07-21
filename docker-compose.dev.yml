@@ -12,40 +12,65 @@ services:
       - ./churns:/app/churns
       - ./data:/app/data
       - ./.env:/app/.env:ro
+      - ./logs:/app/logs  # Development logs
     environment:
       - PYTHONPATH=/app
       - ENV=development
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - REDIS_URL=redis://redis:6379/0
+      - WATCHFILES_FORCE_POLLING=true  # Better file watching in Docker
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
-      - churns_net
+      - churns_dev_net
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
+          cpus: '1.5'  # Reduced for development
+          memory: 1.5G
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Development-specific labels for better organization
+    labels:
+      - "churns.service=api"
+      - "churns.env=development"
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"  # Bind to localhost for security
     volumes:
-      - redis_data:/data
+      - redis_dev_data:/data
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
     networks:
-      - churns_net
+      - churns_dev_net
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '0.3'  # Reduced for development
+          memory: 256M
         reservations:
-          cpus: '0.1'
-          memory: 128M
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "churns.service=redis"
+      - "churns.env=development"
 
   frontend:
     build:
@@ -55,8 +80,9 @@ services:
       - "3000:3000"
     volumes:
       - ./front_end:/app
-      - /app/node_modules
-      - /app/.next
+      - /app/node_modules  # Anonymous volume for node_modules
+      - /app/.next         # Anonymous volume for Next.js cache
+      - frontend_cache:/app/.next/cache  # Named volume for build cache
     environment:
       - NODE_ENV=development
       # Use localhost for development - can be overridden via .env
@@ -66,10 +92,13 @@ services:
       # Disable Next.js editor integration to prevent errors
       - REACT_EDITOR=none
       - BROWSER=none
+      - NEXT_TELEMETRY_DISABLED=1
+      - WATCHPACK_POLLING=true  # Better file watching in Docker
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
-      - churns_net
+      - churns_dev_net
     restart: unless-stopped
     deploy:
       resources:
@@ -77,13 +106,41 @@ services:
           cpus: '1.0'
           memory: 1G
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.1'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Longer start period for development builds
+    labels:
+      - "churns.service=frontend"
+      - "churns.env=development"
+
+  # Optional: Add development database viewer
+  # redis-commander:
+  #   image: rediscommander/redis-commander:latest
+  #   environment:
+  #     - REDIS_HOSTS=local:redis:6379
+  #   ports:
+  #     - "8081:8081"
+  #   depends_on:
+  #     - redis
+  #   networks:
+  #     - churns_dev_net
+  #   labels:
+  #     - "churns.service=redis-commander"
+  #     - "churns.env=development"
 
 volumes:
-  redis_data:
+  redis_dev_data:
+    driver: local
+  frontend_cache:
     driver: local
 
 networks:
-  churns_net:
-    driver: bridge 
+  churns_dev_net:
+    driver: bridge
+    # Enable IPv6 for better local development
+    enable_ipv6: false 

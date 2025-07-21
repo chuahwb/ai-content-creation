@@ -9,23 +9,25 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package.json package-lock.json* ./
-# Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
+RUN \
+  if [ -f package-lock.json ]; then npm ci --only=production; \
+  else echo "Lockfile not found." && exit 1; \
+  fi
 
 # Install all dependencies for build
 FROM base AS build-deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci && npm cache clean --force
+RUN \
+  if [ -f package-lock.json ]; then npm ci; \
+  else echo "Lockfile not found." && exit 1; \
+  fi
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
 COPY --from=build-deps /app/node_modules ./node_modules
 COPY . .
-
-# Create public directory if it doesn't exist
-RUN mkdir -p ./public
 
 # Set build-time environment variables
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -40,19 +42,22 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
 # Create nextjs user for security
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Create public directory
-RUN mkdir -p ./public && chown nextjs:nodejs ./public
+# Create necessary directories
+RUN mkdir -p .next && chown nextjs:nodejs .next
 
 # Copy production dependencies
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=deps --chown=nextjs:nodejs /app/package.json ./package.json
 
-# Copy built application
+# Copy built application files
+# For standalone builds, copy the server and required files
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
@@ -62,16 +67,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # Ensure proper permissions
 RUN chown -R nextjs:nodejs /app
 
+# Switch to non-root user
 USER nextjs
 
+# Expose port
 EXPOSE 3000
 
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-# Add health check using Node.js
+# Add health check using the built-in server
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3000', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" || exit 1
 
-# Run the application
+# Run the application using the standalone server
 CMD ["node", "server.js"] 

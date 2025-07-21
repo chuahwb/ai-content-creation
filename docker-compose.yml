@@ -11,13 +11,18 @@ services:
     volumes:
       - ./data:/app/data
       - ./.env:/app/.env:ro
+      - api_logs:/app/logs
     environment:
       - PYTHONPATH=/app
       - ENV=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
-      - churns_net
+      - backend_net
+      - frontend_net
     restart: unless-stopped
     deploy:
       resources:
@@ -33,15 +38,22 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"  # Bind to localhost only for security
     volumes:
       - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
-      - churns_net
+      - backend_net
     restart: unless-stopped
     deploy:
       resources:
@@ -57,6 +69,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   frontend:
     build:
@@ -66,13 +83,16 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - NEXT_PUBLIC_WS_URL=ws://localhost:8000
+      # Use environment variables for flexibility
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
       - INTERNAL_API_URL=http://api:8000
+      - NEXT_TELEMETRY_DISABLED=1
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
-      - churns_net
+      - frontend_net
     restart: unless-stopped
     deploy:
       resources:
@@ -88,11 +108,37 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Add nginx reverse proxy for production
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./nginx/ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - frontend
+  #     - api
+  #   networks:
+  #     - frontend_net
+  #   restart: unless-stopped
 
 volumes:
   redis_data:
     driver: local
+  api_logs:
+    driver: local
 
 networks:
-  churns_net:
-    driver: bridge 
+  backend_net:
+    driver: bridge
+    internal: true  # Backend network is internal-only
+  frontend_net:
+    driver: bridge  # Frontend network allows external access 
