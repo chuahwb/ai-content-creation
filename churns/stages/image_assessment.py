@@ -16,6 +16,7 @@ import base64
 import traceback
 import os
 import asyncio
+import warnings
 from typing import Dict, Any, List, Optional, Tuple
 from openai import OpenAI
 from pydantic import ValidationError
@@ -91,14 +92,14 @@ class ImageAssessor:
             Assessment result dictionary (without _meta to avoid duplication)
         """
         # Load the generated image
-        image_data = self._load_image_as_base64(image_path)
+        image_data = await self._load_image_as_base64(image_path)
         if not image_data:
             raise ImageAssessmentError(f"Failed to load image: {image_path}")
         
         image_base64, content_type = image_data
         
         # Calculate expected image tokens for cost tracking
-        image_token_breakdown = self._calculate_image_tokens_breakdown(
+        image_token_breakdown = await self._calculate_image_tokens_breakdown(
             image_base64, reference_image_data, self.model_id
         )
         
@@ -244,6 +245,10 @@ class ImageAssessor:
         """
         Assess a single image using OpenAI's vision capabilities (sync version for compatibility).
         
+        .. deprecated::
+            This method is for backward compatibility only. Use assess_image_async
+            in an asynchronous context for better performance and true parallelism.
+        
         Args:
             image_path: Path to the generated image to assess
             visual_concept: The visual concept from creative expert stage
@@ -257,14 +262,21 @@ class ImageAssessor:
         Returns:
             Assessment result dictionary
         """
+        warnings.warn(
+            "assess_image is deprecated and will be removed in a future version. "
+            "Use assess_image_async instead for better performance and true parallelism.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         # Run the async version in sync context
         return asyncio.run(self.assess_image_async(
             image_path, visual_concept, creativity_level, has_reference_image,
             render_text_enabled, task_type, platform, reference_image_data
         ))
     
-    def _load_image_as_base64(self, image_path: str) -> Optional[Tuple[str, str]]:
-        """Load image file and convert to base64 format."""
+    def _load_image_as_base64_sync(self, image_path: str) -> Optional[Tuple[str, str]]:
+        """Load image file and convert to base64 format (synchronous helper)."""
         try:
             # Check if file exists first
             if not os.path.exists(image_path):
@@ -287,6 +299,10 @@ class ImageAssessor:
         except Exception as e:
             # Re-raise with more context instead of returning None
             raise ImageAssessmentError(f"Failed to load image {image_path}: {str(e)}")
+    
+    async def _load_image_as_base64(self, image_path: str) -> Optional[Tuple[str, str]]:
+        """Load image file and convert to base64 format (asynchronous)."""
+        return await asyncio.to_thread(self._load_image_as_base64_sync, image_path)
     
     def _get_content_type_from_filename(self, filename: str) -> str:
         """Determine image content type from filename."""
@@ -680,13 +696,13 @@ Begin your assessment now."""
         
         return result
 
-    def _calculate_image_tokens_breakdown(
+    def _calculate_image_tokens_breakdown_sync(
         self, 
         image_base64: str, 
         reference_image_data: Optional[Tuple[str, str]], 
         model_id: str
     ) -> Dict[str, Any]:
-        """Calculate detailed breakdown of image tokens for cost tracking."""
+        """Calculate detailed breakdown of image tokens for cost tracking (synchronous helper)."""
         breakdown = {
             "model_id": model_id,
             "detail_level": "high",
@@ -727,6 +743,20 @@ Begin your assessment now."""
             breakdown["total_image_tokens"] = 1000
         
         return breakdown
+    
+    async def _calculate_image_tokens_breakdown(
+        self, 
+        image_base64: str, 
+        reference_image_data: Optional[Tuple[str, str]], 
+        model_id: str
+    ) -> Dict[str, Any]:
+        """Calculate detailed breakdown of image tokens for cost tracking (asynchronous)."""
+        return await asyncio.to_thread(
+            self._calculate_image_tokens_breakdown_sync,
+            image_base64,
+            reference_image_data,
+            model_id
+        )
 
 
 def _create_simulation_fallback(has_reference_image: bool, render_text_enabled: bool) -> Dict[str, Any]:

@@ -141,7 +141,7 @@ async def _generate_with_no_input_image(
             print(msg)
 
     # Calculate comprehensive token usage (text only for this case)
-    token_breakdown = _calculate_comprehensive_tokens(
+    token_breakdown = await _calculate_comprehensive_tokens(
         final_prompt, model_id=model_id, ctx=ctx
     )
     prompt_tokens_for_image_gen = token_breakdown["total_tokens"]
@@ -197,7 +197,7 @@ async def _generate_with_single_input_edit(
             print(msg)
 
     # Calculate comprehensive token usage (text + single input image)
-    token_breakdown = _calculate_comprehensive_tokens(
+    token_breakdown = await _calculate_comprehensive_tokens(
         final_prompt, reference_image_path=input_image_path, model_id=model_id, ctx=ctx
     )
     prompt_tokens_for_image_gen = token_breakdown["total_tokens"]
@@ -293,7 +293,7 @@ async def _generate_with_multiple_inputs(
             print(msg)
 
     # Calculate comprehensive token usage (text + reference image + logo image)
-    token_breakdown = _calculate_comprehensive_tokens(
+    token_breakdown = await _calculate_comprehensive_tokens(
         final_prompt, 
         reference_image_path=reference_image_path,
         logo_image_path=logo_image_path,
@@ -496,7 +496,7 @@ def _handle_image_api_error(
         return "error", f"Unexpected error: {e}", prompt_tokens_for_image_gen
 
 
-def _calculate_comprehensive_tokens(
+def _calculate_comprehensive_tokens_sync(
     final_prompt: str,
     reference_image_path: Optional[str] = None,
     logo_image_path: Optional[str] = None,
@@ -504,7 +504,7 @@ def _calculate_comprehensive_tokens(
     ctx: Optional[PipelineContext] = None
 ) -> Dict[str, Any]:
     """
-    Calculate comprehensive token usage including text and input image tokens.
+    Calculate comprehensive token usage including text and input image tokens (synchronous helper).
     
     Args:
         final_prompt: Text prompt for image generation
@@ -606,6 +606,36 @@ def _calculate_comprehensive_tokens(
             "model_id": model_for_calc,
             "error": str(e)
         }
+
+
+async def _calculate_comprehensive_tokens(
+    final_prompt: str,
+    reference_image_path: Optional[str] = None,
+    logo_image_path: Optional[str] = None,
+    model_id: str = None,
+    ctx: Optional[PipelineContext] = None
+) -> Dict[str, Any]:
+    """
+    Calculate comprehensive token usage including text and input image tokens (asynchronous).
+    
+    Args:
+        final_prompt: Text prompt for image generation
+        reference_image_path: Optional reference image path
+        logo_image_path: Optional logo image path  
+        model_id: Model ID for token calculation
+        ctx: Pipeline context for logging
+        
+    Returns:
+        Dictionary with comprehensive token breakdown
+    """
+    return await asyncio.to_thread(
+        _calculate_comprehensive_tokens_sync,
+        final_prompt,
+        reference_image_path,
+        logo_image_path,
+        model_id,
+        ctx
+    )
 
 
 async def run(ctx: PipelineContext) -> None:
@@ -764,7 +794,7 @@ async def run(ctx: PipelineContext) -> None:
                     filename_only = os.path.basename(img_result_path_or_msg) if img_result_path_or_msg else None
                     
                     # Calculate comprehensive token breakdown for metadata
-                    token_breakdown = _calculate_comprehensive_tokens(
+                    token_breakdown = await _calculate_comprehensive_tokens(
                         final_text_prompt,
                         reference_image_path=reference_image_path,
                         logo_image_path=logo_image_path,

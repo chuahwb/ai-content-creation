@@ -132,11 +132,13 @@ def _get_style_guider_user_prompt(
         prompt_parts.append("\n**Brand Kit Context for Style Generation:**")
         prompt_parts.append("A brand kit has been provided. All style suggestions MUST be compatible with this kit.")
         if brand_kit.get('colors'):
-            prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`. Your suggested color palettes should complement or incorporate these colors.")
+            prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`. Your style suggestions should be inspired by these colors.")
         if brand_kit.get('brand_voice_description'):
-            prompt_parts.append(f"- **Brand Voice:** `'{brand_kit.get('brand_voice_description')}'`. Your style descriptions should reflect this voice.")
+            prompt_parts.append(f"- **Brand Voice:** `'{brand_kit.get('brand_voice_description')}'`. Your style descriptions must reflect this voice.")
         if brand_kit.get('logo_analysis') and brand_kit['logo_analysis'].get('logo_style'):
             prompt_parts.append(f"- **Logo Style:** `'{brand_kit['logo_analysis']['logo_style']}'`. Ensure your suggested styles do not clash with the logo's aesthetic.")
+        if brand_kit.get('logo_analysis') and brand_kit['logo_analysis'].get('dominant_colors'):
+            prompt_parts.append(f"- **Logo's Dominant Colors:** `{brand_kit['logo_analysis']['dominant_colors']}`. The style should also be harmonious with the logo's own colors.")
 
     if image_instruction and image_analysis:
         prompt_parts.append("\n**MANDATORY CONTEXT & CONSTRAINTS FOR STYLE GENERATION:**")

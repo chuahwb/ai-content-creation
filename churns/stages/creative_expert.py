@@ -347,7 +347,10 @@ def _get_creative_expert_user_prompt(
         user_prompt_parts.append("\n**Brand Kit Integration (CRITICAL):**")
         user_prompt_parts.append("The following brand kit MUST be integrated into your visual concept. You must describe this integration in the `branding_visuals` field.")
         if brand_kit.get('colors'):
-            user_prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`. These colors MUST be prominently featured in the `color_palette` description.")
+            user_prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`.")
+        
+        user_prompt_parts.append(f"- In the `color_palette` field of your response, you MUST define a specific color scheme that prominently features or complements this full set of brand colors, guided by the overall style direction.")
+
         if brand_kit.get('brand_voice_description'):
             user_prompt_parts.append(f"- **Brand Voice:** `'{brand_kit.get('brand_voice_description')}'`. The `lighting_and_mood` and overall `visual_style` must align with this voice.")
         if brand_kit.get('logo_analysis') and brand_kit['logo_analysis'].get('logo_style'):
