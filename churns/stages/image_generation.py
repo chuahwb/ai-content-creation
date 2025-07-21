@@ -16,6 +16,8 @@ import traceback
 import asyncio
 from typing import Optional, Dict, Any, Tuple
 import requests
+import tiktoken
+from PIL import Image
 
 from ..pipeline.context import PipelineContext
 from ..core.token_cost_manager import get_token_cost_manager
@@ -529,7 +531,6 @@ def _calculate_comprehensive_tokens_sync(
         token_manager = get_token_cost_manager()
         
         # Calculate text prompt tokens (improved estimation)
-        import tiktoken
         try:
             # More accurate token count using tiktoken
             enc = tiktoken.encoding_for_model("gpt-4")  # Use gpt-4 encoding as proxy
@@ -547,7 +548,6 @@ def _calculate_comprehensive_tokens_sync(
         # Calculate reference image tokens
         if reference_image_path and os.path.exists(reference_image_path):
             try:
-                from PIL import Image
                 with Image.open(reference_image_path) as img:
                     width, height = img.size
                 ref_tokens = token_manager.calculate_image_tokens(width, height, model_for_calc)
@@ -566,7 +566,6 @@ def _calculate_comprehensive_tokens_sync(
         # Calculate logo image tokens  
         if logo_image_path and os.path.exists(logo_image_path):
             try:
-                from PIL import Image
                 with Image.open(logo_image_path) as img:
                     width, height = img.size
                 logo_tokens = token_manager.calculate_image_tokens(width, height, model_for_calc)
