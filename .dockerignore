@@ -5,8 +5,11 @@
 # Documentation and markdown files
 *.md
 docs/
-*.txt
 LICENSE
+
+# Allow requirements files but exclude other txt files
+*.txt
+!requirements*.txt
 
 # Git and version control
 .git

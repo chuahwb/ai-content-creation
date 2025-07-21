@@ -1,0 +1,22 @@
+# Docker Compose Override for Development
+# This file is automatically loaded with docker-compose.dev.yml
+version: '3.8'
+
+services:
+  api:
+    logging:
+      options:
+        max-size: "1m"
+        max-file: "1"
+    
+  frontend:
+    logging:
+      options:
+        max-size: "1m" 
+        max-file: "1"
+        
+  redis:
+    logging:
+      options:
+        max-size: "500k"
+        max-file: "1" 
