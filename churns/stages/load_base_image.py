@@ -168,6 +168,7 @@ def _resolve_base_image_path(ctx: PipelineContext) -> str:
 def _load_original_pipeline_metadata(ctx: PipelineContext) -> Dict[str, Any]:
     """
     Load metadata from the original pipeline run.
+    Updated to handle new brandkit data structure gracefully.
     
     This provides context about the original generation including:
     - Marketing strategies
@@ -191,20 +192,74 @@ def _load_original_pipeline_metadata(ctx: PipelineContext) -> Dict[str, Any]:
                 with open(metadata_file, 'r') as f:
                     metadata = json.load(f)
                     logger.info(f"Loaded pipeline metadata from: {metadata_file}")
+                    
+                    # Validate and ensure required structure exists
+                    if not isinstance(metadata, dict):
+                        logger.warning(f"Invalid metadata format in {metadata_file}, using fallback")
+                        continue
+                    
+                    # Ensure processing_context exists with required structure
+                    if 'processing_context' not in metadata:
+                        metadata['processing_context'] = {}
+                    
+                    processing_context = metadata['processing_context']
+                    
+                    # Ensure all required fields exist with defaults
+                    if 'suggested_marketing_strategies' not in processing_context:
+                        processing_context['suggested_marketing_strategies'] = []
+                    if 'style_guidance_sets' not in processing_context:
+                        processing_context['style_guidance_sets'] = []
+                    if 'generated_image_prompts' not in processing_context:
+                        processing_context['generated_image_prompts'] = []
+                    if 'final_assembled_prompts' not in processing_context:
+                        processing_context['final_assembled_prompts'] = []
+                    if 'image_analysis_result' not in processing_context:
+                        processing_context['image_analysis_result'] = {}
+                    
+                    # Ensure user_inputs exists (important for refinement utilities)
+                    if 'user_inputs' not in metadata:
+                        metadata['user_inputs'] = {}
+                    
+                    # Validate user_inputs structure
+                    user_inputs = metadata['user_inputs']
+                    if not isinstance(user_inputs, dict):
+                        metadata['user_inputs'] = {}
+                    
+                    logger.info("Pipeline metadata validated and normalized successfully")
                     return metadata
+                    
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON from {metadata_file}: {e}")
+                continue
             except Exception as e:
-                logger.info(f"Failed to load metadata from {metadata_file}: {e}")
+                logger.warning(f"Failed to load metadata from {metadata_file}: {e}")
                 continue
     
-    # If no metadata file found, return minimal context
-    logger.info("Warning: No pipeline metadata found, proceeding with minimal context")
+    # If no metadata file found, return minimal context with proper structure
+    logger.warning("No pipeline metadata found, creating minimal fallback structure")
     return {
+        "user_inputs": {
+            "prompt": None,
+            "image_reference": None,
+            "apply_branding": False,
+            "brand_kit": None
+        },
         "processing_context": {
             "suggested_marketing_strategies": [],
             "style_guidance_sets": [],
             "generated_image_prompts": [],
-            "final_assembled_prompts": []
-        }
+            "final_assembled_prompts": [],
+            "image_analysis_result": {
+                "main_subject": "Unknown Subject",
+                "analysis_complete": False
+            }
+        },
+        "pipeline_settings": {
+            "run_timestamp": ctx.parent_run_id,
+            "creativity_level_selected": 2,
+            "num_variants": 3
+        },
+        "_fallback_metadata": True
     }
 
 

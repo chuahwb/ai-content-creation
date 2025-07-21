@@ -56,8 +56,10 @@ class TestCaptionStage:
         
         assert "master social media strategist" in prompt
         assert "Caption Brief" in prompt
-        assert "Auto Mode Logic" in prompt
+        assert "INSTRUCTIONS_FOR_BRIEF" in prompt
         assert "Platform Optimizations" in prompt
+        # Verify that conditional logic has been removed
+        assert "Auto Mode Logic" not in prompt
     
     def test_writer_system_prompt_generation(self):
         """Test that the writer system prompt is properly formatted."""
@@ -262,6 +264,206 @@ class TestCaptionStage:
         
         # Verify no captions were generated due to missing data
         assert not hasattr(self.mock_ctx, 'generated_captions') or len(self.mock_ctx.generated_captions) == 0
+
+    def test_resolve_final_instructions_auto_mode(self):
+        """Test _resolve_final_instructions function in Auto mode."""
+        from churns.stages.caption import _resolve_final_instructions
+        from churns.models import CaptionSettings
+        
+        # Mock data
+        settings = CaptionSettings(generation_mode='Auto')
+        strategy_data = {
+            'target_objective': 'increase engagement',
+            'target_voice': 'friendly and approachable'
+        }
+        visual_data = {
+            'lighting_mood': 'warm and cozy'
+        }
+        brand_voice = 'Professional yet approachable'
+        
+        instructions = _resolve_final_instructions(
+            self.mock_ctx, settings, strategy_data, visual_data, brand_voice
+        )
+        
+        # Verify auto mode instructions
+        assert 'synthesize a new, refined tone' in instructions['tone'].lower()
+        assert brand_voice in instructions['tone']
+        assert 'warm and cozy' in instructions['tone']
+        
+        assert 'context-aware call to action' in instructions['cta'].lower()
+        assert 'increase engagement' in instructions['cta']
+        
+        assert 'appropriately and sparingly' in instructions['emojis'].lower()
+        
+        assert 'balanced mix' in instructions['hashtags'].lower()
+        assert 'extracting specific keywords' in instructions['hashtags'].lower()
+
+    def test_resolve_final_instructions_custom_mode(self):
+        """Test _resolve_final_instructions function in Custom mode."""
+        from churns.stages.caption import _resolve_final_instructions
+        from churns.models import CaptionSettings
+        
+        # Mock data with user-provided settings
+        settings = CaptionSettings(
+            generation_mode='Custom',
+            tone='Witty & Playful',
+            call_to_action='Shop now and save 20%!',
+            include_emojis=False,
+            hashtag_strategy='Niche & Specific'
+        )
+        strategy_data = {'target_objective': 'drive sales'}
+        visual_data = {'lighting_mood': 'bright'}
+        brand_voice = 'Professional'
+        
+        instructions = _resolve_final_instructions(
+            self.mock_ctx, settings, strategy_data, visual_data, brand_voice
+        )
+        
+        # Verify custom mode instructions use exact user inputs
+        assert 'You MUST adopt this exact tone of voice' in instructions['tone']
+        assert 'Witty & Playful' in instructions['tone']
+        
+        assert 'You MUST use this exact call to action' in instructions['cta']
+        assert 'Shop now and save 20%!' in instructions['cta']
+        
+        assert 'You MUST NOT use any emojis' in instructions['emojis']
+        
+        assert 'You MUST follow this user-provided hashtag strategy' in instructions['hashtags']
+        assert 'Niche & Specific' in instructions['hashtags']
+
+    async def test_generation_mode_set_upfront(self):
+        """Test that generation_mode is set correctly upfront in the run function."""
+        # Test Auto mode (no user settings provided)
+        self.mock_ctx.caption_settings = {}
+        
+        with patch('churns.stages.caption._run_analyst') as mock_analyst, \
+             patch('churns.stages.caption._run_writer') as mock_writer:
+            
+            mock_analyst.return_value = CaptionBrief(
+                core_message="Test", key_themes_to_include=["test"], seo_keywords=["test"],
+                target_emotion="Test", platform_optimizations={"test": {"test": "test"}},
+                primary_call_to_action="Test", hashtags=["#test"], emoji_suggestions=["✨"]
+            )
+            mock_writer.return_value = "Test caption"
+            
+            await run(self.mock_ctx)
+            
+            # Verify analyst was called and check the settings passed to it
+            assert mock_analyst.called
+            args, kwargs = mock_analyst.call_args_list[0]
+            settings = args[1]  # Second argument is settings
+            assert settings.generation_mode == 'Auto'
+
+    async def test_generation_mode_custom_upfront(self):
+        """Test that generation_mode is set to Custom when user provides settings."""
+        # Test Custom mode (user settings provided)
+        self.mock_ctx.caption_settings = {
+            'tone': 'Professional & Polished'
+        }
+        
+        with patch('churns.stages.caption._run_analyst') as mock_analyst, \
+             patch('churns.stages.caption._run_writer') as mock_writer:
+            
+            mock_analyst.return_value = CaptionBrief(
+                core_message="Test", key_themes_to_include=["test"], seo_keywords=["test"],
+                target_emotion="Test", platform_optimizations={"test": {"test": "test"}},
+                primary_call_to_action="Test", hashtags=["#test"], emoji_suggestions=["✨"]
+            )
+            mock_writer.return_value = "Test caption"
+            
+            await run(self.mock_ctx)
+            
+            # Verify analyst was called and check the settings passed to it
+            assert mock_analyst.called
+            args, kwargs = mock_analyst.call_args_list[0]
+            settings = args[1]  # Second argument is settings
+            assert settings.generation_mode == 'Custom'
+
+    @patch('churns.stages.caption._run_analyst')
+    @patch('churns.stages.caption._run_writer')
+    async def test_refactor_parity_auto_mode(self, mock_writer, mock_analyst):
+        """Test that Auto mode functionality is preserved after refactor."""
+        # Setup for Auto mode
+        self.mock_ctx.caption_settings = {}  # No user settings = Auto mode
+        self.mock_ctx.brand_kit = {'brand_voice_description': 'Friendly and approachable'}
+        
+        # Expected brief that should be generated in Auto mode
+        expected_brief = CaptionBrief(
+            core_message="Showcase artisan coffee quality",
+            key_themes_to_include=["craftsmanship", "morning ritual", "quality"],
+            seo_keywords=["artisan coffee", "specialty brew", "morning coffee"],
+            target_emotion="Warm and inviting",
+            tone_of_voice="Friendly yet refined, perfect for coffee enthusiasts",
+            platform_optimizations={"Instagram Post (1:1 Square)": {"caption_structure": "Hook + Value + CTA", "style_notes": "Use line breaks for readability"}},
+            primary_call_to_action="What's your perfect morning brew? ☕",
+            hashtags=["#artisancoffee", "#specialtybrew", "#morningcoffee"],
+            emoji_suggestions=["☕", "✨", "🌅"]
+        )
+        
+        mock_analyst.return_value = expected_brief
+        mock_writer.return_value = "Start your morning right with artisan coffee ☕✨\n\nWhat's your perfect morning brew? ☕\n\n#artisancoffee #specialtybrew #morningcoffee"
+        
+        await run(self.mock_ctx)
+        
+        # Verify Auto mode behavior
+        assert mock_analyst.called
+        args, kwargs = mock_analyst.call_args_list[0]
+        settings = args[1]
+        
+        # Check that generation_mode was set to Auto
+        assert settings.generation_mode == 'Auto'
+        
+        # Verify the caption was generated successfully
+        assert hasattr(self.mock_ctx, 'generated_captions')
+        assert len(self.mock_ctx.generated_captions) == 1
+
+    @patch('churns.stages.caption._run_analyst')
+    @patch('churns.stages.caption._run_writer')
+    async def test_refactor_parity_custom_mode(self, mock_writer, mock_analyst):
+        """Test that Custom mode functionality is preserved after refactor."""
+        # Setup for Custom mode
+        self.mock_ctx.caption_settings = {
+            'tone': 'Professional & Polished',
+            'call_to_action': 'Shop our premium blends today!',
+            'include_emojis': False,
+            'hashtag_strategy': 'Niche & Specific'
+        }
+        
+        # Expected brief that should respect user settings
+        expected_brief = CaptionBrief(
+            core_message="Showcase artisan coffee quality",
+            key_themes_to_include=["craftsmanship", "quality", "premium"],
+            seo_keywords=["artisan coffee", "premium blend", "specialty coffee"],
+            target_emotion="Professional confidence",
+            tone_of_voice="Professional & Polished",
+            platform_optimizations={"Instagram Post (1:1 Square)": {"caption_structure": "Direct value proposition", "style_notes": "Professional tone throughout"}},
+            primary_call_to_action="Shop our premium blends today!",
+            hashtags=["#premiumcoffee", "#artisancrafted", "#specialtyroast"],
+            emoji_suggestions=[]  # No emojis as requested
+        )
+        
+        mock_analyst.return_value = expected_brief
+        mock_writer.return_value = "Experience the finest artisan coffee craftsmanship.\n\nShop our premium blends today!\n\n#premiumcoffee #artisancrafted #specialtyroast"
+        
+        await run(self.mock_ctx)
+        
+        # Verify Custom mode behavior
+        assert mock_analyst.called
+        args, kwargs = mock_analyst.call_args_list[0]
+        settings = args[1]
+        
+        # Check that generation_mode was set to Custom
+        assert settings.generation_mode == 'Custom'
+        
+        # Verify user settings were preserved
+        assert settings.tone == 'Professional & Polished'
+        assert settings.call_to_action == 'Shop our premium blends today!'
+        assert settings.include_emojis == False
+        assert settings.hashtag_strategy == 'Niche & Specific'
+        
+        # Verify the caption was generated successfully
+        assert hasattr(self.mock_ctx, 'generated_captions')
+        assert len(self.mock_ctx.generated_captions) == 1
 
 
 @pytest.fixture

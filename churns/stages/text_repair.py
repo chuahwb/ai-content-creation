@@ -557,7 +557,9 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
             enhanced_prompt=final_prompt,
             image_size=image_size,
             mask_path=None,  # Text repair uses global editing
-            image_gen_client=image_gen_client
+            image_gen_client=image_gen_client,
+            image_quality_setting="medium",  # Use same quality as original generation to prevent quality leap
+            input_fidelity="high"  # High fidelity for all refinement operations
         )
         logger.info(f"Text repair API call completed: {result_image_path}")
     else:
@@ -591,42 +593,81 @@ def _prepare_text_repair_prompt(detected_txt: str, expected_txt: str) -> str:
     return prompt
 
 def _prepare_render_text_prompt(ctx: PipelineContext) -> str:
-    
-    # Get main object
-    _, main_obj = get_image_ctx_and_main_object(ctx)
-
-    # Get image ctx
-    processing_context = ctx.original_pipeline_data.get('processing_context')
-    generated_image_prompts = processing_context.get('generated_image_prompts')
-    
-    # For chain refinements, generation_index might be None
-    if ctx.generation_index is not None:
-        image_ctx_json = generated_image_prompts[ctx.generation_index]
-    else:
-        # For chain refinements, use the first available prompt context as fallback
-        image_ctx_json = generated_image_prompts[0] if generated_image_prompts else {}
-        ctx.log("Using fallback image context for chain refinement in text repair")
-
-    prompt_render = f"""
-    You are editing an image to render promotional text onto it based on the following precise visual specification.
-
-    **Contextual References**:
-    - Main Object : {main_obj}
-    - Text Styling Details: {image_ctx_json['visual_concept']['promotional_text_visuals']}
-    
-    **Instructions**:
-    1. Carefully study the Text Styling Details to guide the appearance and placement of the promotional text.
-    - These details serve as **style inspiration**, not fixed spatial rules.
-    - You may adapt **positioning or layout** of the text to suit the image without compromising legibility or aesthetics.
-    2. **Do not alter, shrink, resize, reposition, or visually obstruct** the main object ("{main_obj}") in any way.
-    - The object must remain visually dominant and unchanged in size, scale, and placement.
-    - Preserve all existing content and composition in the image.
-    3. **Flexibly adjust** the position of the promotional text to maintain:
-    - Visual harmony with the scene
-    - Clear readability without disrupting important visual elements
-    - Balance in the overall composition (e.g., avoid crowding or overlapping)
-    4. Do not generate or introduce any additional visual elements, effects, or annotations beyond what is required to render the described text.
-    5. The final result should be clean, cohesive, and professionally styled — as if the text was originally designed into the image.
-    6. Return only the final edited image with the rendered promotional text. Do not include design overlays, reference images, or explanatory labels.
     """
-    return prompt_render
+    Prepare a prompt for text rendering/repair.
+    Updated to handle new brandkit data structure gracefully.
+    """
+    try:
+        # Get main object with error handling
+        _, main_obj = get_image_ctx_and_main_object(ctx)
+
+        # Get image context with safe fallbacks
+        image_ctx_json = {}
+        try:
+            processing_context = ctx.original_pipeline_data.get('processing_context', {})
+            if not processing_context and hasattr(ctx, 'data') and ctx.data:
+                processing_context = ctx.data.get('processing_context', {})
+            
+            generated_image_prompts = processing_context.get('generated_image_prompts', [])
+            
+            # For chain refinements, generation_index might be None
+            if ctx.generation_index is not None and generated_image_prompts:
+                if 0 <= ctx.generation_index < len(generated_image_prompts):
+                    image_ctx_json = generated_image_prompts[ctx.generation_index]
+                else:
+                    # Use first available prompt context as fallback
+                    image_ctx_json = generated_image_prompts[0] if generated_image_prompts else {}
+                    ctx.log("Using fallback image context for chain refinement in text repair (index out of range)")
+            else:
+                # For chain refinements, use the first available prompt context as fallback
+                image_ctx_json = generated_image_prompts[0] if generated_image_prompts else {}
+                ctx.log("Using fallback image context for chain refinement in text repair")
+        except Exception as e:
+            ctx.log(f"Warning: Error accessing image context for text repair: {e}")
+            image_ctx_json = {}
+
+        # Safely extract text visuals with fallback
+        text_visuals = "Standard promotional text"
+        try:
+            if isinstance(image_ctx_json, dict):
+                visual_concept = image_ctx_json.get('visual_concept', {})
+                if isinstance(visual_concept, dict):
+                    text_visuals = visual_concept.get('promotional_text_visuals', 'Standard promotional text')
+        except Exception as e:
+            ctx.log(f"Warning: Error extracting text visuals: {e}")
+
+        prompt_render = f"""
+        You are editing an image to render promotional text onto it based on the following precise visual specification.
+
+        **Contextual References**:
+        - Main Object: {main_obj}
+        - Text Styling Details: {text_visuals}
+        
+        **Instructions**:
+        1. Carefully study the Text Styling Details to guide the appearance and placement of the promotional text.
+        - These details serve as **style inspiration**, not fixed spatial rules.
+        - You may adapt **positioning or layout** of the text to suit the image without compromising legibility or aesthetics.
+        2. **Do not alter, shrink, resize, reposition, or visually obstruct** the main object ("{main_obj}").
+        3. The promotional text should complement and enhance the overall composition while maintaining readability.
+        4. Ensure the text integrates naturally with the image's existing visual elements and style.
+        5. Return only the edited image with the text properly rendered.
+        """
+        
+        ctx.log("Text repair prompt prepared successfully")
+        return prompt_render
+        
+    except Exception as e:
+        # Fallback prompt if data access fails
+        ctx.log(f"Warning: Error preparing text repair prompt, using fallback: {e}")
+        
+        fallback_prompt = """
+        You are editing an image to render promotional text onto it.
+        
+        **Instructions**:
+        1. Add appropriate promotional text to the image.
+        2. Do not alter, shrink, resize, or visually obstruct the main subject.
+        3. Ensure the text is readable and complements the image composition.
+        4. Return only the edited image with the text properly rendered.
+        """
+        
+        return fallback_prompt

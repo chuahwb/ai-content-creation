@@ -16,6 +16,7 @@ import base64
 import traceback
 import os
 import asyncio
+import warnings
 from typing import Dict, Any, List, Optional, Tuple
 from openai import OpenAI
 from pydantic import ValidationError
@@ -91,14 +92,14 @@ class ImageAssessor:
             Assessment result dictionary (without _meta to avoid duplication)
         """
         # Load the generated image
-        image_data = self._load_image_as_base64(image_path)
+        image_data = await self._load_image_as_base64(image_path)
         if not image_data:
             raise ImageAssessmentError(f"Failed to load image: {image_path}")
         
         image_base64, content_type = image_data
         
         # Calculate expected image tokens for cost tracking
-        image_token_breakdown = self._calculate_image_tokens_breakdown(
+        image_token_breakdown = await self._calculate_image_tokens_breakdown(
             image_base64, reference_image_data, self.model_id
         )
         
@@ -244,6 +245,10 @@ class ImageAssessor:
         """
         Assess a single image using OpenAI's vision capabilities (sync version for compatibility).
         
+        .. deprecated::
+            This method is for backward compatibility only. Use assess_image_async
+            in an asynchronous context for better performance and true parallelism.
+        
         Args:
             image_path: Path to the generated image to assess
             visual_concept: The visual concept from creative expert stage
@@ -257,14 +262,21 @@ class ImageAssessor:
         Returns:
             Assessment result dictionary
         """
+        warnings.warn(
+            "assess_image is deprecated and will be removed in a future version. "
+            "Use assess_image_async instead for better performance and true parallelism.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         # Run the async version in sync context
         return asyncio.run(self.assess_image_async(
             image_path, visual_concept, creativity_level, has_reference_image,
             render_text_enabled, task_type, platform, reference_image_data
         ))
     
-    def _load_image_as_base64(self, image_path: str) -> Optional[Tuple[str, str]]:
-        """Load image file and convert to base64 format."""
+    def _load_image_as_base64_sync(self, image_path: str) -> Optional[Tuple[str, str]]:
+        """Load image file and convert to base64 format (synchronous helper)."""
         try:
             # Check if file exists first
             if not os.path.exists(image_path):
@@ -287,6 +299,10 @@ class ImageAssessor:
         except Exception as e:
             # Re-raise with more context instead of returning None
             raise ImageAssessmentError(f"Failed to load image {image_path}: {str(e)}")
+    
+    async def _load_image_as_base64(self, image_path: str) -> Optional[Tuple[str, str]]:
+        """Load image file and convert to base64 format (asynchronous)."""
+        return await asyncio.to_thread(self._load_image_as_base64_sync, image_path)
     
     def _get_content_type_from_filename(self, filename: str) -> str:
         """Determine image content type from filename."""
@@ -680,13 +696,13 @@ Begin your assessment now."""
         
         return result
 
-    def _calculate_image_tokens_breakdown(
+    def _calculate_image_tokens_breakdown_sync(
         self, 
         image_base64: str, 
         reference_image_data: Optional[Tuple[str, str]], 
         model_id: str
     ) -> Dict[str, Any]:
-        """Calculate detailed breakdown of image tokens for cost tracking."""
+        """Calculate detailed breakdown of image tokens for cost tracking (synchronous helper)."""
         breakdown = {
             "model_id": model_id,
             "detail_level": "high",
@@ -727,6 +743,20 @@ Begin your assessment now."""
             breakdown["total_image_tokens"] = 1000
         
         return breakdown
+    
+    async def _calculate_image_tokens_breakdown(
+        self, 
+        image_base64: str, 
+        reference_image_data: Optional[Tuple[str, str]], 
+        model_id: str
+    ) -> Dict[str, Any]:
+        """Calculate detailed breakdown of image tokens for cost tracking (asynchronous)."""
+        return await asyncio.to_thread(
+            self._calculate_image_tokens_breakdown_sync,
+            image_base64,
+            reference_image_data,
+            model_id
+        )
 
 
 def _create_simulation_fallback(has_reference_image: bool, render_text_enabled: bool) -> Dict[str, Any]:
@@ -1073,6 +1103,10 @@ async def run(ctx: PipelineContext) -> None:
                f"({stage_usage['image_tokens']} image + {stage_usage['text_tokens']} text + {stage_usage['completion_tokens']} completion) "
                f"across {stage_usage['assessment_count']} assessments")
         
+        # Calculate consistency metrics for STYLE_RECIPE presets
+        if hasattr(ctx, 'preset_type') and ctx.preset_type == "STYLE_RECIPE":
+            await _calculate_consistency_metrics(ctx, assessment_results)
+        
     except Exception as e:
         ctx.log(f"Parallel processing failed: {str(e)}")
         ctx.log(f"Traceback: {traceback.format_exc()}")
@@ -1085,4 +1119,66 @@ async def run(ctx: PipelineContext) -> None:
     else:
         ctx.log("No images were successfully assessed")
     
-    ctx.log("Image assessment stage completed") 
+    ctx.log("Image assessment stage completed")
+
+
+async def _calculate_consistency_metrics(ctx: PipelineContext, assessment_results: List[Dict[str, Any]]) -> None:
+    """Calculate consistency metrics for STYLE_RECIPE presets."""
+    try:
+        from churns.core.metrics import calculate_consistency_metrics
+        from churns.api.database import PresetType
+        
+        ctx.log("🔍 Calculating consistency metrics for STYLE_RECIPE preset")
+        
+        # Get the original image path from the preset data
+        original_image_path = None
+        if ctx.preset_data and ctx.preset_data.get('original_image_path'):
+            original_image_path = ctx.preset_data['original_image_path']
+        else:
+            # Try to get from the preset metadata (if available)
+            ctx.log("Warning: No original image path found in preset data")
+            return
+        
+        # Check if the original image exists
+        if not os.path.exists(original_image_path):
+            ctx.log(f"Warning: Original image not found at {original_image_path}")
+            return
+        
+        # Calculate consistency metrics for each generated image
+        for result in assessment_results:
+            try:
+                image_path = result.get("image_path")
+                if not image_path or not os.path.exists(image_path):
+                    ctx.log(f"Warning: Generated image not found at {image_path}")
+                    continue
+                
+                # Calculate consistency metrics
+                metrics = calculate_consistency_metrics(
+                    original_image_path=original_image_path,
+                    new_image_path=image_path,
+                    original_recipe=ctx.preset_data
+                )
+                
+                # Add metrics to assessment result
+                result["consistency_metrics"] = metrics
+                
+                # Log the metrics
+                clip_score = metrics.get("clip_similarity")
+                hist_score = metrics.get("color_histogram_similarity")
+                overall_score = metrics.get("overall_consistency_score")
+                
+                ctx.log(f"Consistency metrics for image {result.get('image_index', 'unknown')}: "
+                       f"CLIP={clip_score:.3f if clip_score else 'N/A'}, "
+                       f"Color={hist_score:.3f if hist_score else 'N/A'}, "
+                       f"Overall={overall_score:.3f if overall_score else 'N/A'}")
+                
+            except Exception as e:
+                ctx.log(f"Error calculating consistency metrics for image {result.get('image_index', 'unknown')}: {e}")
+                result["consistency_metrics"] = {"error": str(e)}
+        
+        ctx.log("✅ Consistency metrics calculation completed")
+        
+    except Exception as e:
+        ctx.log(f"Error in consistency metrics calculation: {e}")
+        ctx.log(f"Traceback: {traceback.format_exc()}")
+        # Don't fail the stage - just log the error 

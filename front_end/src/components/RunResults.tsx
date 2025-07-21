@@ -46,6 +46,7 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   Image as ImageIcon,
   Info as InfoIcon,
+  BookmarkAdd as BookmarkAddIcon,
 } from '@mui/icons-material';
 
 import toast from 'react-hot-toast';
@@ -81,20 +82,15 @@ interface LogEntry {
   message: string;
 }
 
-// Define all pipeline stages
-const PIPELINE_STAGES = [
-  { name: 'image_eval', label: 'Image Analysis', description: 'Analyzing uploaded image' },
-  { name: 'strategy', label: 'Strategy Generation', description: 'Creating marketing strategies' },
-  { name: 'style_guide', label: 'Style Guide', description: 'Defining visual style' },
-  { name: 'creative_expert', label: 'Creative Concepts', description: 'Developing visual concepts' },
-  { name: 'prompt_assembly', label: 'Prompt Assembly', description: 'Building generation prompts' },
-  { name: 'image_generation', label: 'Image Generation', description: 'Creating final images' },
-  { name: 'image_assessment', label: 'Image Assessment', description: 'Evaluating generated images' },
-];
+// Pipeline stages are now dynamic based on backend response
 
 // Component for visual pipeline stages display
 interface PipelineStageBoxProps {
-  stage: typeof PIPELINE_STAGES[0];
+  stage: {
+    name: string;
+    label: string;
+    description: string;
+  };
   status: StageStatus;
   message?: string;
   duration?: number;
@@ -111,6 +107,7 @@ const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({
       case 'COMPLETED': return '#4caf50';
       case 'RUNNING': return '#2196f3';
       case 'FAILED': return '#f44336';
+      case 'SKIPPED': return '#ff9800';
       default: return '#9e9e9e';
     }
   };
@@ -120,6 +117,7 @@ const PipelineStageBox: React.FC<PipelineStageBoxProps> = ({
       case 'COMPLETED': return <CheckCircleIcon sx={{ color: '#4caf50', fontSize: 20 }} />;
       case 'RUNNING': return <PlayArrowIcon sx={{ color: '#2196f3', fontSize: 20 }} />;
       case 'FAILED': return <ErrorIcon sx={{ color: '#f44336', fontSize: 20 }} />;
+      case 'SKIPPED': return <CheckCircleIcon sx={{ color: '#ff9800', fontSize: 20 }} />;
       default: return <AccessTimeIcon sx={{ color: '#9e9e9e', fontSize: 20 }} />;
     }
   };
@@ -538,6 +536,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     type: 'original' | 'refinement';
     refinementData?: any;
     parentImagePath?: string;
+    parentImageBlobUrl?: string;
   } | null>(null);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageResult[]>([]);
   const [detailsDialog, setDetailsDialog] = useState<{open: boolean, optionIndex: number | null}>({open: false, optionIndex: null});
@@ -585,6 +584,12 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   
   // Add caption error state management
   const [captionErrors, setCaptionErrors] = useState<Record<number, string>>({});
+  
+  // Save preset dialog state
+  const [savePresetDialogOpen, setSavePresetDialogOpen] = useState(false);
+  const [savePresetImageIndex, setSavePresetImageIndex] = useState<number>(0);
+  const [savePresetName, setSavePresetName] = useState('');
+  const [savePresetLoading, setSavePresetLoading] = useState(false);
   
   const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
 
@@ -688,11 +693,22 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   }, [runId, addLog]);
 
   const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
+    console.log('🔌 WebSocket message received:', {
+      type: message.type,
+      runId: message.run_id,
+      stageName: message.data?.stage_name,
+      status: message.data?.status,
+      message: message.data?.message,
+      timestamp: new Date().toISOString()
+    });
+    
     addLog('info', `WebSocket message: ${message.type}`, message.data.stage_name);
     
     switch (message.type) {
       case 'stage_update':
         const stageUpdate = message.data as StageProgressUpdate;
+        console.log('📊 Stage update details:', stageUpdate);
+        
         addLog(
           stageUpdate.status === 'FAILED' ? 'error' : 
           stageUpdate.status === 'COMPLETED' ? 'success' : 'info',
@@ -711,17 +727,30 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         
         // Update run details with new stage info
         setRunDetails(prev => {
-          if (!prev) return prev;
+          if (!prev) {
+            console.log('⚠️ Cannot update stages - runDetails is null');
+            return prev;
+          }
+          
           const updatedStages = [...prev.stages];
           const stageIndex = updatedStages.findIndex(s => s.stage_name === stageUpdate.stage_name);
           
           if (stageIndex >= 0) {
+            console.log(`✅ Updating existing stage ${stageUpdate.stage_name} at index ${stageIndex}`);
             updatedStages[stageIndex] = { ...updatedStages[stageIndex], ...stageUpdate };
           } else {
+            console.log(`➕ Adding new stage ${stageUpdate.stage_name}`);
             updatedStages.push(stageUpdate);
           }
           
-          return { ...prev, stages: updatedStages };
+          const newRunDetails = { ...prev, stages: updatedStages };
+          console.log('🔄 Updated runDetails:', {
+            totalStages: newRunDetails.stages.length,
+            completedStages: newRunDetails.stages.filter(s => s.status === 'COMPLETED').length,
+            stages: newRunDetails.stages.map(s => ({ name: s.stage_name, status: s.status }))
+          });
+          
+          return newRunDetails;
         });
         break;
         
@@ -812,40 +841,49 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     // Prevent multiple connections for the same run ID
     if (wsManager && wsManager.readyState === WebSocket.OPEN) {
       console.log('WebSocket already connected for run:', runId);
-      return wsManager;
+      return;
     }
 
+    // Clean up existing connection
     if (wsManager) {
       console.log('Closing existing WebSocket connection before creating new one');
       wsManager.disconnect();
+      setWsManager(null);
     }
+
+    console.log('🚀 Initializing new WebSocket connection for run:', runId);
+    console.log('🌐 WebSocket URL will be:', `${process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'}/api/v1/ws/${runId}`);
 
     const newWsManager = new WebSocketManager(
       runId,
       handleWebSocketMessage,
       (error) => {
         addLog('error', 'WebSocket connection error');
-        console.error('WebSocket error:', error);
+        console.error('❌ WebSocket error:', error);
       },
       (event) => {
+        console.log('🔌 WebSocket closed:', { code: event.code, reason: event.reason, runId });
         if (event.code !== 1000) { // Not a normal closure
           addLog('warning', 'WebSocket connection lost. Attempting to reconnect...');
         }
       }
     );
 
+    const connectionStart = Date.now();
     newWsManager.connect()
       .then(() => {
+        const connectionTime = Date.now() - connectionStart;
         addLog('success', 'Connected to real-time updates');
         setWsManager(newWsManager);
+        console.log(`✅ WebSocket connected successfully for run: ${runId} (took ${connectionTime}ms)`);
       })
       .catch((error) => {
+        const connectionTime = Date.now() - connectionStart;
         addLog('error', 'Failed to connect to real-time updates');
-        console.error('WebSocket connection failed:', error);
+        console.error(`❌ WebSocket connection failed for run: ${runId} (failed after ${connectionTime}ms):`, error);
+        setWsManager(null);
       });
-
-    return newWsManager;
-  }, [runId, handleWebSocketMessage, addLog, wsManager]);
+  }, [runId, handleWebSocketMessage, addLog]); // Removed wsManager from dependencies
 
   const handleCancelRun = async () => {
     try {
@@ -1049,6 +1087,39 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     setCaptionInitialSettings(undefined);
   };
 
+  // Save preset dialog functions
+  const openSavePresetDialog = (imageIndex: number) => {
+    setSavePresetImageIndex(imageIndex);
+    setSavePresetName('');
+    setSavePresetDialogOpen(true);
+  };
+
+  const closeSavePresetDialog = () => {
+    setSavePresetDialogOpen(false);
+    setSavePresetName('');
+    setSavePresetLoading(false);
+  };
+
+  const handleSavePreset = async () => {
+    if (!savePresetName.trim()) return;
+
+    setSavePresetLoading(true);
+    try {
+      await PipelineAPI.savePresetFromResult(runId, {
+        name: savePresetName.trim(),
+        generation_index: savePresetImageIndex,
+      });
+      
+      toast.success('Style saved as preset successfully!');
+      closeSavePresetDialog();
+    } catch (error: any) {
+      console.error('Failed to save preset:', error);
+      toast.error(error.message || 'Failed to save style as preset');
+    } finally {
+      setSavePresetLoading(false);
+    }
+  };
+
   const handleOpenCaptionSettingsDialog = (imageIndex: number, currentSettings: CaptionSettings, currentModelId?: string) => {
     setCaptionImageIndex(imageIndex);
     setCaptionInitialSettings(currentSettings);
@@ -1147,9 +1218,13 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   const getProgressValue = () => {
     if (!runDetails?.stages.length) return 0;
-    const TOTAL_STAGES = 7;
-    const completedStages = runDetails.stages.filter(s => s.status === 'COMPLETED').length;
-    return (completedStages / TOTAL_STAGES) * 100;
+    // Use actual number of stages from the backend instead of hardcoded value
+    const totalStages = runDetails.stages.length;
+    // Count both completed and skipped stages as "done" for progress calculation
+    const completedStages = runDetails.stages.filter(s => 
+      s.status === 'COMPLETED' || s.status === 'SKIPPED'
+    ).length;
+    return totalStages > 0 ? (completedStages / totalStages) * 100 : 0;
   };
 
   const formatDuration = (seconds?: number) => {
@@ -1169,14 +1244,36 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     return runDetails?.stages.find(s => s.stage_name === stageName);
   };
 
+  // Get display information for any stage (including dynamic ones like style_adaptation)
+  const getStageDisplayInfo = (stageName: string) => {
+    // Define display info for known stages
+    const stageDisplayMap: Record<string, { label: string; description: string }> = {
+      'image_eval': { label: 'Image Analysis', description: 'Analyzing uploaded image' },
+      'strategy': { label: 'Strategy Generation', description: 'Creating marketing strategies' },
+      'style_guide': { label: 'Style Guide', description: 'Defining visual style' },
+      'creative_expert': { label: 'Creative Concepts', description: 'Developing visual concepts' },
+      'style_adaptation': { label: 'Style Adaptation', description: 'Adapting saved style to new concept' },
+      'prompt_assembly': { label: 'Prompt Assembly', description: 'Building generation prompts' },
+      'image_generation': { label: 'Image Generation', description: 'Creating final images' },
+      'image_assessment': { label: 'Image Assessment', description: 'Evaluating generated images' },
+    };
+
+    return stageDisplayMap[stageName] || {
+      label: stageName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      description: `Processing ${stageName.replace(/_/g, ' ')}`
+    };
+  };
+
   useEffect(() => {
     fetchRunDetails();
-    
-    // Only initialize WebSocket if we don't already have one for this run
-    if (!wsManager || wsManager.readyState !== WebSocket.OPEN) {
-      initializeWebSocket();
-    }
-  }, [runId, fetchRunDetails, initializeWebSocket]);
+  }, [runId, fetchRunDetails]);
+
+  // Separate effect for WebSocket initialization to avoid race conditions
+  useEffect(() => {
+    console.log('WebSocket effect triggered for run:', runId);
+    // Always initialize WebSocket when runId changes or component mounts
+    initializeWebSocket();
+  }, [runId, initializeWebSocket]);
 
   // Cleanup effect for WebSocket
   useEffect(() => {
@@ -1438,24 +1535,40 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   // Helper function to get the correct immediate parent image path for comparison
   const getImmediateParentImagePath = (refinement: any): string => {
-    if (refinement.parent_image_type === 'original') {
-      // Parent is an original generated image
-      const originalImage = generatedImages[refinement.generation_index || 0];
-      return originalImage?.image_path || '';
-    } else {
-      // Parent is another refinement - find it in the refinements list
-      const parentRefinement = refinements.find(r => r.job_id === refinement.parent_image_id);
-      if (parentRefinement && parentRefinement.image_path) {
-        return parentRefinement.image_path;
-      } else {
-        // Fallback: try to get from the ultimate parent
-        const ultimateParent = refinement.ultimateParent;
-        if (ultimateParent && ultimateParent.generationIndex !== undefined) {
-          const originalImage = generatedImages[ultimateParent.generationIndex];
-          return originalImage?.image_path || '';
+    try {
+      if (refinement.parent_image_type === 'original') {
+        // Parent is an original generated image
+        // Find by strategy_index instead of assuming array index
+        const originalImage = generatedImages.find(img => img.strategy_index === refinement.generation_index);
+        if (originalImage?.image_path) {
+          console.log(`Found parent image for refinement: ${originalImage.image_path}`);
+          return originalImage.image_path;
+        } else {
+          console.warn(`Could not find original image for generation_index: ${refinement.generation_index}`);
+          // Fallback to array index if strategy_index doesn't match
+          const fallbackImage = generatedImages[refinement.generation_index || 0];
+          return fallbackImage?.image_path || '';
         }
-        return '';
+      } else {
+        // Parent is another refinement - find it in the refinements list
+        const parentRefinement = refinements.find(r => r.job_id === refinement.parent_image_id);
+        if (parentRefinement && parentRefinement.image_path) {
+          console.log(`Found parent refinement: ${parentRefinement.image_path}`);
+          return parentRefinement.image_path;
+        } else {
+          console.warn(`Could not find parent refinement with job_id: ${refinement.parent_image_id}`);
+          // Fallback: try to get from the ultimate parent
+          const ultimateParent = refinement.ultimateParent;
+          if (ultimateParent && ultimateParent.generationIndex !== undefined) {
+            const originalImage = generatedImages.find(img => img.strategy_index === ultimateParent.generationIndex);
+            return originalImage?.image_path || '';
+          }
+          return '';
+        }
       }
+    } catch (error) {
+      console.error('Error getting immediate parent image path:', error);
+      return '';
     }
   };
 
@@ -1467,17 +1580,41 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     refinementData?: any
   ) => {
     try {
+      console.log(`Loading image for modal: type=${type}, imagePath=${imagePath}`);
+      
       // Get blob URL for the image
       const blobUrl = await PipelineAPI.getImageBlobUrl(runId, imagePath);
       setSelectedImage(blobUrl);
       
       if (type === 'refinement' && refinementData) {
+        console.log('Refinement data:', refinementData);
         const parentImagePath = getImmediateParentImagePath(refinementData);
+        console.log(`Parent image path: ${parentImagePath}`);
+        
+        // If we have a parent image path, also get its blob URL for the comparison slider
+        let parentImageBlobUrl = '';
+        if (parentImagePath) {
+          try {
+            parentImageBlobUrl = await PipelineAPI.getImageBlobUrl(runId, parentImagePath);
+            console.log('Successfully loaded parent image blob URL for comparison');
+          } catch (parentError) {
+            console.error('Failed to load parent image blob URL:', parentError);
+            // Fallback to direct URL
+            parentImageBlobUrl = PipelineAPI.getFileUrl(runId, parentImagePath);
+            console.log(`Using fallback URL for parent image: ${parentImageBlobUrl}`);
+          }
+        } else {
+          console.warn('No parent image path found - comparison will not be available');
+        }
+        
         setSelectedImageContext({
           type: 'refinement',
           refinementData,
-          parentImagePath
+          parentImagePath,
+          parentImageBlobUrl // Add blob URL for comparison slider
         });
+        
+        console.log(`Modal will show: ${parentImagePath ? 'comparison slider' : 'single image'}`);
       } else {
         setSelectedImageContext({
           type: 'original'
@@ -1485,6 +1622,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
       }
     } catch (error) {
       console.error('Failed to load image for modal:', error);
+      toast.error(`Failed to load image: ${error.message}`);
       // Fallback to direct URL (might not work with ngrok but better than nothing)
       setSelectedImage(PipelineAPI.getFileUrl(runId, imagePath));
       setSelectedImageContext({
@@ -1745,6 +1883,18 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 {captionGenerating[result.strategy_index] ? 'Generating...' : 'Caption'}
                               </Button>
                             </Tooltip>
+                            <Tooltip title="Save this style as a preset">
+                              <Button
+                                size="small"
+                                startIcon={<BookmarkAddIcon />}
+                                onClick={() => openSavePresetDialog(result.strategy_index)}
+                                color="secondary"
+                                variant="outlined"
+                                sx={{ fontWeight: 500, fontSize: '0.75rem' }}
+                              >
+                                Save Style
+                              </Button>
+                            </Tooltip>
                           </Box>
                           
                           {/* Assessment Indicators */}
@@ -1764,6 +1914,46 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 color="default"
                                 sx={{ fontSize: '0.7rem' }}
                               />
+                            </Box>
+                          )}
+
+                          {/* Consistency Metrics for Style Recipes */}
+                          {result.assessment?.consistency_metrics && (
+                            <Box sx={{ mt: 2, p: 2, backgroundColor: 'primary.50', borderRadius: 2, border: 1, borderColor: 'primary.200' }}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'primary.main', mb: 1 }}>
+                                🎯 Style Consistency
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                {result.assessment.consistency_metrics.overall_consistency_score && (
+                                  <Chip
+                                    label={`Overall: ${Math.round(result.assessment.consistency_metrics.overall_consistency_score * 100)}%`}
+                                    size="small"
+                                    color={result.assessment.consistency_metrics.overall_consistency_score >= 0.8 ? 'success' : 
+                                           result.assessment.consistency_metrics.overall_consistency_score >= 0.6 ? 'warning' : 'error'}
+                                    variant="filled"
+                                    sx={{ fontSize: '0.7rem', fontWeight: 500 }}
+                                  />
+                                )}
+                                {result.assessment.consistency_metrics.clip_similarity && (
+                                  <Chip
+                                    label={`CLIP: ${Math.round(result.assessment.consistency_metrics.clip_similarity * 100)}%`}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                )}
+                                {result.assessment.consistency_metrics.color_histogram_similarity && (
+                                  <Chip
+                                    label={`Color: ${Math.round(result.assessment.consistency_metrics.color_histogram_similarity * 100)}%`}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                Shows how closely this result matches your selected style recipe
+                              </Typography>
                             </Box>
                           )}
 
@@ -2257,31 +2447,48 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 Pipeline Progress
               </Typography>
               <Typography variant="body1" color="textSecondary" sx={{ fontWeight: 500 }}>
-                {runDetails.stages.filter(s => s.status === 'COMPLETED').length} / {PIPELINE_STAGES.length} stages
+                {runDetails.stages?.filter(s => s.status === 'COMPLETED' || s.status === 'SKIPPED').length || 0} / {runDetails.stages?.length || 0} stages
               </Typography>
             </Box>
             
-            {/* Visual Pipeline Stages Grid */}
+            {/* Visual Pipeline Stages Grid - Dynamic based on actual stages */}
             <Grid container spacing={2} sx={{ mb: 3 }}>
-              {PIPELINE_STAGES.map((pipelineStage) => {
-                const stageData = getStageData(pipelineStage.name);
-                const status = getStageStatus(pipelineStage.name);
-                
-                return (
-                                     <Grid item xs={12} sm={6} md={4} lg={2} key={pipelineStage.name} sx={{ display: 'flex', flexDirection: 'column' }}>
-                     <PipelineStageBox
-                       stage={{ 
-                         name: pipelineStage.name, 
-                         label: pipelineStage.label, 
-                         description: pipelineStage.description 
-                       }}
-                       status={status}
-                       message={stageData?.message}
-                       duration={stageData?.duration_seconds}
-                     />
-                   </Grid>
-                );
-              })}
+              {runDetails.stages && runDetails.stages.length > 0 ? (
+                runDetails.stages
+                  .sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0)) // Sort by stage order
+                  .map((stage) => {
+                    const displayInfo = getStageDisplayInfo(stage.stage_name);
+                    
+                    return (
+                      <Grid 
+                        item 
+                        xs={12} 
+                        sm={6} 
+                        md={4} 
+                        lg={2} 
+                        key={stage.stage_name} 
+                        sx={{ display: 'flex', flexDirection: 'column' }}
+                      >
+                        <PipelineStageBox
+                          stage={{ 
+                            name: stage.stage_name, 
+                            label: displayInfo.label, 
+                            description: displayInfo.description 
+                          }}
+                          status={stage.status}
+                          message={stage.message}
+                          duration={stage.duration_seconds}
+                        />
+                      </Grid>
+                    );
+                  })
+              ) : (
+                <Grid item xs={12}>
+                  <Typography variant="body2" color="textSecondary" sx={{ textAlign: 'center', py: 2 }}>
+                    Loading pipeline stages...
+                  </Typography>
+                </Grid>
+              )}
             </Grid>
             
             {/* Overall Progress Bar */}
@@ -2472,18 +2679,175 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                         </Typography>
                       </Grid>
 
-                      {runDetails.branding_elements && (
-                        <Grid item xs={12}>
-                          <Typography variant="caption" color="textSecondary">Branding Elements</Typography>
-                          <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
-                              {runDetails.branding_elements}
-                            </Typography>
-                          </Paper>
-                        </Grid>
-                      )}
+
                     </Grid>
                   </Grid>
+
+                  {/* Brand Kit Section */}
+                  {runDetails.apply_branding && runDetails.brand_kit && (
+                    <Grid item xs={12}>
+                      <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
+                        Brand Kit Applied
+                      </Typography>
+                      <Paper sx={{ p: 3, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 2 }}>
+                        <Grid container spacing={3}>
+                          {/* Brand Colors */}
+                          {runDetails.brand_kit.colors && runDetails.brand_kit.colors.length > 0 && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 1, fontWeight: 600 }}>
+                                Brand Colors ({runDetails.brand_kit.colors.length})
+                              </Typography>
+                              <Box sx={{ 
+                                display: 'flex', 
+                                flexWrap: 'wrap',
+                                gap: 1,
+                                alignItems: 'center'
+                              }}>
+                                {runDetails.brand_kit.colors.map((color, index) => (
+                                  <Box key={index} sx={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: 1,
+                                    p: 1,
+                                    backgroundColor: 'background.paper',
+                                    borderRadius: 1,
+                                    border: 1,
+                                    borderColor: 'divider'
+                                  }}>
+                                    <Box
+                                      sx={{
+                                        width: 20,
+                                        height: 20,
+                                        backgroundColor: color,
+                                        borderRadius: '50%',
+                                        border: 1,
+                                        borderColor: 'grey.300',
+                                        boxShadow: 1,
+                                        flexShrink: 0
+                                      }}
+                                    />
+                                    <Typography variant="caption" sx={{ 
+                                      fontFamily: 'monospace', 
+                                      fontSize: '0.75rem',
+                                      fontWeight: 500,
+                                      color: 'text.primary'
+                                    }}>
+                                      {color.toUpperCase()}
+                                    </Typography>
+                                  </Box>
+                                ))}
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {/* Brand Voice */}
+                          {runDetails.brand_kit.brand_voice_description && (
+                            <Grid item xs={12} md={runDetails.brand_kit.colors?.length ? 12 : 6}>
+                              <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 1, fontWeight: 600 }}>
+                                Brand Voice & Tone
+                              </Typography>
+                              <Box sx={{ 
+                                p: 2, 
+                                backgroundColor: 'background.paper', 
+                                borderRadius: 1, 
+                                border: 1, 
+                                borderColor: 'divider' 
+                              }}>
+                                <Typography variant="body2" sx={{ 
+                                  fontSize: '0.9rem', 
+                                  lineHeight: 1.5,
+                                  fontStyle: 'italic',
+                                  color: 'text.primary'
+                                }}>
+                                  "{runDetails.brand_kit.brand_voice_description}"
+                                </Typography>
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {/* Logo Information */}
+                          {(runDetails.brand_kit.logo_analysis || runDetails.brand_kit.saved_logo_path_in_run_dir) && (
+                            <Grid item xs={12} md={runDetails.brand_kit.brand_voice_description ? 12 : 6}>
+                              <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 1, fontWeight: 600 }}>
+                                Brand Logo
+                              </Typography>
+                              <Box sx={{ 
+                                p: 2, 
+                                backgroundColor: 'background.paper', 
+                                borderRadius: 1, 
+                                border: 1, 
+                                borderColor: 'divider' 
+                              }}>
+                                {runDetails.brand_kit.saved_logo_path_in_run_dir && (
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                    <Box sx={{ 
+                                      width: 40, 
+                                      height: 40, 
+                                      borderRadius: 1,
+                                      overflow: 'hidden',
+                                      border: 1,
+                                      borderColor: 'divider',
+                                      backgroundColor: 'background.default',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      padding: 0.5
+                                    }}>
+                                      <ImageWithAuth
+                                        runId={runId}
+                                        imagePath={runDetails.brand_kit.saved_logo_path_in_run_dir.split('/').pop() || 'logo.png'}
+                                        alt="Brand logo"
+                                        sx={{ 
+                                          maxWidth: '100%', 
+                                          maxHeight: '100%', 
+                                          objectFit: 'contain',
+                                          display: 'block'
+                                        }}
+                                      />
+                                    </Box>
+                                    <Typography variant="body2" sx={{ fontSize: '0.9rem', fontWeight: 500 }}>
+                                      {runDetails.brand_kit.saved_logo_path_in_run_dir.split('/').pop() || 'Logo file'}
+                                    </Typography>
+                                  </Box>
+                                )}
+                                {runDetails.brand_kit.logo_analysis?.style_description && (
+                                  <Typography variant="body2" sx={{ 
+                                    fontSize: '0.85rem', 
+                                    color: 'text.secondary',
+                                    fontStyle: 'italic' 
+                                  }}>
+                                    Style: {runDetails.brand_kit.logo_analysis.style_description}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {/* Empty state */}
+                          {(!runDetails.brand_kit.colors || runDetails.brand_kit.colors.length === 0) && 
+                           !runDetails.brand_kit.brand_voice_description && 
+                           !runDetails.brand_kit.logo_analysis && 
+                           !runDetails.brand_kit.saved_logo_path_in_run_dir && (
+                            <Grid item xs={12}>
+                              <Box sx={{ 
+                                p: 3, 
+                                textAlign: 'center',
+                                backgroundColor: 'background.paper', 
+                                borderRadius: 1, 
+                                border: 1, 
+                                borderColor: 'divider',
+                                borderStyle: 'dashed'
+                              }}>
+                                <Typography variant="body2" color="textSecondary" sx={{ fontStyle: 'italic' }}>
+                                  Brand kit was applied but no specific details are available for display
+                                </Typography>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Paper>
+                    </Grid>
+                  )}
 
                   {/* Marketing Goals Section */}
                   {(runDetails.marketing_audience || runDetails.marketing_objective || runDetails.marketing_voice || runDetails.marketing_niche) && (
@@ -2703,8 +3067,8 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         }}>
           {selectedImage && (
             <>
-              {selectedImageContext?.type === 'refinement' && selectedImageContext.parentImagePath ? (
-                // Show comparison slider for refined images
+              {selectedImageContext?.type === 'refinement' && selectedImageContext.parentImagePath && selectedImageContext.parentImageBlobUrl ? (
+                // Show comparison slider for refined images when we have both images
                 <Box sx={{ 
                   maxWidth: 'calc(100vw - 32px)',
                   maxHeight: 'calc(100vh - 160px)',
@@ -2715,9 +3079,41 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                   justifyContent: 'center'
                 }}>
                   <ImageCompareSlider
-                    beforeImageUrl={PipelineAPI.getFileUrl(runId, selectedImageContext.parentImagePath)}
+                    beforeImageUrl={selectedImageContext.parentImageBlobUrl}
                     afterImageUrl={selectedImage}
                     height={Math.min(window.innerHeight - 200, 800)}
+                  />
+                </Box>
+              ) : selectedImageContext?.type === 'refinement' && selectedImageContext.parentImagePath ? (
+                // Fallback: Try to show comparison with direct URL if blob URL failed
+                <Box sx={{ 
+                  maxWidth: 'calc(100vw - 32px)',
+                  maxHeight: 'calc(100vh - 160px)',
+                  width: 'auto',
+                  height: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 2
+                }}>
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    Comparison view unavailable. Showing refined image only.
+                  </Alert>
+                  <Box
+                    component="img"
+                    src={selectedImage}
+                    sx={{
+                      maxWidth: '100%',
+                      maxHeight: 'calc(100vh - 220px)',
+                      width: 'auto',
+                      height: 'auto',
+                      objectFit: 'contain',
+                      borderRadius: 1,
+                      backgroundColor: 'white',
+                      boxShadow: 3,
+                      display: 'block'
+                    }}
                   />
                 </Box>
               ) : (
@@ -2817,6 +3213,50 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                         </Typography>
                       </Grid>
                     </Grid>
+                  </Paper>
+                </Grid>
+              )}
+
+              {/* Alt Text */}
+              {optionDetails.visualConcept?.visual_concept?.suggested_alt_text && (
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'secondary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    Alt Text
+                  </Typography>
+                  <Paper sx={{ p: 3, backgroundColor: 'grey.900', color: 'grey.100', borderRadius: 2, position: 'relative' }}>
+                    <Typography 
+                      variant="body2" 
+                      sx={{ 
+                        fontFamily: 'monospace',
+                        whiteSpace: 'pre-wrap',
+                        lineHeight: 1.5,
+                        fontSize: '0.85rem',
+                        maxHeight: '300px',
+                        overflow: 'auto'
+                      }}
+                    >
+                      {optionDetails.visualConcept.visual_concept.suggested_alt_text}
+                    </Typography>
+                    
+                    <Tooltip title="Copy alt text to clipboard">
+                      <IconButton
+                        onClick={() => copyPromptToClipboard(optionDetails.visualConcept.visual_concept.suggested_alt_text || '')}
+                        sx={{
+                          position: 'absolute',
+                          top: 8,
+                          right: 8,
+                          color: 'grey.300',
+                          backgroundColor: 'rgba(255,255,255,0.1)',
+                          '&:hover': {
+                            backgroundColor: 'rgba(255,255,255,0.2)',
+                            color: 'white'
+                          }
+                        }}
+                        size="small"
+                      >
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </Paper>
                 </Grid>
               )}
@@ -2986,6 +3426,42 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         initialModelId={captionInitialSettings ? (imageCaptions[captionImageIndex]?.[imageCaptions[captionImageIndex].length - 1]?.model_id || undefined) : undefined}
         error={captionErrors[captionImageIndex]}
       />
+
+      {/* Save Preset Dialog */}
+      <Dialog open={savePresetDialogOpen} onClose={closeSavePresetDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>Save Style as Preset</DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Save the style from Option {savePresetImageIndex + 1} as a reusable preset that you can apply to future projects.
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              label="Preset Name"
+              value={savePresetName}
+              onChange={(e) => setSavePresetName(e.target.value)}
+              placeholder="e.g., Modern Minimalist Style"
+              helperText="Give your style preset a memorable name"
+              variant="outlined"
+              sx={{ mt: 1 }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeSavePresetDialog} disabled={savePresetLoading}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSavePreset}
+            disabled={!savePresetName.trim() || savePresetLoading}
+            variant="contained"
+            startIcon={savePresetLoading ? <CircularProgress size={16} /> : <BookmarkAddIcon />}
+          >
+            {savePresetLoading ? 'Saving...' : 'Save Preset'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
   );
 } 

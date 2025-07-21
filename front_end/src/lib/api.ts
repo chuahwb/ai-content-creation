@@ -16,6 +16,11 @@ import {
   CaptionModelOption,
   CaptionRequest,
   CaptionSettings,
+  BrandPresetListResponse,
+  BrandPresetResponse,
+  BrandPresetCreateRequest,
+  BrandPresetUpdateRequest,
+  SavePresetFromResultRequest,
 } from '@/types/api';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
@@ -55,18 +60,10 @@ const handleApiError = (error: AxiosError): never => {
 
 // Main API class
 export class PipelineAPI {
-  // Health check
-  static async healthCheck(): Promise<{ status: string }> {
-    try {
-      const response = await apiClient.get('/health');
-      return response.data;
-    } catch (error) {
-      return handleApiError(error as AxiosError);
-    }
-  }
 
-  // Get API status
-  static async getStatus(): Promise<ApiStatusResponse> {
+
+  // Get status of API service
+  static async getApiStatus(): Promise<ApiStatusResponse> {
     try {
       const response = await apiClient.get('/status');
       return response.data;
@@ -96,70 +93,37 @@ export class PipelineAPI {
   static async submitRun(formData: PipelineFormData): Promise<PipelineRunResponse> {
     try {
       const requestData = new FormData();
-      
-      // Convert form data to API request format
-      const runRequest: Omit<PipelineRunRequest, 'image_reference'> = {
-        mode: formData.mode,
-        platform_name: formData.platform_name,
-        creativity_level: formData.creativity_level,
-        num_variants: formData.num_variants,
-        render_text: formData.render_text,
-        apply_branding: formData.apply_branding,
-      };
 
-      // Add optional fields
-      if (formData.prompt) runRequest.prompt = formData.prompt;
-      if (formData.task_type) runRequest.task_type = formData.task_type;
-      if (formData.task_description) runRequest.task_description = formData.task_description;
-      if (formData.branding_elements) runRequest.branding_elements = formData.branding_elements;
+      // Append all simple key-value pairs from formData
+      requestData.append('mode', formData.mode);
+      requestData.append('platform_name', formData.platform_name);
+      requestData.append('creativity_level', formData.creativity_level.toString());
+      requestData.append('num_variants', formData.num_variants.toString());
+      requestData.append('render_text', formData.render_text.toString());
+      requestData.append('apply_branding', formData.apply_branding.toString());
 
-      // Add marketing goals if provided
-      if (formData.marketing_audience || formData.marketing_objective || 
-          formData.marketing_voice || formData.marketing_niche) {
-        runRequest.marketing_goals = {
-          target_audience: formData.marketing_audience,
-          objective: formData.marketing_objective,
-          voice: formData.marketing_voice,
-          niche: formData.marketing_niche,
-        };
+      if (formData.prompt) requestData.append('prompt', formData.prompt);
+      if (formData.task_type) requestData.append('task_type', formData.task_type);
+      if (formData.task_description) requestData.append('task_description', formData.task_description);
+      if (formData.language) requestData.append('language', formData.language);
+
+      // Append marketing goals
+      if (formData.marketing_audience) requestData.append('marketing_audience', formData.marketing_audience);
+      if (formData.marketing_objective) requestData.append('marketing_objective', formData.marketing_objective);
+      if (formData.marketing_voice) requestData.append('marketing_voice', formData.marketing_voice);
+      if (formData.marketing_niche) requestData.append('marketing_niche', formData.marketing_niche);
+
+      // Append preset data
+      if (formData.preset_id) requestData.append('preset_id', formData.preset_id);
+      if (formData.preset_type) requestData.append('preset_type', formData.preset_type);
+      if (formData.overrides) requestData.append('overrides', JSON.stringify(formData.overrides));
+
+      // Append brand_kit as a JSON string
+      if (formData.brand_kit) {
+        requestData.append('brand_kit', JSON.stringify(formData.brand_kit));
       }
 
-      // Add individual form fields as expected by the API
-      requestData.append('mode', runRequest.mode);
-      requestData.append('platform_name', runRequest.platform_name);
-      requestData.append('creativity_level', runRequest.creativity_level.toString());
-      requestData.append('num_variants', runRequest.num_variants.toString());
-      requestData.append('render_text', runRequest.render_text.toString());
-      requestData.append('apply_branding', runRequest.apply_branding.toString());
-
-      // Add optional fields
-      if (runRequest.prompt) requestData.append('prompt', runRequest.prompt);
-      if (runRequest.task_type) requestData.append('task_type', runRequest.task_type);
-      if (runRequest.task_description) requestData.append('task_description', runRequest.task_description);
-      if (runRequest.branding_elements) requestData.append('branding_elements', runRequest.branding_elements);
-
-      // Add marketing goals as individual fields
-      if (runRequest.marketing_goals) {
-        if (runRequest.marketing_goals.target_audience) {
-          requestData.append('marketing_audience', runRequest.marketing_goals.target_audience);
-        }
-        if (runRequest.marketing_goals.objective) {
-          requestData.append('marketing_objective', runRequest.marketing_goals.objective);
-        }
-        if (runRequest.marketing_goals.voice) {
-          requestData.append('marketing_voice', runRequest.marketing_goals.voice);
-        }
-        if (runRequest.marketing_goals.niche) {
-          requestData.append('marketing_niche', runRequest.marketing_goals.niche);
-        }
-      }
-
-      // Add language setting
-      if (formData.language) {
-        requestData.append('language', formData.language);
-      }
-
-      // Add image file if provided
+      // Append image file if provided
       if (formData.image_file) {
         requestData.append('image_file', formData.image_file);
         if (formData.image_instruction) {
@@ -333,6 +297,62 @@ export class PipelineAPI {
   static async getCaptions(runId: string, imageId: string): Promise<any> {
     try {
       const response = await apiClient.get(`/runs/${runId}/images/${imageId}/captions`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  // Brand Preset API functions
+  static async getBrandPresets(presetType?: 'INPUT_TEMPLATE' | 'STYLE_RECIPE'): Promise<BrandPresetListResponse> {
+    try {
+      const params = presetType ? { preset_type: presetType } : {};
+      const response = await apiClient.get('/brand-presets', { params });
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async getBrandPreset(presetId: string): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.get(`/brand-presets/${presetId}`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async createBrandPreset(data: BrandPresetCreateRequest): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.post('/brand-presets', data);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async updateBrandPreset(presetId: string, data: BrandPresetUpdateRequest): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.put(`/brand-presets/${presetId}`, data);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async deleteBrandPreset(presetId: string): Promise<{ message: string }> {
+    try {
+      const response = await apiClient.delete(`/brand-presets/${presetId}`);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  static async savePresetFromResult(runId: string, data: SavePresetFromResultRequest): Promise<BrandPresetResponse> {
+    try {
+      const response = await apiClient.post(`/runs/${runId}/save-as-preset`, data);
       return response.data;
     } catch (error) {
       return handleApiError(error as AxiosError);

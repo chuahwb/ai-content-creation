@@ -41,6 +41,7 @@ INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = []
 _json_parser = RobustJSONParser(debug_mode=False)
 
 
+
 # Task Type Caption Guidance Mapping
 TASK_TYPE_CAPTION_GUIDANCE = {
     "1. Product Photography": {
@@ -147,6 +148,57 @@ def _extract_style_context(ctx: PipelineContext, prompt_index: int) -> Dict[str,
     return style_context
 
 
+def _resolve_final_instructions(
+    ctx: PipelineContext,
+    settings: CaptionSettings,
+    strategy_data: Dict[str, Any],
+    visual_data: Dict[str, Any],
+    brand_voice: Optional[str]
+) -> Dict[str, str]:
+    """
+    Consolidates all conditional logic to determine the final, unambiguous
+    instructions for the Analyst LLM. It faithfully replicates the original
+    logic from the prompts.
+    """
+    instructions = {}
+
+    # 1. Resolve Tone Instruction
+    if settings.generation_mode == 'Custom' and settings.tone:
+        instructions['tone'] = f"You MUST adopt this exact tone of voice: '{settings.tone}'."
+    else:  # Auto mode
+        base_voice = brand_voice or strategy_data.get('target_voice') or "a friendly and engaging tone"
+        visual_mood = visual_data.get('lighting_mood')
+        instruction = f"Your task is to synthesize a new, refined tone of voice. Start with the primary voice ('{base_voice}')"
+        if visual_mood:
+            instruction += f" and blend it with the visual mood ('{visual_mood}')."
+        else:
+            instruction += "."
+        instructions['tone'] = instruction
+
+    # 2. Resolve Call to Action Instruction
+    if settings.generation_mode == 'Custom' and settings.call_to_action:
+        instructions['cta'] = f"You MUST use this exact call to action: '{settings.call_to_action}'."
+    else:  # Auto mode
+        target_objective = strategy_data.get('target_objective', 'drive engagement')
+        instructions['cta'] = f"Your task is to generate a context-aware call to action that directly supports the marketing objective: '{target_objective}'."
+
+    # 3. Resolve Emoji Usage Instruction
+    use_emojis = settings.include_emojis if settings.include_emojis is not None else True
+    if use_emojis:
+        instructions['emojis'] = "You should use emojis appropriately and sparingly to match the determined tone of voice."
+    else:
+        instructions['emojis'] = "You MUST NOT use any emojis in the caption."
+        
+    # 4. Resolve Hashtag Strategy Instruction
+    hashtag_strategy = settings.hashtag_strategy or "Balanced Mix"
+    if hashtag_strategy == "Balanced Mix":
+        instructions['hashtags'] = "Your task is to generate a 'Balanced Mix' of hashtags. This involves extracting specific keywords from the provided style and subject matter to create niche hashtags, and then supplementing those with 1-2 broader, high-traffic terms."
+    else:
+        instructions['hashtags'] = f"You MUST follow this user-provided hashtag strategy precisely: '{hashtag_strategy}'."
+
+    return instructions
+
+
 def _get_analyst_system_prompt(language: str = 'en') -> str:
     """Returns the system prompt for the Analyst LLM."""
     # ============================
@@ -166,22 +218,14 @@ def _get_analyst_system_prompt(language: str = 'en') -> str:
     }
     language_name = language_names.get(language, language.upper())
     
-    return f"""You are a master social media strategist and SEO expert. Your task is to analyze a comprehensive set of marketing and visual data and distill it into a structured JSON "Caption Brief" for a creative copywriter. You do not write the final caption yourself. Your ultimate goal is to create a brief for content so valuable and discoverable that users will **save** it for later.
+    return f"""You are a master social media strategist and SEO expert. Your task is to analyze a comprehensive set of marketing and visual data and distill it into a structured JSON "Caption Brief" for a creative copywriter. You will receive explicit instructions for how to handle creative elements like tone and CTAs. Your role is to follow those instructions and synthesize the provided data into the required JSON format. You do not write the final caption yourself.
 
 **Instructions:**
 - Carefully analyze all the provided CONTEXT_DATA.
-- **Language Consistency:** Generate the *language-controlled* fields listed below in {language_name}. Preserve authentic terms (e.g., "Japandi") but do not switch languages elsewhere.
-- Follow the USER_SETTINGS if they are provided. If a user setting conflicts with the context data (e.g., user-selected tone vs. target_voice), the user's choice MUST be prioritized.
-- If a setting is not provided by the user, you must infer the optimal choice from the context data as per the AUTO_MODE_LOGIC.
-- Generate a single, valid JSON object based on the CaptionBrief schema.
-- The entire output must be only the JSON object, with no other text or explanation.
+- Follow the explicit INSTRUCTIONS_FOR_BRIEF that you are given. These are non-negotiable.
+- Generate a single, valid JSON object based on the CaptionBrief schema. The entire output must be only the JSON object, with no other text or explanation.
+- **Language Consistency:** The fields `core_message`, `primary_call_to_action`, `hashtags`, and `seo_keywords` MUST be generated in {language_name}.
 - ALL fields in the JSON schema are REQUIRED and must be included.
-
-**Auto Mode Logic:**
-- Auto-Tone Selection: Infer optimal tone by synthesizing target_voice from marketing strategy and lighting_and_mood from visual concept.
-- Auto-CTA Generation: Generate context-aware CTA based on target_objective.
-- Auto-Emoji Usage: Enable by default, use sparingly and match the selected tone.
-- Auto-Hashtag Strategy: Default to "Balanced Mix" - extract keywords from style and subject for niche hashtags, supplement with 1-2 broader terms.
 
 **Platform Optimizations (Enhanced for SEO):**
 - **Instagram:** Structure as "Hook + Value + CTA". The `seo_keywords` are critical for the image's Alt Text. Encourage engagement with questions to earn comments and saves.
@@ -197,16 +241,17 @@ You must output a valid JSON object with exactly these fields. Do not omit any f
   "key_themes_to_include": ["Array of 3-5 key themes or concepts"],
   "seo_keywords": ["Array of 3-5 important SEO keywords"],
   "target_emotion": "Primary emotion to evoke (e.g., 'Aspirational', 'Trustworthy')",
+  "tone_of_voice": "The specific tone the writer must adopt. This is derived from your instructions.",
   "platform_optimizations": {{
     "[EXACT_PLATFORM_NAME]": {{
       "caption_structure": "Brief instruction on structure for this platform",
       "style_notes": "Platform-specific style guidance"
     }}
   }},
-  "primary_call_to_action": "The final call to action string",
-  "hashtags": ["Array of hashtag strings with # symbol"],
-  "emoji_suggestions": ["Array of 2-3 relevant emoji characters"],
-  "task_type_notes": "Optional concise note about task-type optimization (e.g., 'Optimize for Product Photography: showcase features & craftsmanship'). Set to null if no task type guidance was provided."
+  "primary_call_to_action": "The final call to action string, derived from your instructions.",
+  "hashtags": ["Array of hashtag strings with # symbol, derived from your instructions"],
+  "emoji_suggestions": ["Array of 2-3 relevant emoji characters, derived from your instructions"],
+  "task_type_notes": "Optional concise note about task-type optimization. Set to null if no task type guidance was provided."
 }}
 
 **CRITICAL:** The platform_optimizations object must contain exactly one key matching the target platform name provided in the context. Use the EXACT platform name as given in the context (e.g., "Instagram Post (1:1 Square)", not just "Instagram"). This field is mandatory and cannot be omitted."""
@@ -326,6 +371,11 @@ def _get_analyst_user_prompt(
     # Validate we have minimum required data
     _validate_required_data(strategy_data, visual_data, main_subject)
     
+    # Extract Brand Kit voice if available
+    brand_voice = None
+    if hasattr(ctx, 'brand_kit') and ctx.brand_kit:
+        brand_voice = ctx.brand_kit.get('brand_voice_description')
+    
     # Map language codes to readable names
     language_names = {
         'en': 'English',
@@ -336,13 +386,21 @@ def _get_analyst_user_prompt(
     }
     language_name = language_names.get(ctx.language, ctx.language.upper())
     
-    prompt_parts = [
+    prompt_parts = []
+    if brand_voice:
+        prompt_parts.extend([
+            "**Brand Voice Guidelines:**",
+            f'"{brand_voice}"',
+            ""
+        ])
+    
+    prompt_parts.extend([
         f"**Target Platform:** {platform_name}",
         "",
         "**Marketing Strategy:**",
         f"- Target Audience: {strategy_data['target_audience']}",
         f"- Target Objective: {strategy_data['target_objective']}",
-    ]
+    ])
     
     # Add optional strategy fields only if they exist
     if strategy_data['target_voice']:
@@ -398,35 +456,18 @@ def _get_analyst_user_prompt(
         if style_context['creative_reasoning']:
             prompt_parts.append(f"The creative reasoning emphasizes: \"{style_context['creative_reasoning']}\"")
     
-    prompt_parts.append("")
-    prompt_parts.append("**User Settings:**")
-    
-    # Handle user settings vs auto mode
-    if settings.tone:
-        prompt_parts.append(f"- Caption Tone: {settings.tone} (USER OVERRIDE)")
-    else:
-        if strategy_data['target_voice'] and visual_data['lighting_mood']:
-            prompt_parts.append(f"- Caption Tone: Auto mode - infer from target_voice ('{strategy_data['target_voice']}') and lighting_mood ('{visual_data['lighting_mood']}')")
-        elif strategy_data['target_voice']:
-            prompt_parts.append(f"- Caption Tone: Auto mode - infer from target_voice ('{strategy_data['target_voice']}')")
-        else:
-            prompt_parts.append("- Caption Tone: Auto mode - use friendly and engaging tone")
-    
-    if settings.call_to_action:
-        prompt_parts.append(f"- Call to Action: {settings.call_to_action} (USER OVERRIDE)")
-    else:
-        prompt_parts.append(f"- Call to Action: Auto mode - generate based on target_objective ('{strategy_data['target_objective']}')")
-    
-    if settings.include_emojis is not None:
-        emoji_status = "enabled" if settings.include_emojis else "disabled"
-        prompt_parts.append(f"- Emojis: {emoji_status} (USER OVERRIDE)")
-    else:
-        prompt_parts.append("- Emojis: Auto mode - enabled by default, use appropriately")
-    
-    if settings.hashtag_strategy:
-        prompt_parts.append(f"- Hashtag Strategy: {settings.hashtag_strategy} (USER OVERRIDE)")
-    else:
-        prompt_parts.append("- Hashtag Strategy: Auto mode - Balanced Mix")
+    # Get direct, final instructions from the new resolver function
+    final_instructions = _resolve_final_instructions(ctx, settings, strategy_data, visual_data, brand_voice)
+
+    prompt_parts.extend([
+        "",
+        "**INSTRUCTIONS_FOR_BRIEF**",
+        "Based on all the CONTEXT_DATA above, you must follow these explicit instructions to generate the CaptionBrief JSON object:",
+        f"- Tone of Voice Instruction: {final_instructions['tone']}",
+        f"- Call to Action Instruction: {final_instructions['cta']}",
+        f"- Emoji Usage Instruction: {final_instructions['emojis']}",
+        f"- Hashtag Strategy Instruction: {final_instructions['hashtags']}",
+    ])
     
     prompt_parts.extend([
         "",
@@ -465,8 +506,9 @@ def _get_writer_system_prompt(language: str = 'en') -> str:
 **Instructions:**
 - Your task is to write a compelling social media caption based on the provided Caption Brief.
 - **Language Adherence:** Write the final caption in {language_name}, keeping cultural/brand terms as-is. Only use a different language if explicitly present in those terms.
+- **CRITICAL TONE OF VOICE:** You MUST adopt the following tone: **{{brief.tone_of_voice}}**. This is the most important instruction and is non-negotiable.
+- **CRITICAL STRUCTURE:** You MUST strictly adhere to the `caption_structure` and `style_notes` provided in the `platform_optimizations` section of the brief. This structure is key to the caption's success on that specific platform.
 - Read the entire brief carefully to understand the strategic goals.
-- **CRITICAL:** You MUST strictly adhere to the `caption_structure` and `style_notes` provided in the `platform_optimizations` section of the brief. This structure is non-negotiable and is the key to the caption's success on that specific platform.
 - Write a caption that feels authentic and human, not like it was written by an AI.
 - Seamlessly integrate the `seo_keywords` into the text without making it sound forced.
 - End with the `primary_call_to_action` and the provided `hashtags`.
@@ -499,7 +541,8 @@ def _get_writer_user_prompt(brief: CaptionBrief) -> str:
     prompt_parts = [
         "Write a social media caption based on this strategic brief:",
         "",
-        f"**Core Message:** {brief.core_message}"
+        f"**Core Message:** {brief.core_message}",
+        f"**Tone of Voice:** {brief.tone_of_voice}"
     ]
     
     # Add task type notes if available
@@ -874,6 +917,19 @@ async def run(ctx: PipelineContext) -> None:
         regenerate_writer_only = getattr(ctx, 'regenerate_writer_only', False)
         cached_brief = getattr(ctx, 'cached_caption_brief', None)
         
+        # === DETERMINE GENERATION MODE UPFRONT ===
+        # Determine generation mode UPFRONT based on original user input
+        original_settings = getattr(ctx, 'caption_settings', {})
+        user_provided_settings = bool(
+            original_settings.get('tone') or 
+            original_settings.get('call_to_action') or 
+            original_settings.get('hashtag_strategy') or 
+            original_settings.get('include_emojis') is False
+        )
+        # This ensures the settings object passed to the resolver has the correct mode
+        settings.generation_mode = 'Custom' if user_provided_settings else 'Auto'
+        # ==========================================
+
         if regenerate_writer_only and cached_brief:
             ctx.log("Using cached caption brief for regeneration")
             brief = cached_brief
@@ -907,6 +963,25 @@ async def run(ctx: PipelineContext) -> None:
         if not caption_text:
             ctx.log(f"Failed to generate caption text for image {i+1}")
             continue
+        
+        # If running in auto-mode, update the settings object with the Analyst's choices for transparency.
+        if not settings.tone and brief.tone_of_voice:
+            settings.tone = brief.tone_of_voice
+        if not settings.call_to_action and brief.primary_call_to_action:
+            settings.call_to_action = brief.primary_call_to_action
+        # This makes the auto-generated settings visible in the UI and pre-populates them for regeneration.
+        
+        # Processing mode should already be set by upstream logic (background_tasks.py)
+        # If not set, infer from the current model being used
+        if not settings.processing_mode:
+            model_id = CAPTION_MODEL_ID or 'unknown'
+            # Simple inference based on known model characteristics
+            if 'gpt-4.1' in model_id.lower():
+                settings.processing_mode = 'Fast'
+            elif 'gemini-2.5-pro' in model_id.lower():
+                settings.processing_mode = 'Analytical'
+            else:
+                settings.processing_mode = 'Analytical'  # Default to analytical for unknown models
         
         # Create caption result
         caption_result = CaptionResult(

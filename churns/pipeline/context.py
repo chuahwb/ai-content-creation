@@ -32,9 +32,18 @@ class PipelineContext:
     image_reference: Optional[Dict[str, Any]] = None
     render_text: bool = False
     apply_branding: bool = False
-    branding_elements: Optional[str] = None
     task_description: Optional[str] = None
     marketing_goals: Optional[Dict[str, Any]] = None
+    
+    # Brand Preset support
+    preset_id: Optional[str] = None
+    preset_data: Optional[Dict[str, Any]] = None
+    preset_type: Optional[str] = None  # "INPUT_TEMPLATE" or "STYLE_RECIPE"
+    overrides: Optional[Dict[str, Any]] = None
+    skip_stages: List[str] = field(default_factory=list)  # Stages to skip for STYLE_RECIPE
+    
+    # Brand Kit data
+    brand_kit: Optional[Dict[str, Any]] = None  # Contains colors, voice, logo data
     
     # === REFINEMENT PROPERTIES ===
     # Pipeline mode ("generation" or "refinement")
@@ -177,9 +186,12 @@ class PipelineContext:
                 "image_reference": self.image_reference,
                 "render_text": self.render_text,
                 "apply_branding": self.apply_branding,
-                "branding_elements": self.branding_elements,
                 "task_description": self.task_description,
-                "marketing_goals": self.marketing_goals
+                "marketing_goals": self.marketing_goals,
+                "preset_id": self.preset_id,
+                "preset_type": self.preset_type,
+                "overrides": self.overrides,
+                "brand_kit": self.brand_kit
             },
             "processing_context": {
                 "image_analysis_result": self.image_analysis_result,
@@ -235,9 +247,11 @@ class PipelineContext:
             image_reference=user_inputs.get("image_reference"),
             render_text=user_inputs.get("render_text", False),
             apply_branding=user_inputs.get("apply_branding", False),
-            branding_elements=user_inputs.get("branding_elements"),
             task_description=user_inputs.get("task_description"),
             marketing_goals=user_inputs.get("marketing_goals"),
+            preset_id=user_inputs.get("preset_id"),
+            preset_type=user_inputs.get("preset_type"),
+            overrides=user_inputs.get("overrides"),
             image_analysis_result=processing_context.get("image_analysis_result"),
             suggested_marketing_strategies=processing_context.get("suggested_marketing_strategies"),
             style_guidance_sets=processing_context.get("style_guidance_sets"),
@@ -248,6 +262,10 @@ class PipelineContext:
             llm_usage=processing_context.get("llm_call_usage", {}),
             cost_summary=processing_context.get("cost_summary")
         )
+        
+        # Set brand kit data if provided
+        if user_inputs.get("brand_kit"):
+            ctx.brand_kit = user_inputs.get("brand_kit")
         
         # Set refinement context if present
         if refinement_context:

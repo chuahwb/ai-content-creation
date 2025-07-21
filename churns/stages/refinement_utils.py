@@ -30,14 +30,45 @@ def get_original_reference_image_path(ctx: PipelineContext) -> Optional[str]:
     Get the original reference image path from the parent pipeline run.
     Used by subject repair to access the reference image that was used during initial generation.
     
+    Updated to handle both legacy and new brandkit data structures.
+    
     Returns:
         Optional[str]: Path to the original reference image if it exists, None otherwise
     """
-    user_inputs = ctx.original_pipeline_data.get('user_inputs', {})
-    image_reference = user_inputs.get('image_reference')
-    if image_reference:
-        return image_reference.get('saved_image_path_in_run_dir')
-    return None
+    try:
+        # First, try to access from original_pipeline_data (new structure)
+        if hasattr(ctx, 'original_pipeline_data') and ctx.original_pipeline_data:
+            user_inputs = ctx.original_pipeline_data.get('user_inputs', {})
+            
+            # Try new structure first
+            image_reference = user_inputs.get('image_reference')
+            if image_reference and isinstance(image_reference, dict):
+                saved_path = image_reference.get('saved_image_path_in_run_dir')
+                if saved_path:
+                    return saved_path
+            
+            # Fallback: Check if there's a legacy branding_elements or image reference
+            # This handles cases where the old structure might still be present
+            
+        # Fallback: Try to access from context data (legacy compatibility)
+        if hasattr(ctx, 'data') and ctx.data:
+            user_inputs = ctx.data.get('user_inputs', {})
+            image_reference = user_inputs.get('image_reference')
+            if image_reference and isinstance(image_reference, dict):
+                saved_path = image_reference.get('saved_image_path_in_run_dir')
+                if saved_path:
+                    return saved_path
+        
+        # No reference image found
+        return None
+        
+    except Exception as e:
+        # Log error but don't crash - graceful degradation
+        if hasattr(ctx, 'log'):
+            ctx.log(f"Warning: Error accessing original reference image path: {e}")
+        else:
+            print(f"Warning: Error accessing original reference image path: {e}")
+        return None
 
 def get_uploaded_reference_image_path(ctx: PipelineContext) -> Optional[str]:
     """
@@ -66,32 +97,113 @@ def get_reference_image_path(ctx: PipelineContext) -> Optional[str]:
     return get_original_reference_image_path(ctx)
 
 def get_image_ctx_and_main_object(ctx: PipelineContext):
-    processing_ctx = ctx.original_pipeline_data.get('processing_context')
+    """
+    Get image context and main object from pipeline data.
+    Updated to handle both legacy and new brandkit data structures.
     
-    # Get Image Prompts Context
-    image_prompts = processing_ctx.get('generated_image_prompts')
-    
-    # For chain refinements, generation_index might be None
-    if ctx.generation_index is not None:
-        image_ctx_json = image_prompts[ctx.generation_index]
-    else:
-        # For chain refinements, use the first available prompt context as fallback
-        # or try to infer from the parent image context
-        image_ctx_json = image_prompts[0] if image_prompts else {}
-        ctx.log("Using fallback image context for chain refinement")
-    
-    # Get Main Object from Image Analysis Result
-    image_analysis_result = processing_ctx.get('image_analysis_result')
-    analysis_main_obj = image_analysis_result.get('main_subject')
-
-    main_obj = image_ctx_json.get('main_subject')
-    if not main_obj:
-        if analysis_main_obj:
-            ctx.log(f"Setting main object from image analysis: {analysis_main_obj}")
-            main_obj = analysis_main_obj
-    else:
-        ctx.log(f"Main object identified: {main_obj}")
-    return image_ctx_json, main_obj
+    Returns:
+        tuple: (image_ctx_json, main_obj) where image_ctx_json contains visual concept
+               and main_obj is the identified main subject
+    """
+    try:
+        # Try to access processing context from original_pipeline_data
+        processing_ctx = None
+        if hasattr(ctx, 'original_pipeline_data') and ctx.original_pipeline_data:
+            processing_ctx = ctx.original_pipeline_data.get('processing_context')
+        
+        # Fallback to context data if original_pipeline_data is not available
+        if not processing_ctx and hasattr(ctx, 'data') and ctx.data:
+            processing_ctx = ctx.data.get('processing_context')
+        
+        # If still no processing context, create minimal structure
+        if not processing_ctx:
+            ctx.log("Warning: No processing context found, creating minimal structure")
+            return {}, "Unknown Subject"
+        
+        # Get Image Prompts Context
+        image_prompts = processing_ctx.get('generated_image_prompts', [])
+        
+        # Initialize with empty context
+        image_ctx_json = {}
+        
+        # For chain refinements, generation_index might be None
+        if ctx.generation_index is not None and image_prompts:
+            if 0 <= ctx.generation_index < len(image_prompts):
+                image_ctx_json = image_prompts[ctx.generation_index]
+            else:
+                ctx.log(f"Warning: generation_index {ctx.generation_index} out of range for {len(image_prompts)} prompts")
+                # Use first available prompt as fallback
+                image_ctx_json = image_prompts[0] if image_prompts else {}
+        else:
+            # For chain refinements or when index is unavailable, use the first available prompt context as fallback
+            image_ctx_json = image_prompts[0] if image_prompts else {}
+            ctx.log("Using fallback image context for chain refinement or missing generation_index")
+        
+        # Ensure we have a valid visual_concept structure
+        if not isinstance(image_ctx_json, dict):
+            image_ctx_json = {}
+        
+        # Ensure visual_concept exists with basic structure
+        if 'visual_concept' not in image_ctx_json:
+            image_ctx_json['visual_concept'] = {
+                'main_subject': 'Unknown Subject',
+                'composition_and_framing': 'Standard composition',
+                'background_environment': 'Standard background',
+                'foreground_elements': 'Standard foreground',
+                'lighting_and_mood': 'Natural lighting',
+                'color_palette': 'Standard colors',
+                'visual_style': 'Standard style',
+                'texture_and_details': 'Standard details',
+                'creative_reasoning': 'Standard approach',
+                'promotional_text_visuals': 'No text elements',
+                'branding_visuals': 'No branding elements'
+            }
+        
+        # Get Main Object from Image Analysis Result
+        main_obj = None
+        image_analysis_result = processing_ctx.get('image_analysis_result')
+        if image_analysis_result and isinstance(image_analysis_result, dict):
+            analysis_main_obj = image_analysis_result.get('main_subject')
+            if analysis_main_obj:
+                main_obj = analysis_main_obj
+        
+        # Try to get main object from visual concept if not found in analysis
+        if not main_obj:
+            if isinstance(image_ctx_json, dict):
+                main_obj = image_ctx_json.get('main_subject')
+                if not main_obj and 'visual_concept' in image_ctx_json:
+                    main_obj = image_ctx_json['visual_concept'].get('main_subject')
+        
+        # Final fallback
+        if not main_obj:
+            main_obj = "Unknown Subject"
+            ctx.log("Warning: Could not determine main subject, using fallback")
+        else:
+            ctx.log(f"Main object identified: {main_obj}")
+        
+        return image_ctx_json, main_obj
+        
+    except Exception as e:
+        # Log error and return minimal structure
+        error_msg = f"Error accessing image context: {e}"
+        if hasattr(ctx, 'log'):
+            ctx.log(f"Warning: {error_msg}")
+        else:
+            print(f"Warning: {error_msg}")
+        
+        # Return minimal valid structure
+        minimal_context = {
+            'visual_concept': {
+                'main_subject': 'Unknown Subject',
+                'composition_and_framing': 'Standard composition',
+                'background_environment': 'Standard background',
+                'lighting_and_mood': 'Natural lighting',
+                'color_palette': 'Standard colors',
+                'visual_style': 'Standard style',
+                'creative_reasoning': 'Fallback due to data access error'
+            }
+        }
+        return minimal_context, "Unknown Subject"
 
 def validate_refinement_inputs(ctx: PipelineContext, refinement_type: str) -> None:
     """Common input validation for all refinement stages."""
@@ -157,11 +269,26 @@ async def call_openai_images_edit(
     enhanced_prompt: str,
     image_size: str,
     mask_path: Optional[str] = None,
-    image_gen_client: Optional[OpenAI] = None
+    image_gen_client: Optional[OpenAI] = None,
+    image_quality_setting: str = "medium",
+    input_fidelity: str = "high"
 ) -> str:
     """
     Common OpenAI images.edit API call with enhanced error handling and classification.
     Returns the path to the saved result image or raises RefinementError with detailed context.
+    
+    Args:
+        ctx: Pipeline context
+        enhanced_prompt: The prompt for image editing
+        image_size: API image size parameter
+        mask_path: Optional path to mask file for regional editing
+        image_gen_client: OpenAI client instance
+        image_quality_setting: Quality setting for gpt-image-1 (default "medium" to match original generation)
+        input_fidelity: Input fidelity setting (default "high")
+        
+    Note: 
+        Default quality is "medium" to maintain consistency with original image generation.
+        Use "high" if you want enhanced quality refinements that may differ from originals.
     """    
     
     # Use global model ID (same pattern as image_generation.py)
@@ -170,17 +297,18 @@ async def call_openai_images_edit(
     operation_type = "regional editing" if mask_path else "global editing"
     ctx.log(f"Calling OpenAI Images Edit API ({model_id})")
     ctx.log(f"Operation: {operation_type}, Size: {image_size}")
+    ctx.log(f"Quality: {image_quality_setting}, Fidelity: {input_fidelity}")
     if mask_path:
         ctx.log(f"Using mask for regional editing - {mask_path}")
     
     try:
-        # Prepare API call parameters
+        # Prepare API call parameters (matching image_generation.py pattern)
         api_params = {
             "model": model_id,
             "prompt": enhanced_prompt,
             "n": 1,
             "size": image_size,
-            "quality": 'high',
+            "quality": image_quality_setting,
         }
         
         # Call OpenAI images.edit API
@@ -192,6 +320,7 @@ async def call_openai_images_edit(
                     open(ctx.base_image_path, "rb"),
                 ],
                 mask=open(mask_path, "rb"),
+                input_fidelity=input_fidelity,
                 **api_params
             )
         else:
@@ -205,10 +334,11 @@ async def call_openai_images_edit(
                 image_list = [
                     open(ctx.base_image_path, "rb")
                 ]
-            print(f"Image List Length for API Image Edit Call: {len(image_list)}")
+            ctx.log(f"Image List Length for API Image Edit Call: {len(image_list)}")
             response = await asyncio.to_thread(
                 image_gen_client.images.edit,
                 image=image_list,
+                input_fidelity=input_fidelity,
                 **api_params
             )
         
@@ -427,60 +557,134 @@ def _get_reference_image_filename(refinement_dir: Path) -> Optional[str]:
 
 
 def _save_refinement_metadata(ctx: PipelineContext, refinement_dir: Path) -> None:
-    """Save rich metadata for the refinement in JSON format."""
+    """Save rich metadata for the refinement in JSON format.
+    Updated to handle new brandkit data structure safely."""
     
-    metadata = {
-        "refinement_info": {
-            "job_id": ctx.run_id,
-            "parent_run_id": ctx.parent_run_id,
-            "parent_image_id": ctx.parent_image_id,
-            "parent_image_type": ctx.parent_image_type,
-            "generation_index": ctx.generation_index,
-            "refinement_type": ctx.refinement_type,
+    try:
+        # Get basic refinement info with safe attribute access
+        refinement_info = {
+            "job_id": getattr(ctx, 'run_id', 'unknown'),
+            "parent_run_id": getattr(ctx, 'parent_run_id', 'unknown'),
+            "parent_image_id": getattr(ctx, 'parent_image_id', 'unknown'),
+            "parent_image_type": getattr(ctx, 'parent_image_type', 'original'),
+            "generation_index": getattr(ctx, 'generation_index', None),
+            "refinement_type": getattr(ctx, 'refinement_type', 'unknown'),
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        },
-        "inputs": {
+        }
+        
+        # Get inputs with safe access
+        inputs = {
             "instructions": getattr(ctx, 'instructions', None),
             "original_prompt": getattr(ctx, 'prompt', None),
             "refined_prompt": getattr(ctx, 'refined_prompt', None),
             "mask_coordinates": getattr(ctx, 'mask_coordinates', None),  # Legacy
             "mask_file_path": getattr(ctx, 'mask_file_path', None),  # New approach
             "creativity_level": getattr(ctx, 'creativity_level', None),
-        },
-        "processing": {
+        }
+        
+        # Get processing info with safe access
+        processing = {
             "model_used": IMAGE_GENERATION_MODEL_ID or "gpt-image-1",
             "api_image_size": getattr(ctx, '_api_image_size', None),
-            "operation_type": "global_editing",  # Could be enhanced to track regional
-        },
-        "results": {
-            "status": (getattr(ctx, 'refinement_result', None) or {}).get('status', 'in_progress'),
+            "operation_type": "regional_editing" if getattr(ctx, 'mask_file_path', None) else "global_editing",
+        }
+        
+        # Get results with safe access
+        refinement_result = getattr(ctx, 'refinement_result', None) or {}
+        results = {
+            "status": refinement_result.get('status', 'in_progress'),
             "output_generated": os.path.exists(refinement_dir / "output.png"),
             "reference_preserved": _check_reference_image_exists(refinement_dir),
-            "modifications": (getattr(ctx, 'refinement_result', None) or {}).get('modifications', {}),
-        },
-        "costs": {
-            "refinement_cost_usd": getattr(ctx, 'refinement_cost', 0.0),
+            "modifications": refinement_result.get('modifications', {}),
+        }
+        
+        # Get costs with safe access
+        refinement_cost = getattr(ctx, 'refinement_cost', 0.0)
+        if refinement_cost is None:
+            refinement_cost = 0.0
+            
+        costs = {
+            "refinement_cost_usd": refinement_cost,
             "model_pricing_used": MODEL_PRICING.get(IMAGE_GENERATION_MODEL_ID or "gpt-image-1", {}),
-        },
-        "images": {
-            "base_image_metadata": getattr(ctx, 'base_image_metadata', {}),
+        }
+        
+        # Get image info with safe access
+        base_image_metadata = getattr(ctx, 'base_image_metadata', {})
+        images = {
+            "base_image_metadata": base_image_metadata,
             "output_path": "output.png",
             "reference_path": _get_reference_image_filename(refinement_dir),
-        },
-        "context": {
-            "original_pipeline_data": getattr(ctx, 'original_pipeline_data', {}),
+        }
+        
+        # Get context with safe serialization
+        context_data = {}
+        try:
+            original_pipeline_data = getattr(ctx, 'original_pipeline_data', {})
+            if isinstance(original_pipeline_data, dict):
+                # Create a safe copy of original pipeline data
+                context_data = {
+                    "has_original_data": True,
+                    "user_inputs_keys": list(original_pipeline_data.get('user_inputs', {}).keys()),
+                    "processing_context_keys": list(original_pipeline_data.get('processing_context', {}).keys()),
+                }
+                
+                # Include some key information safely
+                user_inputs = original_pipeline_data.get('user_inputs', {})
+                if isinstance(user_inputs, dict):
+                    # Include non-sensitive user input information
+                    context_data["original_user_inputs"] = {
+                        "mode": user_inputs.get('mode'),
+                        "apply_branding": user_inputs.get('apply_branding'),
+                        "render_text": user_inputs.get('render_text'),
+                        "has_image_reference": user_inputs.get('image_reference') is not None,
+                        "has_brand_kit": user_inputs.get('brand_kit') is not None,
+                    }
+            else:
+                context_data = {"has_original_data": False, "error": "original_pipeline_data not a dict"}
+        except Exception as e:
+            context_data = {"error": f"Error processing original_pipeline_data: {str(e)}"}
+        
+        context = {
+            "original_pipeline_data": context_data,
             "pipeline_mode": getattr(ctx, 'pipeline_mode', 'refinement'),
         }
-    }
-    
-    # Save metadata
-    metadata_path = refinement_dir / "metadata.json"
-    try:
+        
+        # Assemble the complete metadata
+        metadata = {
+            "refinement_info": refinement_info,
+            "inputs": inputs,
+            "processing": processing,
+            "results": results,
+            "costs": costs,
+            "images": images,
+            "context": context
+        }
+        
+        # Save metadata with error handling
+        metadata_path = refinement_dir / "metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2, default=str)
-        ctx.log("Saved refinement metadata")
+        ctx.log("Saved refinement metadata successfully")
+        
     except Exception as e:
         ctx.log(f"Warning: Could not save refinement metadata: {e}")
+        # Try to save minimal metadata as fallback
+        try:
+            minimal_metadata = {
+                "refinement_info": {
+                    "job_id": getattr(ctx, 'run_id', 'unknown'),
+                    "parent_run_id": getattr(ctx, 'parent_run_id', 'unknown'),
+                    "refinement_type": getattr(ctx, 'refinement_type', 'unknown'),
+                    "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "error": f"Failed to save complete metadata: {str(e)}"
+                }
+            }
+            metadata_path = refinement_dir / "metadata.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(minimal_metadata, f, indent=2, default=str)
+            ctx.log("Saved minimal fallback metadata")
+        except Exception as fallback_error:
+            ctx.log(f"Failed to save even minimal metadata: {fallback_error}")
 
 
 def save_temporary_mask(ctx: PipelineContext, mask: Image.Image) -> str:

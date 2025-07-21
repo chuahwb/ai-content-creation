@@ -48,6 +48,10 @@ CREATIVE_EXPERT_MODEL_ID = "google/gemini-2.5-pro"  # "openai/o4-mini" "deepseek
 IMAGE_ASSESSMENT_MODEL_PROVIDER = "OpenRouter"  # Direct OpenAI for reliable multi-image processing
 IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision tasks
 
+# StyleAdaptation Model (for style transfer and adaptation)
+STYLE_ADAPTATION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"
+STYLE_ADAPTATION_MODEL_ID = "openai/gpt-4o"  # High-quality model for creative adaptation
+
 # Caption Generation Model (for social media caption creation)
 CAPTION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"
 
@@ -190,6 +194,13 @@ MODEL_PRICING = {
         "output_cost_per_mtok": 0.60,  # $0.60 per 1M output tokens via OpenRouter
         "currency": "USD",
         "notes": "Pricing for openai/gpt-4o-mini via OpenRouter (cost-effective for caption generation)."
+    },
+    "openai/gpt-4o": {  # Used for StyleAdaptation
+        "provider": "OpenRouter",
+        "input_cost_per_mtok": 5.00,  # $5.00 per 1M input tokens via OpenRouter
+        "output_cost_per_mtok": 15.00,  # $15.00 per 1M output tokens via OpenRouter
+        "currency": "USD",
+        "notes": "Pricing for openai/gpt-4o via OpenRouter (high-quality for creative adaptation)."
     },
     "gpt-image-1": {
         "provider": "OpenAI",

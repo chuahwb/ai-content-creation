@@ -12,6 +12,7 @@ from pathlib import Path
 import logging
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 from .context import PipelineContext
+from .preset_loader import PresetLoader
 from ..core.client_config import get_configured_clients
 from ..api.database import StageStatus
 
@@ -135,6 +136,12 @@ class PipelineExecutor:
         if hasattr(stage_module, 'base_llm_client_caption'):
             stage_module.base_llm_client_caption = self.clients.get('base_llm_client_caption')
         
+        # Inject style adaptation clients
+        if hasattr(stage_module, 'instructor_client_style_adaptation'):
+            stage_module.instructor_client_style_adaptation = self.clients.get('instructor_client_style_adaptation')
+        if hasattr(stage_module, 'base_llm_client_style_adaptation'):
+            stage_module.base_llm_client_style_adaptation = self.clients.get('base_llm_client_style_adaptation')
+        
         # Inject model configuration and parsing flags
         model_config = self.clients.get('model_config', {})
         if hasattr(stage_module, 'IMG_EVAL_MODEL_ID'):
@@ -166,6 +173,9 @@ class PipelineExecutor:
             else:
                 stage_module.CAPTION_MODEL_ID = model_config.get('CAPTION_MODEL_ID')
                 stage_module.CAPTION_MODEL_PROVIDER = model_config.get('CAPTION_MODEL_PROVIDER')
+        if hasattr(stage_module, 'STYLE_ADAPTATION_MODEL_ID'):
+            stage_module.STYLE_ADAPTATION_MODEL_ID = model_config.get('STYLE_ADAPTATION_MODEL_ID')
+            stage_module.STYLE_ADAPTATION_MODEL_PROVIDER = model_config.get('STYLE_ADAPTATION_MODEL_PROVIDER')
         
         # Inject parsing configuration
         if hasattr(stage_module, 'FORCE_MANUAL_JSON_PARSE'):
@@ -231,13 +241,98 @@ class PipelineExecutor:
         else:
             return None
     
+    def _needs_style_adaptation(self, ctx: PipelineContext) -> bool:
+        """Check if StyleAdaptation stage is needed."""
+        from churns.api.database import PresetType
+        return (
+            ctx.preset_type == PresetType.STYLE_RECIPE and
+            ctx.overrides and 
+            ctx.overrides.get('prompt')
+        )
+    
+    async def _run_style_adaptation_stage(self, ctx: PipelineContext, progress_callback: Optional[Callable] = None, stage_order: float = 0) -> None:
+        """Run the StyleAdaptation stage."""
+        stage_name = "style_adaptation"
+        stage_start_time = time.time()
+        
+        logger.info(f"--- Stage {stage_order}: {stage_name} ---")
+        
+        # Send stage starting notification
+        if progress_callback:
+            await progress_callback(
+                stage_name, int(stage_order), StageStatus.RUNNING, 
+                f"Starting stage {stage_name}...", None, None, None
+            )
+        
+        try:
+            # Dynamically import and run the style adaptation stage
+            stage_module = importlib.import_module(f"churns.stages.{stage_name}")
+            
+            # Inject clients into stage
+            self._inject_clients_into_stage(stage_module, ctx)
+            
+            # Run the stage
+            await stage_module.run(ctx)
+            
+            stage_duration = time.time() - stage_start_time
+            logger.info(f"Stage {stage_name} completed in {stage_duration:.2f}s")
+            
+            # Send stage completion notification
+            if progress_callback:
+                await progress_callback(
+                    stage_name, int(stage_order), StageStatus.COMPLETED, 
+                    f"Stage {stage_name} completed successfully", 
+                    None, None, stage_duration
+                )
+            
+        except Exception as e:
+            stage_duration = time.time() - stage_start_time
+            error_msg = f"ERROR in stage {stage_name}: {e}"
+            logger.error(error_msg)
+            
+            # Send stage error notification
+            if progress_callback:
+                await progress_callback(
+                    stage_name, int(stage_order), StageStatus.FAILED, 
+                    f"Stage {stage_name} failed", 
+                    None, error_msg, stage_duration
+                )
+            
+            # Don't raise exception - let the pipeline continue
+    
     async def run_async(
         self, 
         ctx: PipelineContext, 
-        progress_callback: Optional[Callable[[str, int, StageStatus, str, Optional[Dict], Optional[str], Optional[float]], Awaitable[None]]] = None
+        progress_callback: Optional[Callable[[str, int, StageStatus, str, Optional[Dict], Optional[str], Optional[float]], Awaitable[None]]] = None,
+        session: Optional[Any] = None
     ) -> PipelineContext:
         """Execute all stages in order with async support and progress callbacks."""
         logger.info(f"Starting async {self.mode} pipeline execution with {len(self.stages)} stages : {self.stages}")
+        
+        # Handle preset loading if preset_id is provided
+        if ctx.preset_id and session:
+            try:
+                logger.info(f"Loading preset {ctx.preset_id} with overrides: {ctx.overrides}")
+                preset_loader = PresetLoader(session)
+                await preset_loader.load_and_apply_preset(
+                    ctx, 
+                    ctx.preset_id, 
+                    user_id="dev_user_1",  # TODO: Get from auth context
+                    overrides=ctx.overrides
+                )
+                logger.info(f"Preset {ctx.preset_id} loaded and applied to context")
+            except Exception as e:
+                logger.error(f"Failed to load preset {ctx.preset_id}: {str(e)}")
+                logger.error(f"Error details: {type(e).__name__}: {str(e)}")
+                logger.warning("Continuing pipeline execution without preset")
+                # Clear preset information to prevent further issues
+                ctx.preset_id = None
+                ctx.preset_type = None
+                ctx.overrides = {}
+        elif ctx.preset_id and not session:
+            logger.warning(f"Preset {ctx.preset_id} specified but no database session provided")
+        else:
+            logger.info("No preset specified, continuing with normal pipeline execution")
         
         overall_start_time = time.time()
         
@@ -255,6 +350,22 @@ class PipelineExecutor:
                 else:
                     logger.warning(f"Warning: Could not resolve conditional stage for refinement type: {getattr(ctx, 'refinement_type', 'unknown')}")
                     continue
+            
+            # Check if stage should be skipped due to preset configuration
+            if actual_stage_name in ctx.skip_stages:
+                logger.info(f"Skipping stage {actual_stage_name} due to preset configuration")
+                if progress_callback:
+                    await progress_callback(
+                        actual_stage_name, stage_order, StageStatus.SKIPPED, 
+                        f"Stage {actual_stage_name} skipped due to preset configuration", 
+                        None, None, 0.0
+                    )
+                continue
+            
+            # Check if we need to run StyleAdaptation before prompt_assembly
+            if actual_stage_name == "prompt_assembly" and self._needs_style_adaptation(ctx):
+                logger.info("Running StyleAdaptation stage before prompt_assembly")
+                await self._run_style_adaptation_stage(ctx, progress_callback, stage_order - 0.5)
             
             # Send stage starting notification
             if progress_callback:

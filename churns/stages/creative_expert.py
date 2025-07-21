@@ -190,7 +190,7 @@ You will be provided with specific `Style Guidance` for this concept. Your `visu
         text_branding_field_instruction_ce += "- `promotional_text_visuals`: This field MUST be omitted (set to null) as text rendering is disabled.\n"
     
     if apply_branding_flag:
-        text_branding_field_instruction_ce += f"- `branding_visuals`: {task_guidance['branding_style']}. If no guidelines are provided, derive branding style from the marketing strategy and task.\n"
+        text_branding_field_instruction_ce += f"- `branding_visuals`: {task_guidance['branding_style']}. If no guidelines are provided, derive branding style from the marketing strategy and task. The description MUST detail placement, style, and integration of brand elements (logo, colors, etc.) based on the provided Brand Kit context.\n"
     else:
         text_branding_field_instruction_ce += "- `branding_visuals`: This field MUST be omitted (set to null) as branding application is disabled.\n"
     
@@ -295,7 +295,7 @@ def _get_creative_expert_user_prompt(
     task_type: str,
     user_prompt_original: Optional[str],
     task_description: Optional[str],
-    branding_elements: Optional[str],
+    brand_kit: Optional[Dict[str, Any]],
     render_text_flag: bool,
     apply_branding_flag: bool,
     has_image_reference: bool,
@@ -343,13 +343,29 @@ def _get_creative_expert_user_prompt(
     else:
         user_prompt_parts.append("- Specific Task Content/Description: Not provided, and text rendering is disabled.")
 
-    branding_apply_status = "(Branding application enabled by user)" if apply_branding_flag else "(Branding application DISABLED by user)"
-    if branding_elements:
-        user_prompt_parts.append(f"- Branding Guidelines: '{branding_elements}' {branding_apply_status} (Interpret/refine guidelines. If application enabled, describe visualization in `branding_visuals` field of JSON output, following task-specific branding guidance from system prompt).")
+    if apply_branding_flag and brand_kit:
+        user_prompt_parts.append("\n**Brand Kit Integration (CRITICAL):**")
+        user_prompt_parts.append("The following brand kit MUST be integrated into your visual concept. You must describe this integration in the `branding_visuals` field.")
+        if brand_kit.get('colors'):
+            user_prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`.")
+        
+        user_prompt_parts.append(f"- In the `color_palette` field of your response, you MUST define a specific color scheme that prominently features or complements this full set of brand colors, guided by the overall style direction.")
+
+        if brand_kit.get('brand_voice_description'):
+            user_prompt_parts.append(f"- **Brand Voice:** `'{brand_kit.get('brand_voice_description')}'`. The `lighting_and_mood` and overall `visual_style` must align with this voice.")
+        if brand_kit.get('logo_analysis') and brand_kit['logo_analysis'].get('logo_style'):
+            user_prompt_parts.append(f"- **Logo Details:** The user has provided a logo. Your task is to describe its placement and integration. The logo's style is: `'{brand_kit['logo_analysis']['logo_style']}'`.")
+        
+        # Add a more specific instruction for logo placement
+        user_prompt_parts.append("\n**Your `branding_visuals` description should be specific and prioritize a watermark-style placement, such as:**")
+        user_prompt_parts.append("- 'Subtly place the logo in the bottom-right corner, scaled to 5% of the image width. It should be rendered as a semi-transparent watermark to avoid distracting from the main subject.'")
+        user_prompt_parts.append("- 'Position the brand logo as a discreet watermark in the top-left corner, using a color that complements the background.'")
+        user_prompt_parts.append("**Avoid instructions that replace or alter the main subject with the logo unless explicitly requested by the user.**")
+        
     elif apply_branding_flag:
-        user_prompt_parts.append(f"- Branding Guidelines: Not Provided, but branding application is enabled. Derive branding style from strategy/task and describe visualization in `branding_visuals` field of JSON output, following task-specific branding guidance from system prompt.")
+        user_prompt_parts.append(f"\n- Branding Guidelines: Not Provided, but branding application is enabled. Derive branding style from strategy/task and describe visualization in `branding_visuals` field of JSON output, following task-specific branding guidance from system prompt.")
     else:
-        user_prompt_parts.append("- Branding Guidelines: Not Provided, and branding application is disabled.")
+        user_prompt_parts.append("\n- Branding application DISABLED by user.")
 
     user_prompt_parts.append("\nImage Reference Context (as detailed in system prompt):")
     if has_image_reference:
@@ -451,7 +467,7 @@ async def _generate_visual_concept_for_strategy(
 
     user_prompt_original = ctx.prompt
     image_reference = ctx.image_reference
-    branding_elements = ctx.branding_elements
+    brand_kit = ctx.brand_kit
     task_description = ctx.task_description
     render_text_flag = ctx.render_text
     apply_branding_flag = ctx.apply_branding
@@ -483,7 +499,7 @@ async def _generate_visual_concept_for_strategy(
     
     user_prompt_ce = _get_creative_expert_user_prompt(
         platform_name, aspect_ratio_for_prompt_text, strategy, task_type, user_prompt_original,
-        task_description, branding_elements, render_text_flag, apply_branding_flag,
+        task_description, brand_kit, render_text_flag, apply_branding_flag,
         has_image_reference, saved_image_filename, image_subject_from_analysis,
         image_instruction, use_instructor_for_ce_call, is_default_edit_case, style_guidance_item,
         language=ctx.language

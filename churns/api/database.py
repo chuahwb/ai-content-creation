@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import Column, DateTime, Text, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -7,6 +7,8 @@ from sqlmodel import SQLModel, Field
 import uuid
 from datetime import datetime
 from enum import Enum
+from churns.models.presets import PipelineInputSnapshot, StyleRecipeData
+from churns.models import LogoAnalysisResult
 
 
 class RunStatus(str, Enum):
@@ -33,6 +35,12 @@ class RefinementType(str, Enum):
     PROMPT = "prompt"
 
 
+class PresetType(str, Enum):
+    """Brand preset type enumeration"""
+    INPUT_TEMPLATE = "INPUT_TEMPLATE"
+    STYLE_RECIPE = "STYLE_RECIPE"
+
+
 class PipelineRun(SQLModel, table=True):
     """Database model for pipeline runs"""
     __tablename__ = "pipeline_runs"
@@ -53,9 +61,11 @@ class PipelineRun(SQLModel, table=True):
     has_image_reference: bool = Field(default=False)
     image_filename: Optional[str] = Field(default=None)
     image_instruction: Optional[str] = Field(default=None)
-    
+
+    # Brand Kit data (UPDATED: unified brand kit structure)
+    brand_kit: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of BrandKitInput including colors, voice, and logo analysis")
+
     # Optional inputs
-    branding_elements: Optional[str] = Field(default=None)
     task_description: Optional[str] = Field(default=None)
     marketing_audience: Optional[str] = Field(default=None)
     marketing_objective: Optional[str] = Field(default=None)
@@ -140,6 +150,36 @@ class PipelineStage(SQLModel, table=True):
     output_data: Optional[str] = Field(default=None, sa_column=Column(Text))  # JSON string
     error_message: Optional[str] = Field(default=None)
     error_traceback: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+
+class BrandPreset(SQLModel, table=True):
+    """Database model for brand presets and style memory"""
+    __tablename__ = "brand_presets"
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(description="User-friendly name for the preset")
+    user_id: str = Field(description="User ID (non-nullable for security)")
+    
+    # Versioning and metadata
+    version: int = Field(default=1, description="Version number for optimistic locking")
+    model_id: str = Field(description="Model identifier used (e.g., 'dall-e-3')")
+    pipeline_version: str = Field(description="Version of the pipeline used")
+    
+    # Brand Kit fields (UPDATED: unified brand kit structure)
+    brand_kit: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of BrandKitInput, which includes colors, voice, and logo analysis.")
+    
+    # Preset data fields
+    preset_type: PresetType = Field(description="Type of preset: INPUT_TEMPLATE or STYLE_RECIPE")
+    input_snapshot: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of PipelineInputSnapshot")
+    style_recipe: Optional[str] = Field(default=None, sa_column=Column(Text), description="JSON string of StyleRecipeData")
+    
+    # Usage tracking
+    usage_count: int = Field(default=0, description="Number of times preset has been used")
+    last_used_at: Optional[datetime] = Field(default=None, description="When preset was last used")
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), server_default=func.now()))
+    updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), onupdate=func.now()))
 
 
 # Database configuration - Updated to use async

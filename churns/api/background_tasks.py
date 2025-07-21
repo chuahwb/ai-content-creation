@@ -30,8 +30,10 @@ from churns.core.constants import (
     CREATIVE_EXPERT_MODEL_ID,
     IMAGE_GENERATION_MODEL_ID,
     CAPTION_MODEL_ID,
-    CAPTION_MODEL_PROVIDER
+    CAPTION_MODEL_PROVIDER,
+    STYLE_ADAPTATION_MODEL_ID
 )
+from churns.core.model_selector import get_caption_model_for_processing_mode
 from churns.core.token_cost_manager import get_token_cost_manager, calculate_stage_cost_from_usage
 
 logger = logging.getLogger(__name__)
@@ -111,6 +113,9 @@ class PipelineTaskProcessor:
 
     async def start_pipeline_run(self, run_id: str, request: PipelineRunRequest, image_data: Optional[bytes] = None, executor: Optional[PipelineExecutor] = None):
         """Start a pipeline run in the background"""
+        logger.info(f"start_pipeline_run called with run_id: {run_id}")
+        logger.info(f"Request details: mode={request.mode}, platform={request.platform_name}, preset_id={request.preset_id}")
+        
         # First check if there's a stalled run
         async with async_session_factory() as session:
             run = await session.get(PipelineRun, run_id)
@@ -156,10 +161,12 @@ class PipelineTaskProcessor:
         
         task.add_done_callback(cleanup_tasks)
         
-        logger.info(f"Started background pipeline task for run {run_id}")
+        logger.info(f"Started background pipeline task for run {run_id} - task in active_tasks: {run_id in self.active_tasks}")
     
     async def _execute_pipeline(self, run_id: str, request: PipelineRunRequest, image_data: Optional[bytes] = None, executor: Optional[PipelineExecutor] = None):
         """Execute the complete pipeline with progress updates"""
+        logger.info(f"_execute_pipeline called for run {run_id}")
+        
         try:
             # Update run status to running
             async with async_session_factory() as session:
@@ -172,6 +179,8 @@ class PipelineTaskProcessor:
                 run.started_at = datetime.utcnow()
                 session.add(run)
                 await session.commit()
+                
+                logger.info(f"Updated run {run_id} status to RUNNING")
             
             # Create output directory
             output_dir = Path(f"./data/runs/{run_id}")
@@ -187,13 +196,17 @@ class PipelineTaskProcessor:
                 logger.info(f"Saved input image to {image_path}")
             
             # Convert request to pipeline context format (matching original notebook)
+            logger.info(f"Converting request to pipeline data for run {run_id}")
             pipeline_data = self._convert_request_to_pipeline_data(request, str(output_dir), image_path, image_data)
             
             # Create pipeline context
+            logger.info(f"Creating pipeline context for run {run_id}")
             context = PipelineContext.from_dict(pipeline_data)
             
             # Set the output directory for stages to use
             context.output_directory = str(output_dir)
+            
+            logger.info(f"Pipeline context created for run {run_id}: preset_id={context.preset_id}, preset_type={context.preset_type}")
             
             # Initialize cost tracking
             total_cost = 0.0
@@ -220,37 +233,79 @@ class PipelineTaskProcessor:
                             # Handle image generation separately as it has different structure
                             image_results = processing_context.get("generated_image_results", [])
                             actual_images = len([r for r in image_results if r.get("status") == "success"])
-                            total_prompt_tokens = sum(r.get("prompt_tokens", 0) for r in image_results if r.get("prompt_tokens"))
                             
-                            if actual_images > 0 and total_prompt_tokens > 0:
+                            if actual_images > 0:
                                 # Use the token cost manager for image generation
                                 token_manager = get_token_cost_manager()
                                 from churns.core.token_cost_manager import TokenUsage
                                 
+                                # Extract comprehensive token breakdown from stored metadata
+                                total_text_tokens = 0
+                                total_input_image_tokens = 0
+                                total_tokens_including_images = 0
+                                num_input_images = 0
+                                
+                                for result in image_results:
+                                    if result.get("status") == "success":
+                                        # Use enhanced token breakdown if available (new format)
+                                        token_breakdown = result.get("token_breakdown", {})
+                                        if token_breakdown:
+                                            total_text_tokens += token_breakdown.get("text_tokens", 0)
+                                            total_input_image_tokens += token_breakdown.get("input_image_tokens", 0)
+                                            total_tokens_including_images += token_breakdown.get("total_tokens", 0)
+                                            # Use max to handle multiple images with same input images
+                                            num_input_images = max(num_input_images, token_breakdown.get("num_input_images", 0))
+                                        else:
+                                            # Fallback to legacy prompt_tokens (old format)
+                                            legacy_tokens = result.get("prompt_tokens", 0)
+                                            total_text_tokens += legacy_tokens
+                                            total_tokens_including_images += legacy_tokens
+                                
+                                # Log comprehensive token usage
+                                if total_input_image_tokens > 0:
+                                    logger.info(f"Multi-modal image generation tokens: {total_text_tokens} text + {total_input_image_tokens} input images = {total_tokens_including_images} total")
+                                else:
+                                    logger.info(f"Text-to-image generation tokens: {total_tokens_including_images} total")
+                                
                                 usage = TokenUsage(
-                                    prompt_tokens=total_prompt_tokens,
+                                    prompt_tokens=total_tokens_including_images,
                                     completion_tokens=0,  # Image generation doesn't have completion tokens
-                                    total_tokens=total_prompt_tokens,
+                                    total_tokens=total_tokens_including_images,
+                                    image_tokens=total_input_image_tokens,
+                                    text_tokens=total_text_tokens,
+                                    image_count=num_input_images,
                                     model=IMAGE_GENERATION_MODEL_ID,
                                     provider="openai"
                                 )
                                 
                                 image_details = {
                                     "count": actual_images,
-                                    "resolution": "1024x1024",  # Assume standard resolution
-                                    "quality": "medium"  # Assume medium quality
+                                    "resolution": "1024x1024",  # Assume standard resolution for output
+                                    "quality": "medium",  # Assume medium quality
+                                    "input_images": num_input_images
                                 }
                                 
                                 cost_breakdown = token_manager.calculate_cost(usage, image_details)
                                 stage_cost = cost_breakdown.total_cost
-                                logger.info(f"Image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID} - {cost_breakdown.notes}")
+                                
+                                # Enhanced logging for multi-modal scenarios
+                                if num_input_images > 1:
+                                    logger.info(f"Multi-modal image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID}")
+                                    logger.info(f"  - Text tokens: {total_text_tokens}, Input image tokens: {total_input_image_tokens} ({num_input_images} images)")
+                                    logger.info(f"  - {cost_breakdown.notes}")
+                                elif num_input_images == 1:
+                                    logger.info(f"Single-input image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID}")
+                                    logger.info(f"  - Text tokens: {total_text_tokens}, Input image tokens: {total_input_image_tokens}")
+                                    logger.info(f"  - {cost_breakdown.notes}")
+                                else:
+                                    logger.info(f"Text-to-image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID} - {cost_breakdown.notes}")
                             else:
                                 stage_cost = 0.0  # No successful generation
                                 
                         elif stage_name == "image_eval":
-                            # Use centralized cost calculation
+                            # Use centralized cost calculation, including logo_eval
                             cost_result = calculate_stage_cost_from_usage(
-                                stage_name, llm_usage, ["image_eval"], IMG_EVAL_MODEL_ID
+                                stage_name, llm_usage, ["image_eval", "logo_eval"], IMG_EVAL_MODEL_ID
                             )
                             stage_cost = cost_result.get("total_cost", 0.0)
                             if stage_cost > 0:
@@ -273,6 +328,15 @@ class PipelineTaskProcessor:
                             stage_cost = cost_result.get("total_cost", 0.0)
                             if stage_cost > 0:
                                 logger.info(f"Style guide cost: ${stage_cost:.6f} using {STYLE_GUIDER_MODEL_ID}")
+                                
+                        elif stage_name == "style_adaptation":
+                            # Use centralized cost calculation
+                            cost_result = calculate_stage_cost_from_usage(
+                                stage_name, llm_usage, ["style_adaptation"], STYLE_ADAPTATION_MODEL_ID
+                            )
+                            stage_cost = cost_result.get("total_cost", 0.0)
+                            if stage_cost > 0:
+                                logger.info(f"Style adaptation cost: ${stage_cost:.6f} using {STYLE_ADAPTATION_MODEL_ID}")
                                 
                         elif stage_name == "creative_expert":
                             # Use centralized cost calculation for multiple strategy keys
@@ -358,7 +422,9 @@ class PipelineTaskProcessor:
                 from churns.pipeline.executor import PipelineExecutor
                 executor = PipelineExecutor()
             
-            await executor.run_async(context, progress_callback)
+            # Pass database session to executor for preset loading
+            async with async_session_factory() as session:
+                await executor.run_async(context, progress_callback, session)
             
             # Calculate final cost summary using actual LLM usage data
             await self._calculate_final_cost_summary(context)
@@ -417,6 +483,12 @@ class PipelineTaskProcessor:
                         logger.info(f"Set run total cost to: ${run.total_cost_usd}")
                     else:
                         logger.warning(f"No valid cost found for run {run_id}")
+                    
+                    # Update brand kit data from final context (important for preset-loaded data)
+                    if context.brand_kit:
+                        import json
+                        run.brand_kit = json.dumps(context.brand_kit)
+                        logger.info(f"Updated database with final brand kit data: {context.brand_kit}")
                     
                     session.add(run)
                     await session.commit()
@@ -918,9 +990,13 @@ class PipelineTaskProcessor:
                 "image_reference": None,
                 "render_text": request.render_text,
                 "apply_branding": request.apply_branding,
-                "branding_elements": request.branding_elements,
                 "task_description": request.task_description,
-                "marketing_goals": None
+                "marketing_goals": None,
+                "preset_id": request.preset_id,
+                "preset_type": request.preset_type,
+                "overrides": request.overrides,
+                # NEW: Unified brand_kit object
+                "brand_kit": request.brand_kit.model_dump() if request.brand_kit else None,
             },
             "processing_context": {
                 "initial_json_valid": True,
@@ -955,6 +1031,31 @@ class PipelineTaskProcessor:
                 "voice": request.marketing_goals.voice,
                 "niche": request.marketing_goals.niche
             }
+
+        # Add brand kit and handle logo upload
+        if pipeline_data["user_inputs"]["brand_kit"] and pipeline_data["user_inputs"]["brand_kit"].get("logo_file_base64"):
+            brand_kit_data = pipeline_data["user_inputs"]["brand_kit"]
+            try:
+                # Decode the base64 string
+                header, encoded = brand_kit_data["logo_file_base64"].split(",", 1)
+                logo_bytes = base64.b64decode(encoded)
+                
+                # Save the logo file
+                logo_filename = "logo.png"
+                logo_path = Path(output_dir) / logo_filename
+                with open(logo_path, "wb") as f:
+                    f.write(logo_bytes)
+                
+                # Add the saved path to the context data
+                brand_kit_data["saved_logo_path_in_run_dir"] = str(logo_path)
+                logger.info(f"Saved brand logo to {logo_path}")
+
+            except Exception as e:
+                logger.error(f"Failed to decode or save brand logo: {e}")
+                brand_kit_data["saved_logo_path_in_run_dir"] = None
+            
+            # Remove base64 from context to avoid oversized metadata
+            brand_kit_data.pop("logo_file_base64", None)
         
         return pipeline_data
     
@@ -1291,10 +1392,11 @@ class PipelineTaskProcessor:
             
             # Define stage mappings (same as progress callback logic)
             stage_mappings = [
-                ("image_eval", ["image_eval"], IMG_EVAL_MODEL_ID),
+                ("image_eval", ["image_eval", "logo_eval"], IMG_EVAL_MODEL_ID),
                 ("strategy", ["strategy_niche_id", "strategy_goal_gen"], STRATEGY_MODEL_ID),
                 ("style_guide", ["style_guider"], STYLE_GUIDER_MODEL_ID),
                 ("creative_expert", [key for key in llm_usage.keys() if key.startswith("creative_expert_strategy_")], CREATIVE_EXPERT_MODEL_ID),
+                ("style_adaptation", ["style_adaptation"], STYLE_ADAPTATION_MODEL_ID),
                 ("image_assessment", ["image_assessment"], IMAGE_ASSESSMENT_MODEL_ID),
                 ("caption", ["caption_analyst", "caption_writer"], CAPTION_MODEL_ID),
             ]
@@ -1449,7 +1551,18 @@ class PipelineTaskProcessor:
             settings = caption_data.get("settings", {})
             version = caption_data.get("version", 0)
             writer_only = caption_data.get("writer_only", False)
-            model_id = caption_data.get("model_id", CAPTION_MODEL_ID)
+            # Determine model_id based on processing_mode or explicit model_id
+            settings = caption_data.get("settings", {})
+            processing_mode = settings.get("processing_mode")
+            
+            if processing_mode:
+                # Use processing_mode to select appropriate model
+                model_id = get_caption_model_for_processing_mode(processing_mode)
+                logger.info(f"Selected model {model_id} for processing_mode: {processing_mode}")
+            else:
+                # Fallback to explicitly provided model_id or default
+                model_id = caption_data.get("model_id", CAPTION_MODEL_ID)
+                logger.info(f"Using model {model_id} (no processing_mode specified)")
             
             logger.info(f"Starting caption generation for image {image_id} in run {run_id} using model {model_id}")
             
