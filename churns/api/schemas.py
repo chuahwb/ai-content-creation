@@ -3,7 +3,15 @@ from pydantic import BaseModel, Field, HttpUrl
 from datetime import datetime
 from churns.api.database import RunStatus, StageStatus, RefinementType, PresetType
 from churns.models import BrandKitInput
-from churns.models.presets import StyleRecipeData, PipelineInputSnapshot
+from churns.models.presets import StyleRecipeData, PipelineInputSnapshot, StyleRecipeEnvelope
+
+
+class ParentPresetInfo(BaseModel):
+    """Information about the parent preset for style adaptation runs"""
+    id: str = Field(description="ID of the parent preset")
+    name: str = Field(description="Name of the parent preset")
+    image_url: Optional[str] = Field(None, description="Filename of the parent preset's reference image")
+    source_run_id: Optional[str] = Field(None, description="ID of the run that created this preset")
 
 
 class ImageReferenceInput(BaseModel):
@@ -51,7 +59,8 @@ class PipelineRunRequest(BaseModel):
     # Brand Preset support
     preset_id: Optional[str] = Field(default=None, description="ID of brand preset to apply")
     preset_type: Optional[str] = Field(default=None, description="Type of preset being applied")
-    overrides: Optional[Dict[str, Any]] = Field(default=None, description="Override values for preset fields")
+    template_overrides: Optional[Dict[str, Any]] = Field(default=None, description="Field overrides for INPUT_TEMPLATE presets")
+    adaptation_prompt: Optional[str] = Field(default=None, description="New prompt for STYLE_RECIPE adaptation")
     
     # Brand Kit data (UPDATED: replaced legacy fields with unified brand_kit)
     brand_kit: Optional[BrandKitInput] = Field(default=None, description="Brand kit with colors, voice, and logo")
@@ -133,6 +142,14 @@ class PipelineRunResponse(BaseModel):
     error_message: Optional[str] = None
     output_directory: Optional[str] = None
     metadata_file_path: Optional[str] = None
+    
+    # NEW FIELDS for Style Adaptation
+    preset_id: Optional[str] = Field(None, description="ID of the applied preset")
+    preset_type: Optional[str] = Field(None, description="Type of applied preset") 
+    base_image_url: Optional[str] = Field(None, description="URL to the subject image for style adaptations")
+    template_overrides: Optional[Dict[str, Any]] = Field(None, description="Template overrides applied")
+    adaptation_prompt: Optional[str] = Field(None, description="Adaptation prompt used")
+    parent_preset: Optional[ParentPresetInfo] = Field(None, description="Parent preset info for STYLE_RECIPE runs")
 
 
 class PipelineRunDetail(PipelineRunResponse):
@@ -206,6 +223,10 @@ class RunListItem(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     total_cost_usd: Optional[float] = None
+    
+    # NEW: Style Adaptation fields
+    preset_type: Optional[str] = Field(None, description="Type of applied preset")
+    parent_preset: Optional[ParentPresetInfo] = Field(None, description="Parent preset info for STYLE_RECIPE runs")
 
 
 class RunListResponse(BaseModel):
@@ -340,7 +361,7 @@ class BrandPresetResponse(BaseModel):
     
     # Preset data
     input_snapshot: Optional[PipelineInputSnapshot] = Field(None, description="Input snapshot")
-    style_recipe: Optional[StyleRecipeData] = Field(None, description="Style recipe")
+    style_recipe: Optional[StyleRecipeEnvelope] = Field(None, description="Style recipe envelope with context")
 
 
 class BrandPresetListResponse(BaseModel):

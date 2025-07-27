@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Column, DateTime, Text, JSON
+from sqlalchemy import Column, DateTime, Text, JSON, text
 from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -9,6 +9,10 @@ from datetime import datetime
 from enum import Enum
 from churns.models.presets import PipelineInputSnapshot, StyleRecipeData
 from churns.models import LogoAnalysisResult
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class RunStatus(str, Enum):
@@ -64,6 +68,13 @@ class PipelineRun(SQLModel, table=True):
 
     # Brand Kit data (UPDATED: unified brand kit structure)
     brand_kit: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of BrandKitInput including colors, voice, and logo analysis")
+
+    # NEW: Preset and Style Adaptation fields
+    preset_id: Optional[str] = Field(default=None, description="ID of applied brand preset")
+    preset_type: Optional[str] = Field(default=None, description="Type of applied preset (INPUT_TEMPLATE or STYLE_RECIPE)")
+    base_image_url: Optional[str] = Field(default=None, description="URL to the subject image for style adaptations")
+    template_overrides: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of template field overrides for INPUT_TEMPLATE presets")
+    adaptation_prompt: Optional[str] = Field(default=None, description="New prompt for STYLE_RECIPE adaptation")
 
     # Optional inputs
     task_description: Optional[str] = Field(default=None)
@@ -165,6 +176,10 @@ class BrandPreset(SQLModel, table=True):
     model_id: str = Field(description="Model identifier used (e.g., 'dall-e-3')")
     pipeline_version: str = Field(description="Version of the pipeline used")
     
+    # NEW: Source tracking for Style Recipes
+    source_run_id: Optional[str] = Field(default=None, description="Run ID that this preset was created from")
+    source_image_path: Optional[str] = Field(default=None, description="Path to the source image within the run directory")
+    
     # Brand Kit fields (UPDATED: unified brand kit structure)
     brand_kit: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of BrandKitInput, which includes colors, voice, and logo analysis.")
     
@@ -194,10 +209,77 @@ async_session_factory = sessionmaker(
 )
 
 
+async def migrate_brand_presets_add_source_fields():
+    """Migration to add source_run_id and source_image_path fields to brand_presets table"""
+    try:
+        async with engine.begin() as conn:
+            # Check if columns already exist
+            result = await conn.execute(text("PRAGMA table_info(brand_presets)"))
+            columns = [row[1] for row in result.fetchall()]
+            
+            if 'source_run_id' not in columns:
+                await conn.execute(text("ALTER TABLE brand_presets ADD COLUMN source_run_id TEXT"))
+                logger.info("Added source_run_id column to brand_presets table")
+            
+            if 'source_image_path' not in columns:
+                await conn.execute(text("ALTER TABLE brand_presets ADD COLUMN source_image_path TEXT"))
+                logger.info("Added source_image_path column to brand_presets table")
+                
+    except Exception as e:
+        logger.error(f"Failed to migrate brand_presets table: {e}")
+        # Don't raise the error to avoid breaking the app startup
+
+
+async def migrate_pipeline_runs_preset_fields():
+    """Migration to rename overrides to template_overrides and add adaptation_prompt field"""
+    try:
+        async with engine.begin() as conn:
+            # Check if columns exist
+            result = await conn.execute(text("PRAGMA table_info(pipeline_runs)"))
+            columns = [row[1] for row in result.fetchall()]
+            
+            # Add new columns if they don't exist
+            if 'template_overrides' not in columns:
+                await conn.execute(text("ALTER TABLE pipeline_runs ADD COLUMN template_overrides TEXT"))
+                logger.info("Added template_overrides column to pipeline_runs table")
+                
+                # Migrate data from old overrides column if it exists
+                if 'overrides' in columns:
+                    await conn.execute(text("UPDATE pipeline_runs SET template_overrides = overrides WHERE overrides IS NOT NULL"))
+                    logger.info("Migrated data from overrides to template_overrides column")
+            
+            if 'adaptation_prompt' not in columns:
+                await conn.execute(text("ALTER TABLE pipeline_runs ADD COLUMN adaptation_prompt TEXT"))
+                logger.info("Added adaptation_prompt column to pipeline_runs table")
+                
+            # Drop old overrides column if it exists and new column was created successfully
+            if 'overrides' in columns and 'template_overrides' in columns:
+                # Verify data was migrated before dropping
+                result = await conn.execute(text("SELECT COUNT(*) FROM pipeline_runs WHERE overrides IS NOT NULL AND template_overrides IS NULL"))
+                unmigrated_count = result.scalar()
+                
+                if unmigrated_count == 0:
+                    # Safe to drop old column (SQLite doesn't support DROP COLUMN directly, so we'll leave it)
+                    # await conn.execute(text("ALTER TABLE pipeline_runs DROP COLUMN overrides"))
+                    logger.info("Old overrides column left in place (SQLite limitation). Data successfully migrated to template_overrides.")
+                else:
+                    logger.warning(f"Found {unmigrated_count} rows with unmigrated data. Keeping both columns.")
+                
+    except Exception as e:
+        logger.error(f"Failed to migrate pipeline_runs table: {e}")
+        # Don't raise the error to avoid breaking the app startup
+
+
 async def create_db_and_tables():
-    """Create database tables asynchronously"""
+    """Create database and tables, including migrations"""
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    
+    # Run migrations for existing installations
+    await migrate_brand_presets_add_source_fields()
+    await migrate_pipeline_runs_preset_fields()
+    
+    logger.info("Database tables created and migrations applied")
 
 
 async def get_session():

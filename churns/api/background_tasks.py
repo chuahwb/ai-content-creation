@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import logging
 from pathlib import Path
+from copy import deepcopy
 
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +64,30 @@ def get_model_pricing(model_id: str, fallback_input_rate: float = 0.001, fallbac
         "input_rate": pricing["input_cost_per_mtok"],
         "output_rate": pricing["output_cost_per_mtok"]
     }
+
+
+def _sanitize_brand_kit_for_logging(brand_kit: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Sanitizes brand kit data for logging by removing or truncating sensitive data like base64 encoded logos.
+    """
+    if not brand_kit:
+        return brand_kit
+    
+    # Create a deep copy to avoid modifying the original data
+    sanitized = deepcopy(brand_kit)
+    
+    # Remove or truncate base64 logo data
+    if 'logo_file_base64' in sanitized:
+        logo_data = sanitized['logo_file_base64']
+        if logo_data and len(logo_data) > 50:
+            # Keep only the data URI header for logging
+            if ',' in logo_data:
+                header, _ = logo_data.split(',', 1)
+                sanitized['logo_file_base64'] = f"{header},[BASE64_DATA_TRUNCATED]"
+            else:
+                sanitized['logo_file_base64'] = "[BASE64_DATA_TRUNCATED]"
+    
+    return sanitized
 
 
 class PipelineTaskProcessor:
@@ -488,7 +513,7 @@ class PipelineTaskProcessor:
                     if context.brand_kit:
                         import json
                         run.brand_kit = json.dumps(context.brand_kit)
-                        logger.info(f"Updated database with final brand kit data: {context.brand_kit}")
+                        logger.info(f"Updated database with final brand kit data: {len(str(context.brand_kit))} characters")
                     
                     session.add(run)
                     await session.commit()
@@ -994,7 +1019,8 @@ class PipelineTaskProcessor:
                 "marketing_goals": None,
                 "preset_id": request.preset_id,
                 "preset_type": request.preset_type,
-                "overrides": request.overrides,
+                "template_overrides": request.template_overrides,
+                "adaptation_prompt": request.adaptation_prompt,
                 # NEW: Unified brand_kit object
                 "brand_kit": request.brand_kit.model_dump() if request.brand_kit else None,
             },
@@ -1099,6 +1125,34 @@ class PipelineTaskProcessor:
                 isinstance(sanitized_data["user_inputs"].get("image_reference"), dict) and
                 sanitized_data["user_inputs"]["image_reference"].get("image_content_base64")):
                 sanitized_data["user_inputs"]["image_reference"]["image_content_base64"] = "[[Removed for save]]"
+            
+            # Add style adaptation context if this is a style adaptation run
+            if (context and hasattr(context, 'preset_type') and 
+                context.preset_type and str(context.preset_type) == "PresetType.STYLE_RECIPE"):
+                
+                # Ensure processing_context exists
+                if "processing_context" not in sanitized_data:
+                    sanitized_data["processing_context"] = {}
+                
+                # Add style adaptation context
+                style_adaptation_context = {
+                    "parent_preset": {
+                        "id": getattr(context, 'preset_id', None),
+                        "adaptation_trigger": getattr(context, 'adaptation_context', {}).get('adaptation_trigger', 'unknown'),
+                        "original_subject": getattr(context, 'original_subject', 'unknown_from_recipe'),
+                        "new_subject": getattr(context, 'image_analysis_result', {}).get('main_subject') if hasattr(context, 'image_analysis_result') else None,
+                        "adaptation_reasoning": getattr(context, 'adaptation_context', {}).get('adaptation_reasoning', 'Style adapted to new context'),
+                        "stages_skipped": getattr(context, 'skip_stages', []),
+                        "stages_executed": self._get_executed_stages_list(context)
+                    }
+                }
+                
+                sanitized_data["processing_context"]["style_adaptation_context"] = style_adaptation_context
+                
+                # Update pipeline mode to indicate style adaptation
+                if "pipeline_settings" in sanitized_data:
+                    sanitized_data["pipeline_settings"]["pipeline_mode"] = "style_adaptation"
+                    sanitized_data["pipeline_settings"]["adaptation_type"] = "subject_substitution" if getattr(context, 'image_reference', None) else "prompt_override"
             
             with open(metadata_path, 'w') as f:
                 json.dump(sanitized_data, f, indent=2)
@@ -1343,6 +1397,30 @@ class PipelineTaskProcessor:
         #     base_cost *= duration_multiplier
         #     
         # return base_cost
+
+    def _get_executed_stages_list(self, context: PipelineContext) -> list:
+        """Get list of stages that were actually executed (not skipped)."""
+        try:
+            # Get all possible stages from the executor
+            all_stages = ["image_eval", "strategy", "style_guide", "creative_expert", "style_adaptation", 
+                         "prompt_assembly", "image_generation", "image_assessment", "caption"]
+            
+            # Get skipped stages
+            skip_stages = getattr(context, 'skip_stages', [])
+            
+            # Return stages that weren't skipped
+            executed_stages = [stage for stage in all_stages if stage not in skip_stages]
+            
+            # Add style_adaptation if it was triggered
+            if (hasattr(context, 'preset_type') and 
+                str(context.preset_type) == "PresetType.STYLE_RECIPE" and
+                "style_adaptation" not in executed_stages):
+                executed_stages.insert(-3, "style_adaptation")  # Insert before prompt_assembly
+                
+            return executed_stages
+        except Exception as e:
+            logger.warning(f"Could not determine executed stages: {e}")
+            return ["unknown"]
 
     async def _calculate_final_cost_summary(self, context: PipelineContext):
         """Calculate final cost summary using actual LLM usage data and preserve real stage durations"""

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
 import json
 from pathlib import Path
@@ -8,11 +8,13 @@ import time
 import asyncio
 from datetime import datetime, timezone
 import traceback
+import base64
+from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlmodel import select
-from sqlalchemy import desc
+from sqlalchemy import desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from churns.api.database import (
@@ -28,7 +30,7 @@ from churns.api.schemas import (
     CaptionRequest, CaptionResponse, CaptionRegenerateRequest, CaptionSettings,
     CaptionModelsResponse, CaptionModelOption,
     BrandPresetCreateRequest, BrandPresetUpdateRequest, BrandPresetResponse,
-    BrandPresetListResponse, SavePresetFromResultRequest
+    BrandPresetListResponse, SavePresetFromResultRequest, ParentPresetInfo
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
@@ -37,6 +39,8 @@ from churns.core.constants import (
     SOCIAL_MEDIA_PLATFORMS, TASK_TYPES, PLATFORM_DISPLAY_NAMES,
     CAPTION_MODEL_OPTIONS, CAPTION_MODEL_ID
 )
+from churns.models.presets import StyleRecipeEnvelope, StyleRecipeData
+from churns.models import VisualConceptDetails, MarketingGoalSetFinal, StyleGuidance
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -94,7 +98,8 @@ async def create_pipeline_run(
     # Brand Preset support
     preset_id: Optional[str] = Form(None, description="Brand preset ID to apply"),
     preset_type: Optional[str] = Form(None, description="Type of preset being applied"),
-    overrides: Optional[str] = Form(None, description="JSON string of override values"),
+    template_overrides: Optional[str] = Form(None, description="JSON string of template field overrides"),
+    adaptation_prompt: Optional[str] = Form(None, description="New prompt for style recipe adaptation"),
     
     # Brand Kit data
     brand_kit: Optional[str] = Form(None, description="JSON string of BrandKitInput"),
@@ -178,22 +183,22 @@ async def create_pipeline_run(
                 niche=marketing_niche
             )
         
-        # Parse overrides if provided
-        parsed_overrides = None
-        if overrides:
+        # Parse template overrides if provided
+        parsed_template_overrides = None
+        if template_overrides:
             try:
-                parsed_overrides = json.loads(overrides)
-                logger.info(f"📝 Parsed overrides: {parsed_overrides}")
+                parsed_template_overrides = json.loads(template_overrides)
+                logger.info(f"📝 Parsed template_overrides: {parsed_template_overrides}")
             except json.JSONDecodeError as e:
-                logger.error(f"❌ Failed to parse overrides JSON: {e}")
-                raise HTTPException(status_code=400, detail="Invalid JSON format for overrides")
+                logger.error(f"❌ Failed to parse template_overrides JSON: {e}")
+                raise HTTPException(status_code=400, detail="Invalid JSON format for template_overrides")
         
         # Parse brand kit if provided
         parsed_brand_kit = None
         if brand_kit:
             try:
                 parsed_brand_kit = json.loads(brand_kit)
-                logger.info(f"🎨 Parsed brand_kit: {parsed_brand_kit}")
+                logger.info(f"🎨 Parsed brand_kit: {len(str(parsed_brand_kit))} characters")
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Failed to parse brand_kit JSON: {e}")
                 raise HTTPException(status_code=400, detail="Invalid JSON format for brand_kit")
@@ -214,7 +219,8 @@ async def create_pipeline_run(
             language=language,
             preset_id=preset_id,
             preset_type=preset_type,
-            overrides=parsed_overrides,
+            template_overrides=parsed_template_overrides,
+            adaptation_prompt=adaptation_prompt,
             brand_kit=parsed_brand_kit
         )
         
@@ -239,12 +245,25 @@ async def create_pipeline_run(
             marketing_voice=marketing_goals.voice if marketing_goals else None,
             marketing_niche=marketing_goals.niche if marketing_goals else None,
             language=language or 'en',
-            brand_kit=json.dumps(parsed_brand_kit) if parsed_brand_kit else None
+            brand_kit=json.dumps(parsed_brand_kit) if parsed_brand_kit else None,
+            
+            # NEW: Store preset information
+            preset_id=request.preset_id,
+            preset_type=request.preset_type,
+            template_overrides=json.dumps(parsed_template_overrides) if parsed_template_overrides else None,
+            adaptation_prompt=adaptation_prompt
         )
         
         session.add(run)
         await session.commit()
         await session.refresh(run)
+        
+        # Update base_image_url for style adaptations after run is created
+        if image_reference and request.preset_type == "STYLE_RECIPE":
+            # Store just the filename - the frontend will construct the full API path
+            run.base_image_url = f"input_{image_reference.filename}"
+            session.add(run)
+            await session.commit()
         
         logger.info(f"💾 Created database record for run {run.id}")
         
@@ -265,7 +284,15 @@ async def create_pipeline_run(
             total_cost_usd=run.total_cost_usd,
             error_message=run.error_message,
             output_directory=run.output_directory,
-            metadata_file_path=run.metadata_file_path
+            metadata_file_path=run.metadata_file_path,
+            
+            # NEW: Style Adaptation fields
+            preset_id=run.preset_id,
+            preset_type=run.preset_type,
+            base_image_url=run.base_image_url,
+            template_overrides=parsed_template_overrides,
+            adaptation_prompt=adaptation_prompt,
+            parent_preset=None  # Will be populated when run is fetched later
         )
         
     except HTTPException:
@@ -805,8 +832,18 @@ async def list_pipeline_runs(
 ):
     """List pipeline runs with pagination and filtering"""
     
-    # Build query
-    query = select(PipelineRun).order_by(desc(PipelineRun.created_at))
+    # Build query with LEFT JOIN for parent preset information
+    query = select(
+        PipelineRun,
+        BrandPreset.name.label("parent_preset_name"),
+        BrandPreset.id.label("parent_preset_id")
+    ).outerjoin(
+        BrandPreset,
+        and_(
+            PipelineRun.preset_id == BrandPreset.id,
+            PipelineRun.preset_type == PresetType.STYLE_RECIPE.value
+        )
+    ).order_by(desc(PipelineRun.created_at))
     
     if status:
         query = query.where(PipelineRun.status == status)
@@ -829,11 +866,21 @@ async def list_pipeline_runs(
     query = query.offset(offset).limit(page_size)
     
     result = await session.execute(query)
-    runs = result.scalars().all()
+    results = result.all()
     
     # Convert to response format
-    run_items = [
-        RunListItem(
+    run_items = []
+    for run, parent_preset_name, parent_preset_id in results:
+        # Build parent preset info if available
+        parent_preset_info = None
+        if parent_preset_name:
+            parent_preset_info = ParentPresetInfo(
+                id=parent_preset_id,
+                name=parent_preset_name,
+                image_url=None  # Deferred to detail view for performance
+            )
+        
+        run_items.append(RunListItem(
             id=run.id,
             status=run.status,
             mode=run.mode,
@@ -841,10 +888,10 @@ async def list_pipeline_runs(
             task_type=run.task_type,
             created_at=run.created_at,
             completed_at=run.completed_at,
-            total_cost_usd=run.total_cost_usd
-        )
-        for run in runs
-    ]
+            total_cost_usd=run.total_cost_usd,
+            preset_type=run.preset_type,
+            parent_preset=parent_preset_info
+        ))
     
     return RunListResponse(
         runs=run_items,
@@ -897,6 +944,35 @@ async def get_pipeline_run(
             "error_message": getattr(stage, 'error_message', None)
         })
     
+    # NEW: Handle parent preset for STYLE_RECIPE runs
+    parent_preset_info = None
+    if run.preset_id and run.preset_type == PresetType.STYLE_RECIPE.value:
+        parent_preset_query = select(BrandPreset).where(BrandPreset.id == run.preset_id)
+        parent_preset_result = await session.execute(parent_preset_query)
+        parent_preset = parent_preset_result.scalar_one_or_none()
+        
+        if parent_preset:
+            # Get the parent preset's reference image from source run and image path
+            parent_image_url = None
+            if parent_preset.source_run_id and parent_preset.source_image_path:
+                # Store just the filename - frontend will construct full path with source_run_id
+                parent_image_url = parent_preset.source_image_path
+            
+            parent_preset_info = ParentPresetInfo(
+                id=parent_preset.id,
+                name=parent_preset.name,
+                image_url=parent_image_url,
+                source_run_id=parent_preset.source_run_id
+            )
+    
+    # Parse template overrides if present
+    parsed_template_overrides = None
+    if run.template_overrides:
+        try:
+            parsed_template_overrides = json.loads(run.template_overrides)
+        except json.JSONDecodeError:
+            pass
+    
     return PipelineRunDetail(
         id=run.id,
         status=run.status,
@@ -910,6 +986,14 @@ async def get_pipeline_run(
         output_directory=run.output_directory,
         metadata_file_path=run.metadata_file_path,
         stages=stage_updates,
+        
+        # NEW: Style Adaptation fields
+        preset_id=run.preset_id,
+        preset_type=run.preset_type,
+        base_image_url=run.base_image_url,
+        template_overrides=parsed_template_overrides,
+        adaptation_prompt=run.adaptation_prompt,
+        parent_preset=parent_preset_info,
         
         # Form input data
         platform_name=run.platform_name,
@@ -1731,38 +1815,102 @@ async def save_preset_from_result(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load run metadata: {str(e)}")
     
-    # Extract style recipe data from the specified generation index
+    # Extract style recipe data from the run metadata
     processing_context = run_metadata.get('processing_context', {})
     generated_image_results = processing_context.get('generated_image_results', [])
     
     if request.generation_index >= len(generated_image_results):
         raise HTTPException(status_code=400, detail="Invalid generation index")
     
+    # Find the source image path for the specified generation index
+    source_image_path = None
+    if generated_image_results:
+        result = generated_image_results[request.generation_index]
+        if result and isinstance(result, dict):
+            # Get the image path from the result
+            result_path = result.get("result_path")
+            if result_path:
+                # Extract just the filename if a full path was stored
+                if "/" in result_path:
+                    source_image_path = os.path.basename(result_path)
+                else:
+                    source_image_path = result_path
+            
     # Build the style recipe from the run metadata
-    # Extract the actual style recipe data from the processing context
     generated_image_prompts = processing_context.get('generated_image_prompts', [])
     suggested_marketing_strategies = processing_context.get('suggested_marketing_strategies', [])
     style_guidance_sets = processing_context.get('style_guidance_sets', [])
-    final_assembled_prompts = processing_context.get('final_assembled_prompts', [])
     
-    style_recipe_data = {
-        "visual_concept": generated_image_prompts[request.generation_index].get('visual_concept', {}) if request.generation_index < len(generated_image_prompts) else {},
-        "strategy": suggested_marketing_strategies[request.generation_index] if request.generation_index < len(suggested_marketing_strategies) else {},
-        "style_guidance": style_guidance_sets[request.generation_index] if request.generation_index < len(style_guidance_sets) else {},
-        "final_prompt": final_assembled_prompts[request.generation_index].get('prompt', '') if request.generation_index < len(final_assembled_prompts) else '',
-        "generation_index": request.generation_index
-    }
+    if request.generation_index >= len(generated_image_prompts) or \
+       request.generation_index >= len(suggested_marketing_strategies) or \
+       request.generation_index >= len(style_guidance_sets):
+        raise HTTPException(status_code=400, detail="Incomplete metadata for the selected generation index.")
+
+    try:
+        style_recipe_data = StyleRecipeData(
+            visual_concept=VisualConceptDetails(**generated_image_prompts[request.generation_index].get('visual_concept', {})),
+            strategy=MarketingGoalSetFinal(**suggested_marketing_strategies[request.generation_index]),
+            style_guidance=StyleGuidance(**style_guidance_sets[request.generation_index])
+        )
+    except Exception as e:
+        logger.error(f"Error creating StyleRecipeData: {e}")
+        raise HTTPException(status_code=500, detail="Failed to construct style recipe from run metadata.")
+
+    # Create the envelope with the complete context
+    style_recipe_envelope = StyleRecipeEnvelope(
+        recipe_data=style_recipe_data,
+        render_text=run.render_text,
+        apply_branding=run.apply_branding,
+        source_platform=run.platform_name,
+        language=run.language or 'en'
+    )
+
+    # The brand kit from the PARENT run is the source of truth for the preset's brand kit
+    parent_brand_kit_json = run.brand_kit
+    
+    # Convert logo file path to base64 for frontend compatibility
+    if parent_brand_kit_json:
+        try:
+            parent_brand_kit = json.loads(parent_brand_kit_json)
+            
+            # Check if we have a logo file path but no base64 data
+            if (parent_brand_kit.get('saved_logo_path_in_run_dir') and 
+                not parent_brand_kit.get('logo_file_base64')):
+                
+                logo_path = parent_brand_kit['saved_logo_path_in_run_dir']
+                if os.path.exists(logo_path):
+                    # Read logo file and convert to base64
+                    with open(logo_path, 'rb') as logo_file:
+                        logo_data = logo_file.read()
+                        logo_base64 = base64.b64encode(logo_data).decode('utf-8')
+                        
+                        # Determine MIME type
+                        mime_type = mimetypes.guess_type(logo_path)[0] or 'image/png'
+                        logo_data_uri = f"data:{mime_type};base64,{logo_base64}"
+                        
+                        # Add base64 data to brand kit
+                        parent_brand_kit['logo_file_base64'] = logo_data_uri
+                        logger.info(f"Converted logo file to base64 for preset: {logo_path}")
+                
+            # Update the JSON string
+            parent_brand_kit_json = json.dumps(parent_brand_kit)
+            
+        except Exception as e:
+            logger.warning(f"Failed to convert logo to base64: {e}")
+            # Continue with original brand_kit if conversion fails
     
     # Create the preset
     preset = BrandPreset(
         name=request.name,
         user_id=user_id,
         preset_type=PresetType.STYLE_RECIPE,
-        model_id=run.metadata_file_path.split('/')[-1].split('_')[0] if run.metadata_file_path else "unknown",  # Extract from filename
-        pipeline_version="1.0.0",  # TODO: Get from run metadata
-        brand_kit=json.dumps(request.brand_kit.model_dump()) if request.brand_kit else None,
-        input_snapshot=None,  # STYLE_RECIPE presets don't use input_snapshot
-        style_recipe=json.dumps(style_recipe_data)
+        model_id="dall-e-3",  # TODO: Make this dynamic from run metadata
+        pipeline_version="1.1.0",  # TODO: Get from run metadata
+        source_run_id=run_id,
+        source_image_path=source_image_path,
+        brand_kit=parent_brand_kit_json, # Now includes base64 logo data
+        input_snapshot=None,
+        style_recipe=style_recipe_envelope.model_dump_json() # Serialize the envelope
     )
     
     session.add(preset)

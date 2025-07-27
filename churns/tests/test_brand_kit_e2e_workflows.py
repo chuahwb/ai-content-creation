@@ -266,7 +266,6 @@ class TestStyleRecipeE2EWorkflows:
                 "style_keywords": ["elegant", "sophisticated", "high-end"],
                 "style_description": "Elegant food photography with sophisticated lighting"
             },
-            "final_prompt": "Professional food photography of a gourmet burger with crispy bacon, close-up shot, dark wooden table, warm lighting, rich browns and golden yellows"
         }
     
     def test_style_recipe_creation_workflow(self, sample_completed_run_results):
@@ -278,7 +277,6 @@ class TestStyleRecipeE2EWorkflows:
             "visual_concept": run_results["visual_concept"],
             "strategy": run_results["strategy"],
             "style_guidance": run_results["style_guidance"],
-            "final_prompt": run_results["final_prompt"]
         }
         
         # Step 2: Create style recipe preset
@@ -296,7 +294,6 @@ class TestStyleRecipeE2EWorkflows:
         assert "visual_concept" in style_recipe_preset["preset_data"]
         assert "strategy" in style_recipe_preset["preset_data"]
         assert "style_guidance" in style_recipe_preset["preset_data"]
-        assert "final_prompt" in style_recipe_preset["preset_data"]
         
         # Step 4: Verify visual concept completeness
         visual_concept = style_recipe_preset["preset_data"]["visual_concept"]
@@ -317,7 +314,6 @@ class TestStyleRecipeE2EWorkflows:
             "visual_concept": sample_completed_run_results["visual_concept"],
             "strategy": sample_completed_run_results["strategy"],
             "style_guidance": sample_completed_run_results["style_guidance"],
-            "final_prompt": sample_completed_run_results["final_prompt"]
         }
         
         # Step 2: Create new pipeline context with style recipe
@@ -372,7 +368,6 @@ class TestStyleRecipeE2EWorkflows:
             "visual_concept": sample_completed_run_results["visual_concept"],
             "strategy": sample_completed_run_results["strategy"],
             "style_guidance": sample_completed_run_results["style_guidance"],
-            "final_prompt": sample_completed_run_results["final_prompt"]
         }
         
         # Step 2: Create context with new prompt
@@ -495,7 +490,6 @@ class TestStyleRecipeE2EWorkflows:
                 "style_keywords": ["elegant", "sophisticated"],
                 "style_description": "Elegant food photography"
             },
-            "final_prompt": "Professional food photography of gourmet burger"
         }
         
         # Mock pipeline stages

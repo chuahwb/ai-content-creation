@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from churns.api.main import app
-from churns.api.database import BrandPreset, PresetType
+from churns.api.database import BrandPreset, PresetType, PipelineRun
 from churns.models.presets import PipelineInputSnapshot, StyleRecipeData
 from churns.models import LogoAnalysisResult, BrandKitInput
 from sqlmodel import SQLModel, Session, create_engine
@@ -246,6 +246,74 @@ class TestBrandPresetsAPI:
         
         response = client.put(f"/api/v1/brand-presets/{preset_id}", json=update_data)
         assert response.status_code == 409  # Conflict
+
+    @patch('churns.api.routers.os.path.exists')
+    @patch('builtins.open')
+    @pytest.mark.asyncio
+    async def test_save_preset_from_result_with_full_context(self, mock_open, mock_exists, client, db_session):
+        """
+        Test saving a STYLE_RECIPE preset from a result, ensuring full context
+        (render flags, brand kit, etc.) is captured in the StyleRecipeEnvelope.
+        """
+        mock_exists.return_value = True
+
+        # 1. Create a realistic source PipelineRun
+        source_run_id = "run_with_full_context"
+        source_brand_kit = {
+            "colors": ["#111111", "#222222"],
+            "brand_voice_description": "Bold and direct"
+        }
+        
+        run = PipelineRun(
+            id=source_run_id,
+            status="completed",
+            render_text=True,
+            apply_branding=True,
+            language='fr',
+            platform_name='instagram_story',
+            brand_kit=json.dumps(source_brand_kit),
+            metadata_file_path=f"./data/runs/{source_run_id}/pipeline_metadata.json"
+        )
+        db_session.add(run)
+        await db_session.commit()
+
+        # 2. Mock the metadata file
+        mock_metadata = {
+            "processing_context": {
+                "generated_image_results": [{"result_path": "image_0.png"}],
+                "generated_image_prompts": [{"visual_concept": {"main_subject": "Test subject"}}],
+                "suggested_marketing_strategies": [{"goal": "Test goal"}],
+                "style_guidance_sets": [{"style": "Test style"}]
+            }
+        }
+        mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(mock_metadata)
+
+        # 3. Call the endpoint to create the preset
+        request_data = {
+            "name": "My Full Context Preset",
+            "generation_index": 0
+        }
+        response = client.post(f"/api/v1/runs/{source_run_id}/save-as-preset", json=request_data)
+
+        # 4. Assertions
+        assert response.status_code == 201
+        preset_data = response.json()
+        preset_id = preset_data['id']
+
+        # 5. Fetch from DB and verify contents
+        saved_preset = await db_session.get(BrandPreset, preset_id)
+        assert saved_preset is not None
+        
+        # Verify top-level brand_kit
+        assert json.loads(saved_preset.brand_kit) == source_brand_kit
+
+        # Verify style_recipe envelope
+        envelope = json.loads(saved_preset.style_recipe)
+        assert envelope['render_text'] is True
+        assert envelope['apply_branding'] is True
+        assert envelope['language'] == 'fr'
+        assert envelope['source_platform'] == 'instagram_story'
+        assert envelope['recipe_data']['visual_concept']['main_subject'] == "Test subject"
 
     @patch('churns.api.routers.get_db')
     def test_save_preset_from_result(self, mock_get_db, client):

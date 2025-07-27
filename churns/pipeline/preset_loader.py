@@ -10,7 +10,7 @@ from sqlmodel import select
 
 from churns.api.database import BrandPreset, PresetType
 from churns.pipeline.context import PipelineContext
-from churns.models.presets import PipelineInputSnapshot, StyleRecipeData
+from churns.models.presets import PipelineInputSnapshot, StyleRecipeData, StyleRecipeEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class PresetLoader:
         ctx: PipelineContext, 
         preset_id: str, 
         user_id: str,
-        overrides: Optional[Dict[str, Any]] = None
+        template_overrides: Optional[Dict[str, Any]] = None
     ) -> None:
         """Load a brand preset and apply it to the pipeline context."""
         try:
@@ -49,9 +49,9 @@ class PresetLoader:
             # Store preset information in context
             ctx.preset_id = preset_id
             ctx.preset_type = preset.preset_type
-            ctx.overrides = overrides or {}
+            ctx.template_overrides = template_overrides or {}
             
-            logger.info(f"Applying preset with overrides: {ctx.overrides}")
+            logger.info(f"Applying preset with template_overrides: {ctx.template_overrides}")
             
             # Apply preset based on type
             if preset.preset_type == PresetType.INPUT_TEMPLATE:
@@ -78,7 +78,8 @@ class PresetLoader:
             logger.warning(f"Continuing pipeline execution without preset {preset_id}")
             ctx.preset_id = None
             ctx.preset_type = None
-            ctx.overrides = {}
+            ctx.template_overrides = {}
+            ctx.adaptation_prompt = None
     
     async def _apply_input_template(self, ctx: PipelineContext, preset: BrandPreset) -> None:
         """Apply an INPUT_TEMPLATE preset to the pipeline context."""
@@ -95,24 +96,13 @@ class PresetLoader:
                 logger.error(f"Failed to parse input_snapshot JSON: {e}")
                 raise ValueError(f"Failed to parse input_snapshot JSON: {e}")
             
-            # Apply template data to context, allowing overrides
-            overrides = ctx.overrides or {}
+            # Apply template data to context, allowing template overrides
+            template_overrides = ctx.template_overrides or {}
             
-            # Core fields
-            if 'prompt' not in overrides:
-                ctx.prompt = input_data.get('prompt', ctx.prompt)
-            else:
-                ctx.prompt = overrides['prompt']
-            
-            if 'creativity_level' not in overrides:
-                ctx.creativity_level = input_data.get('creativity_level', ctx.creativity_level)
-            else:
-                ctx.creativity_level = overrides['creativity_level']
-            
-            if 'num_variants' not in overrides:
-                ctx.num_variants = input_data.get('num_variants', ctx.num_variants)
-            else:
-                ctx.num_variants = overrides['num_variants']
+            # Core fields with clean override logic
+            ctx.prompt = template_overrides.get('prompt', input_data.get('prompt', ctx.prompt))
+            ctx.creativity_level = template_overrides.get('creativity_level', input_data.get('creativity_level', ctx.creativity_level))
+            ctx.num_variants = template_overrides.get('num_variants', input_data.get('num_variants', ctx.num_variants))
             
             # Apply other template fields
             ctx.mode = input_data.get('mode', ctx.mode)
@@ -147,7 +137,7 @@ class PresetLoader:
             # INPUT_TEMPLATE runs full pipeline (no stages skipped)
             ctx.skip_stages = []
             
-            logger.info(f"Successfully applied INPUT_TEMPLATE preset with {len(overrides)} overrides")
+            logger.info(f"Successfully applied INPUT_TEMPLATE preset with {len(template_overrides)} template_overrides")
             
         except Exception as e:
             logger.error(f"Error applying INPUT_TEMPLATE preset: {e}")
@@ -159,31 +149,53 @@ class PresetLoader:
             if not preset.style_recipe:
                 logger.error("STYLE_RECIPE preset missing style_recipe data")
                 raise ValueError("STYLE_RECIPE preset missing style_recipe data")
-            
-            # Parse the style recipe data
+
+            # Parse the style recipe envelope
             try:
-                style_data = json.loads(preset.style_recipe)
-                logger.info(f"Parsed style recipe with keys: {list(style_data.keys())}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse style_recipe JSON: {e}")
-                raise ValueError(f"Failed to parse style_recipe JSON: {e}")
-            
-            # Store the style recipe data in context
-            ctx.preset_data = style_data
-            
-            # Apply brand kit from preset
+                envelope_data = json.loads(preset.style_recipe)
+                style_envelope = StyleRecipeEnvelope(**envelope_data)
+                logger.info(f"Parsed style recipe envelope. Platform: {style_envelope.source_platform}, Language: {style_envelope.language}")
+            except Exception as e:
+                logger.error(f"Failed to parse or validate StyleRecipeEnvelope JSON: {e}")
+                raise ValueError(f"Invalid StyleRecipeEnvelope data: {e}")
+
+            # Store the core recipe data in context for the adaptation stage
+            ctx.preset_data = style_envelope.recipe_data.model_dump()
+
+            # Apply rendering flags and context from the envelope
+            # These can be overridden by the user's explicit submission flags
+            ctx.render_text = style_envelope.render_text
+            ctx.apply_branding = style_envelope.apply_branding
+            ctx.language = style_envelope.language
+            if not ctx.target_platform or not ctx.target_platform.get('name'):
+                 if not ctx.target_platform:
+                    ctx.target_platform = {}
+                 ctx.target_platform['name'] = style_envelope.source_platform
+
+            # Apply brand kit from the top-level of the preset
             await self._apply_brand_kit(ctx, preset)
-            
+
+            # --- BEGIN ENHANCEMENT: Brand Kit Override Detection ---
+            original_brand_kit = preset.brand_kit
+            current_run_brand_kit = ctx.brand_kit
+            is_override = False
+
+            if ctx.apply_branding:
+                # A simple and effective deep comparison for dictionaries by comparing their JSON string representations
+                original_kit_str = json.dumps(original_brand_kit, sort_keys=True) if original_brand_kit else "{}"
+                current_kit_str = json.dumps(current_run_brand_kit, sort_keys=True) if current_run_brand_kit else "{}"
+                
+                if original_kit_str != current_kit_str:
+                    is_override = True
+                    logger.info("Brand kit override detected. The provided brand kit differs from the one in the saved recipe.")
+                
+            # Set a new, explicit flag on the context for downstream stages to use
+            ctx.brand_kit_is_override = is_override
+            # --- END ENHANCEMENT ---
+
             # Determine which stages to skip for STYLE_RECIPE
             # We skip the creative stages since we're reusing their output
             ctx.skip_stages = ['strategy', 'style_guide', 'creative_expert']
-            
-            # Check if we need StyleAdaptation based on overrides
-            if ctx.overrides and ctx.overrides.get('prompt'):
-                # User provided a new prompt, so we need StyleAdaptation
-                ctx.skip_stages = ['strategy', 'style_guide', 'creative_expert']
-                # StyleAdaptation will be handled by the executor
-                logger.info("Style adaptation will be triggered due to prompt override")
             
             logger.info(f"Successfully applied STYLE_RECIPE preset, skipping stages: {ctx.skip_stages}")
             
@@ -241,7 +253,8 @@ class PresetLoader:
     
     def get_style_recipe_data(self, ctx: PipelineContext) -> Optional[Dict[str, Any]]:
         """Get the style recipe data from context if available."""
-        if ctx.preset_type == PresetType.STYLE_RECIPE:
+        if ctx.preset_type == PresetType.STYLE_RECIPE and ctx.preset_data:
+            # preset_data should now be the core recipe_data dictionary
             return ctx.preset_data
         return None
     
@@ -249,31 +262,5 @@ class PresetLoader:
         """Check if StyleAdaptation stage is needed."""
         return (
             ctx.preset_type == PresetType.STYLE_RECIPE and
-            ctx.overrides and 
-            ctx.overrides.get('prompt')
-        )
-
-
-def merge_recipe_with_overrides(recipe: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Deep merge user overrides with style recipe data.
-    User overrides take precedence over recipe data.
-    """
-    merged = recipe.copy()
-    
-    # Apply overrides with precedence rules
-    for key, value in overrides.items():
-        if key in ['prompt', 'creativity_level', 'num_variants']:
-            # These are handled at the context level
-            continue
-        elif key == 'visual_concept':
-            # Deep merge visual concept fields
-            if 'visual_concept' in merged and isinstance(merged['visual_concept'], dict):
-                merged['visual_concept'].update(value)
-            else:
-                merged['visual_concept'] = value
-        else:
-            # Direct override
-            merged[key] = value
-    
-    return merged 
+            bool(ctx.adaptation_prompt)
+        ) 

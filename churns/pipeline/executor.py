@@ -244,10 +244,14 @@ class PipelineExecutor:
     def _needs_style_adaptation(self, ctx: PipelineContext) -> bool:
         """Check if StyleAdaptation stage is needed."""
         from churns.api.database import PresetType
+        
+        # A new image is provided if image_reference is populated for this run.
+        has_new_image = ctx.image_reference is not None
+        has_new_prompt = bool(ctx.adaptation_prompt)
+
         return (
             ctx.preset_type == PresetType.STYLE_RECIPE and
-            ctx.overrides and 
-            ctx.overrides.get('prompt')
+            (has_new_image or has_new_prompt)
         )
     
     async def _run_style_adaptation_stage(self, ctx: PipelineContext, progress_callback: Optional[Callable] = None, stage_order: float = 0) -> None:
@@ -275,15 +279,34 @@ class PipelineExecutor:
             await stage_module.run(ctx)
             
             stage_duration = time.time() - stage_start_time
-            logger.info(f"Stage {stage_name} completed in {stage_duration:.2f}s")
             
-            # Send stage completion notification
-            if progress_callback:
-                await progress_callback(
-                    stage_name, int(stage_order), StageStatus.COMPLETED, 
-                    f"Stage {stage_name} completed successfully", 
-                    None, None, stage_duration
-                )
+            # Check if the stage set an error state
+            if hasattr(ctx, 'stage_error') and ctx.stage_error:
+                error_msg = ctx.stage_error
+                logger.error(f"Stage {stage_name} failed: {error_msg}")
+                
+                # Send stage error notification
+                if progress_callback:
+                    await progress_callback(
+                        stage_name, int(stage_order), StageStatus.FAILED, 
+                        f"Stage {stage_name} failed", 
+                        None, error_msg, stage_duration
+                    )
+                # Clear the error state for next stages
+                ctx.stage_error = None
+            else:
+                logger.info(f"Stage {stage_name} completed in {stage_duration:.2f}s")
+                
+                # Extract output data for the completed stage
+                output_data = self._extract_stage_output(ctx, stage_name)
+                
+                # Send stage completion notification
+                if progress_callback:
+                    await progress_callback(
+                        stage_name, int(stage_order), StageStatus.COMPLETED, 
+                        f"Stage {stage_name} completed successfully", 
+                        output_data, None, stage_duration
+                    )
             
         except Exception as e:
             stage_duration = time.time() - stage_start_time
@@ -312,13 +335,13 @@ class PipelineExecutor:
         # Handle preset loading if preset_id is provided
         if ctx.preset_id and session:
             try:
-                logger.info(f"Loading preset {ctx.preset_id} with overrides: {ctx.overrides}")
+                logger.info(f"Loading preset {ctx.preset_id} with template_overrides: {ctx.template_overrides}")
                 preset_loader = PresetLoader(session)
                 await preset_loader.load_and_apply_preset(
                     ctx, 
                     ctx.preset_id, 
                     user_id="dev_user_1",  # TODO: Get from auth context
-                    overrides=ctx.overrides
+                    template_overrides=ctx.template_overrides
                 )
                 logger.info(f"Preset {ctx.preset_id} loaded and applied to context")
             except Exception as e:
@@ -328,7 +351,8 @@ class PipelineExecutor:
                 # Clear preset information to prevent further issues
                 ctx.preset_id = None
                 ctx.preset_type = None
-                ctx.overrides = {}
+                ctx.template_overrides = {}
+                ctx.adaptation_prompt = None
         elif ctx.preset_id and not session:
             logger.warning(f"Preset {ctx.preset_id} specified but no database session provided")
         else:
@@ -441,6 +465,29 @@ class PipelineExecutor:
             return {"generated_images": ctx.generated_image_results}
         elif stage_name == "image_assessment":
             return {"image_assessments": ctx.image_assessments}
+        elif stage_name == "style_adaptation":
+            # Extract style adaptation outputs following same pattern as other stages
+            return {
+                # Primary outputs (same as what other stages produce)
+                "adapted_visual_concept": getattr(ctx, 'preset_data', {}).get('visual_concept') if hasattr(ctx, 'preset_data') else None,
+                "generated_image_prompts": getattr(ctx, 'generated_image_prompts', []),
+                "suggested_marketing_strategies": getattr(ctx, 'suggested_marketing_strategies', []),
+                "style_guidance_sets": getattr(ctx, 'style_guidance_sets', []),
+                
+                # Adaptation-specific metadata
+                "adaptation_metadata": {
+                    "parent_preset_id": getattr(ctx, 'preset_id', None),
+                    "adaptation_trigger": "new_subject_image" if getattr(ctx, 'image_reference', None) else "prompt_override",
+                    "original_subject": getattr(ctx, 'original_subject', None),
+                    "new_subject": getattr(ctx, 'image_analysis_result', {}).get('main_subject') if hasattr(ctx, 'image_analysis_result') else None,
+                    "stages_skipped": getattr(ctx, 'skip_stages', []),
+                    "adaptation_success": not bool(getattr(ctx, 'stage_error', None)),
+                    "adaptation_reasoning": getattr(ctx, 'adaptation_context', {}).get('adaptation_reasoning') if hasattr(ctx, 'adaptation_context') else None
+                },
+                
+                # Error information (if any)
+                "error_details": getattr(ctx, 'stage_error', None)
+            }
         elif stage_name in ["load_base_image", "subject_repair", "text_repair", "prompt_refine", "save_outputs"]:
             # Refinement stages - extract relevant data
             return {

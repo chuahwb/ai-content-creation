@@ -69,6 +69,7 @@ import CaptionDialog from './CaptionDialog';
 import CaptionDisplay from './CaptionDisplay';
 import ImageCompareSlider from './ImageCompareSlider';
 import ImageWithAuth from './ImageWithAuth';
+import AdaptationContext from './AdaptationContext';
 
 interface RunResultsProps {
   runId: string;
@@ -1761,6 +1762,13 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             </Box>
           </Box>
 
+          {/* Style Adaptation Banner */}
+          {runDetails.preset_type === 'STYLE_RECIPE' && runDetails.parent_preset && (
+            <Alert severity="info" icon={<AutoAwesomeIcon />} sx={{ mb: 3 }}>
+              Results adapted from Style Recipe: <strong>{runDetails.parent_preset.name}</strong>
+            </Alert>
+          )}
+
           {/* Main Content - Left/Right Split */}
           <Grid container spacing={4}>
             {/* LEFT SIDE - Main Results */}
@@ -2553,11 +2561,14 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 </Grid>
               </Paper>
 
-              {/* Original Form Input */}
-              <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: 1, borderColor: 'divider' }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                  Form Input
-                </Typography>
+              {/* Input Display - Conditional */}
+              {runDetails.preset_type === 'STYLE_RECIPE' ? (
+                <AdaptationContext run={runDetails} />
+              ) : (
+                <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: 1, borderColor: 'divider' }}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+                    Form Input
+                  </Typography>
                 <Grid container spacing={3}>
                   {/* Basic Configuration Section */}
                   <Grid item xs={12}>
@@ -2895,6 +2906,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                   )}
                 </Grid>
               </Paper>
+              )}
 
               {/* Developer Mode Toggle */}
               <Paper sx={{ p: 2, mb: 3, borderRadius: 2, border: 1, borderColor: 'divider' }}>
@@ -2928,14 +2940,45 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                     <Typography variant="h6" sx={{ fontWeight: 600, color: 'warning.dark' }}>
                       Stage Outputs (Developer)
                     </Typography>
+                    {runDetails.preset_type === 'STYLE_RECIPE' && (
+                      <Chip 
+                        label="Style Adaptation" 
+                        size="small" 
+                        color="primary" 
+                        variant="outlined"
+                        sx={{ fontSize: '0.7rem' }}
+                      />
+                    )}
                   </Box>
-                  {runDetails.stages.map((stage) => (
-                    stage.output_data && (
+                  
+                  {/* Run Type Context */}
+                  <Box sx={{ mb: 2, p: 1.5, backgroundColor: 'warning.100', borderRadius: 1, border: 1, borderColor: 'warning.300' }}>
+                    <Typography variant="caption" color="warning.dark" sx={{ fontWeight: 500 }}>
+                      {runDetails.preset_type === 'STYLE_RECIPE' 
+                        ? `Style Adaptation Run: ${runDetails.stages?.filter(s => s.status === 'COMPLETED').length || 0} stages completed, ${runDetails.stages?.filter(s => s.status === 'SKIPPED').length || 0} stages skipped`
+                        : `Regular Pipeline Run: ${runDetails.stages?.filter(s => s.status === 'COMPLETED').length || 0} stages completed`
+                      }
+                    </Typography>
+                  </Box>
+                  
+                  {runDetails.stages
+                    .filter(stage => stage.output_data)
+                    .sort((a, b) => (a.stage_order || 0) - (b.stage_order || 0))
+                    .map((stage) => (
                       <Accordion key={`output-${stage.stage_name}`} sx={{ mb: 1 }}>
                         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 600, textTransform: 'capitalize' }}>
-                            {stage.stage_name.replace('_', ' ')} Results
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600, textTransform: 'capitalize' }}>
+                              {stage.stage_name.replace('_', ' ')} Results
+                            </Typography>
+                            <Chip 
+                              label={stage.status} 
+                              size="small" 
+                              color={stage.status === 'COMPLETED' ? 'success' : stage.status === 'SKIPPED' ? 'warning' : 'default'}
+                              variant="outlined"
+                              sx={{ fontSize: '0.7rem', ml: 1 }}
+                            />
+                          </Box>
                         </AccordionSummary>
                         <AccordionDetails>
                           <Paper sx={{ p: 2, backgroundColor: 'grey.50' }}>
@@ -2952,8 +2995,15 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                           </Paper>
                         </AccordionDetails>
                       </Accordion>
-                    )
-                  ))}
+                    ))}
+                    
+                  {runDetails.stages.filter(stage => stage.output_data).length === 0 && (
+                    <Box sx={{ p: 2, textAlign: 'center', color: 'warning.dark' }}>
+                      <Typography variant="body2" sx={{ fontStyle: 'italic' }}>
+                        No stage output data available for this run
+                      </Typography>
+                    </Box>
+                  )}
                 </Paper>
               )}
 

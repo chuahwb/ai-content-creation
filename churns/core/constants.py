@@ -50,7 +50,7 @@ IMAGE_ASSESSMENT_MODEL_ID = "openai/o4-mini"  # OpenAI native client for vision 
 
 # StyleAdaptation Model (for style transfer and adaptation)
 STYLE_ADAPTATION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"
-STYLE_ADAPTATION_MODEL_ID = "openai/gpt-4o"  # High-quality model for creative adaptation
+STYLE_ADAPTATION_MODEL_ID = "google/gemini-2.5-pro"  # High-quality model for creative adaptation
 
 # Caption Generation Model (for social media caption creation)
 CAPTION_MODEL_PROVIDER = "OpenRouter"  # "OpenRouter" or "OpenAI"

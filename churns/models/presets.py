@@ -50,11 +50,22 @@ class StyleRecipeData(BaseModel):
     visual_concept: VisualConceptDetails = Field(..., description="The detailed visual concept breakdown")
     strategy: MarketingGoalSetFinal = Field(..., description="The marketing strategy used")
     style_guidance: StyleGuidance = Field(..., description="The style guidance applied")
-    final_prompt: str = Field(..., description="The exact prompt sent to the image generation model")
     
     # Optional fields for enhanced consistency
     generation_seed: Optional[str] = Field(None, description="Deterministic seed if supported by the model")
     model_parameters: Optional[Dict[str, Any]] = Field(None, description="Model-specific parameters used")
+
+
+class StyleRecipeEnvelope(BaseModel):
+    """
+    A complete snapshot of the context required to reproduce or adapt a style.
+    This will be the new structure for the 'style_recipe' JSON field.
+    """
+    recipe_data: StyleRecipeData = Field(..., description="The core AI-generated creative assets.")
+    render_text: bool = Field(..., description="The 'render_text' setting from the original run.")
+    apply_branding: bool = Field(..., description="The 'apply_branding' setting from the original run.")
+    source_platform: str = Field(..., description="The 'platform_name' from the original run.")
+    language: str = Field(default='en', description="The language (ISO 639-1) from the original run.")
 
 
 class PresetMetadata(BaseModel):

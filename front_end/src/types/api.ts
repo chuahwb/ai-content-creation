@@ -37,13 +37,22 @@ export interface BrandKitInput {
 }
 
 // Style Recipe interface for structured creative output
+// NOTE: This reflects the *core* recipe data, not the envelope.
 export interface StyleRecipeData {
-  visual_concept: Record<string, any>;
-  strategy: Record<string, any>;
-  style_guidance: Record<string, any>;
-  final_prompt: string;
+  visual_concept: any; // More specific type if available
+  strategy: any; // More specific type if available
+  style_guidance: any; // More specific type if available
   generation_seed?: string;
   model_parameters?: Record<string, any>;
+}
+
+// The new envelope that wraps the style recipe and its context
+export interface StyleRecipeEnvelope {
+  recipe_data: StyleRecipeData;
+  render_text: boolean;
+  apply_branding: boolean;
+  source_platform: string;
+  language: string;
 }
 
 // Pipeline Input Snapshot interface
@@ -81,7 +90,8 @@ export interface PipelineRunRequest {
   language?: string;
   preset_id?: string;
   preset_type?: PresetType;
-  overrides?: Record<string, any>;
+  template_overrides?: Record<string, any>;
+  adaptation_prompt?: string;
   // Brand kit data (UPDATED: unified brand kit structure)
   brand_kit?: BrandKitInput;
 }
@@ -113,6 +123,14 @@ export interface PipelineRunResponse {
   error_message?: string;
   output_directory?: string;
   metadata_file_path?: string;
+  
+  // NEW FIELDS for Style Adaptation
+  preset_id?: string;
+  preset_type?: string;
+  base_image_url?: string;
+  template_overrides?: Record<string, any>; // loosened typing for forward-compat
+  adaptation_prompt?: string;
+  parent_preset?: ParentPresetInfo;
 }
 
 export interface PipelineRunDetail extends PipelineRunResponse {
@@ -279,6 +297,10 @@ export interface RunListItem {
   created_at: string;
   completed_at?: string;
   total_cost_usd?: number;
+  
+  // NEW: Style Adaptation fields
+  preset_type?: string;
+  parent_preset?: ParentPresetInfo;
 }
 
 export interface RunListResponse {
@@ -318,7 +340,8 @@ export interface PipelineFormData {
   // Brand preset support
   preset_id?: string;
   preset_type?: PresetType; // To distinguish between style recipes and templates
-  overrides?: Record<string, any>;
+  template_overrides?: Record<string, any>;
+  adaptation_prompt?: string;
 }
 
 // Configuration types
@@ -364,7 +387,7 @@ export interface BrandPresetResponse {
   last_used_at?: string;
   brand_kit?: BrandKitInput;
   input_snapshot?: PipelineInputSnapshot;
-  style_recipe?: StyleRecipeData;
+  style_recipe?: StyleRecipeEnvelope; // <-- UPDATED
 }
 
 export interface BrandPresetListResponse {
@@ -390,5 +413,12 @@ export interface BrandPreset {
   last_used_at?: string;
   brand_kit?: BrandKitInput;
   input_snapshot?: PipelineInputSnapshot;
-  style_recipe?: StyleRecipeData;
+  style_recipe?: StyleRecipeEnvelope; // <-- UPDATED
+} 
+
+export interface ParentPresetInfo {
+  id: string;
+  name: string;
+  image_url?: string;
+  source_run_id?: string;
 } 

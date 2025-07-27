@@ -39,7 +39,8 @@ class PipelineContext:
     preset_id: Optional[str] = None
     preset_data: Optional[Dict[str, Any]] = None
     preset_type: Optional[str] = None  # "INPUT_TEMPLATE" or "STYLE_RECIPE"
-    overrides: Optional[Dict[str, Any]] = None
+    template_overrides: Optional[Dict[str, Any]] = None  # For INPUT_TEMPLATE modifications
+    adaptation_prompt: Optional[str] = None  # For STYLE_RECIPE adaptations
     skip_stages: List[str] = field(default_factory=list)  # Stages to skip for STYLE_RECIPE
     
     # Brand Kit data
@@ -190,7 +191,8 @@ class PipelineContext:
                 "marketing_goals": self.marketing_goals,
                 "preset_id": self.preset_id,
                 "preset_type": self.preset_type,
-                "overrides": self.overrides,
+                "template_overrides": self.template_overrides,
+                "adaptation_prompt": self.adaptation_prompt,
                 "brand_kit": self.brand_kit
             },
             "processing_context": {
@@ -251,7 +253,8 @@ class PipelineContext:
             marketing_goals=user_inputs.get("marketing_goals"),
             preset_id=user_inputs.get("preset_id"),
             preset_type=user_inputs.get("preset_type"),
-            overrides=user_inputs.get("overrides"),
+            template_overrides=user_inputs.get("template_overrides"),
+            adaptation_prompt=user_inputs.get("adaptation_prompt"),
             image_analysis_result=processing_context.get("image_analysis_result"),
             suggested_marketing_strategies=processing_context.get("suggested_marketing_strategies"),
             style_guidance_sets=processing_context.get("style_guidance_sets"),

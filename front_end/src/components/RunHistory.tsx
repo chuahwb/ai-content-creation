@@ -29,6 +29,7 @@ import {
   Visibility as VisibilityIcon,
   Refresh as RefreshIcon,
   FilterList as FilterListIcon,
+  AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import dayjs from 'dayjs';
@@ -229,9 +230,23 @@ export default function RunHistory({ onViewRun }: RunHistoryProps) {
                         style={{ display: 'contents' }}
                       >
                       <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                          {run.id.slice(0, 8)}...
-                        </Typography>
+                        <Box>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                              {run.id.slice(0, 8)}...
+                            </Typography>
+                            {run.parent_preset && (
+                              <Tooltip title={`Adapted from: ${run.parent_preset.name}`}>
+                                <AutoAwesomeIcon color="primary" sx={{ fontSize: '1rem' }} />
+                              </Tooltip>
+                            )}
+                          </Box>
+                          {run.parent_preset && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                              Style: {run.parent_preset.name}
+                            </Typography>
+                          )}
+                        </Box>
                       </TableCell>
                       
                       <TableCell>

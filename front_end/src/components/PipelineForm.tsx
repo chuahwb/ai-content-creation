@@ -45,6 +45,7 @@ import { PipelineFormData, PipelineRunResponse, BrandPresetResponse, BrandKitInp
 import { PipelineAPI } from '@/lib/api';
 import PresetManagementModal from './PresetManagementModal';
 import BrandKitPresetModal from './BrandKitPresetModal';
+import StyleRecipeModal from './StyleRecipeModal';
 import ColorPaletteEditor from './ColorPaletteEditor';
 import LogoUploader from './LogoUploader';
 import CompactLogoDisplay from './CompactLogoDisplay';
@@ -131,9 +132,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   
   // Preset-related state
   const [activePreset, setActivePreset] = useState<BrandPresetResponse | null>(null);
-  const [isRecipeActive, setIsRecipeActive] = useState(false);
   const [presetModalOpen, setPresetModalOpen] = useState(false);
-  const [recipeOverrides, setRecipeOverrides] = useState<Record<string, any>>({});
 
   // Add state for save template functionality after the existing state declarations
   // Save template dialog state
@@ -143,6 +142,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
   // Brand kit preset state
   const [brandKitPresetModalOpen, setBrandKitPresetModalOpen] = useState(false);
+  
+  // Style recipe modal state
+  const [recipeModalOpen, setRecipeModalOpen] = useState(false);
 
   const {
     control,
@@ -233,6 +235,15 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       return;
     }
     
+    if (preset.preset_type === 'STYLE_RECIPE') {
+      // Style recipes use their own dedicated modal - no form integration needed
+      setActivePreset(preset); // Keep track of the selected preset
+      setRecipeModalOpen(true); // Open the style adaptation modal
+      setPresetModalOpen(false); // Close the management modal
+      // DON'T set isRecipeActive - style adaptations are handled entirely by StyleRecipeModal
+      return;
+    }
+    
     setActivePreset(preset);
     applyPresetToForm(preset);
     setPresetModalOpen(false);
@@ -266,37 +277,13 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           image_instruction: inputData.image_instruction || '',
         });
       }
-      setIsRecipeActive(false);
-    } else if (preset.preset_type === 'STYLE_RECIPE') {
-      // Apply Style Recipe: enter Recipe Active mode
-      setIsRecipeActive(true);
-      setRecipeOverrides({});
-      
-      // Clear form for recipe mode (user will provide new input)
-      reset({
-        mode: 'easy_mode',
-        platform_name: '',
-        creativity_level: 1,
-        num_variants: 3,
-        render_text: false,
-        apply_branding: false,
-        language: 'en',
-      });
-    }
+    } 
+    // STYLE_RECIPE presets are no longer handled here - they use StyleRecipeModal exclusively
   };
 
   const clearPreset = () => {
     setActivePreset(null);
-    setIsRecipeActive(false);
-    setRecipeOverrides({});
     toast.success('Preset cleared');
-  };
-
-  const handleRecipeOverride = (field: string, value: any) => {
-    setRecipeOverrides(prev => ({
-      ...prev,
-      [field]: value
-    }));
   };
 
   // Shared validation logic for both pipeline run and template saving
@@ -306,18 +293,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       return { isValid: false, error: 'Platform selection is required' };
     }
     
-    // Special validation for recipe mode
-    if (isRecipeActive) {
-      const hasPathA = uploadedFile; // Path A: image upload
-      const hasPathB = recipeOverrides.prompt && recipeOverrides.prompt.trim(); // Path B: text prompt
-      
-      if (!hasPathA && !hasPathB) {
-        return { isValid: false, error: 'Recipe mode requires either a new image (Path A) or a new prompt (Path B)' };
-      }
-      
-      return { isValid: true };
-    }
-    
+    // Standard form validation (recipe mode is handled by StyleRecipeModal)
     if (selectedMode === 'easy_mode' && !data.prompt && !uploadedFile) {
       return { isValid: false, error: 'Easy mode requires either a prompt or an image' };
     }
@@ -346,11 +322,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       // Prepare submit data - don't overwrite form data with preset data
       const submitData = {
         ...data,
-        // Add preset information if active
-        preset_id: activePreset?.id,
-        preset_type: activePreset?.preset_type,
-        // For STYLE_RECIPE presets, include overrides
-        overrides: (activePreset?.preset_type === 'STYLE_RECIPE' && isRecipeActive) ? recipeOverrides : undefined,
+        // Add preset information if active (STYLE_RECIPE presets are handled by StyleRecipeModal)
+        preset_id: activePreset?.preset_type === 'INPUT_TEMPLATE' ? activePreset?.id : undefined,
+        preset_type: activePreset?.preset_type === 'INPUT_TEMPLATE' ? activePreset?.preset_type : undefined,
       };
 
       // Submit the run
@@ -404,8 +378,6 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     // Only clear presets if requested (not when switching templates)
     if (clearPresets) {
       setActivePreset(null);
-      setIsRecipeActive(false);
-      setRecipeOverrides({});
     }
   };
 
@@ -652,8 +624,8 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
               </Grid>
             )}
 
-            {/* Active Preset Display */}
-            {activePreset && (
+            {/* Active Preset Display - Only show for INPUT_TEMPLATE presets */}
+            {activePreset && activePreset.preset_type === 'INPUT_TEMPLATE' && (
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -679,129 +651,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
               </motion.div>
             )}
 
-            {/* Recipe Active Mode */}
-            {isRecipeActive && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Paper sx={{ p: 3, mt: 2, bgcolor: 'primary.50', border: 1, borderColor: 'primary.200' }}>
-                  <Typography variant="h6" gutterBottom color="primary">
-                    🎨 Recipe Active Mode
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Choose how to use this style recipe:
-                  </Typography>
-                  
-                  <Grid container spacing={2}>
-                    <Grid item xs={12} md={6}>
-                      <Paper sx={{ p: 2, border: 1, borderColor: 'divider' }}>
-                        <Typography variant="subtitle1" gutterBottom>
-                          🖼️ Path A: Swap the Subject
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          Upload a new image to apply this style recipe to a different subject
-                        </Typography>
-                        
-                        {/* Path A Image Upload */}
-                        <Box sx={{ mt: 2 }}>
-                          {!uploadedFile ? (
-                            <Paper
-                              {...getRootProps()}
-                              sx={{
-                                p: 2,
-                                border: 1,
-                                borderStyle: 'dashed',
-                                borderColor: isDragActive ? 'primary.main' : 'grey.300',
-                                backgroundColor: isDragActive ? 'primary.50' : 'grey.50',
-                                cursor: 'pointer',
-                                textAlign: 'center',
-                                minHeight: 100,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                justifyContent: 'center',
-                                alignItems: 'center',
-                                borderRadius: 1,
-                                '&:hover': {
-                                  borderColor: 'primary.main',
-                                  backgroundColor: 'primary.50',
-                                },
-                              }}
-                            >
-                              <input {...getInputProps()} />
-                              <CloudUploadIcon sx={{ fontSize: 32, color: 'grey.400', mb: 1 }} />
-                              <Typography variant="body2" color="text.secondary">
-                                {isDragActive ? 'Drop image here' : 'Upload new subject image'}
-                              </Typography>
-                            </Paper>
-                          ) : (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              {previewUrl && (
-                                <Box
-                                  component="img"
-                                  src={previewUrl}
-                                  sx={{
-                                    width: 60,
-                                    height: 60,
-                                    objectFit: 'cover',
-                                    borderRadius: 1,
-                                    border: 1,
-                                    borderColor: 'divider'
-                                  }}
-                                />
-                              )}
-                              <Box sx={{ flexGrow: 1 }}>
-                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                  {uploadedFile.name}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {(uploadedFile.size / (1024 * 1024)).toFixed(2)} MB
-                                </Typography>
-                              </Box>
-                              <Button size="small" onClick={removeImage} color="error">
-                                Remove
-                              </Button>
-                            </Box>
-                          )}
-                        </Box>
-                      </Paper>
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                      <Paper sx={{ p: 2, border: 1, borderColor: 'divider' }}>
-                        <Typography variant="subtitle1" gutterBottom>
-                          ✏️ Path B: Create with Style
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          Write a new prompt to create something new with this style
-                        </Typography>
-                        
-                        {/* Path B Text Input */}
-                        <Box sx={{ mt: 2 }}>
-                          <TextField
-                            fullWidth
-                            multiline
-                            rows={3}
-                            label="New Concept Prompt"
-                            value={recipeOverrides.prompt || ''}
-                            onChange={(e) => handleRecipeOverride('prompt', e.target.value)}
-                            placeholder="e.g., 'A coffee cup on a wooden table', 'A modern smartphone', 'A vintage bicycle'..."
-                            variant="outlined"
-                            size="small"
-                          />
-                        </Box>
-                      </Paper>
-                    </Grid>
-                  </Grid>
-                  
-                  <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', border: 1, borderColor: 'info.200', borderRadius: 1 }}>
-                    <Typography variant="body2" color="info.main">
-                      <strong>Tip:</strong> Use Path A for simple subject swaps (faster) or Path B for creating entirely new concepts with this style (more creative flexibility).
-                    </Typography>
-                  </Box>
-                </Paper>
-              </motion.div>
-            )}
+            {/* Recipe Active Mode - REMOVED: Style recipes now use dedicated StyleRecipeModal */}
           </Box>
           
           <form onSubmit={handleSubmit(onSubmit)}>
@@ -1034,8 +884,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                     </Typography>
                   </Box>
 
-                  {/* Prompt - Hidden in Recipe Active Mode */}
-                  {!isRecipeActive && (
+                  {/* Prompt */}
                     <Box sx={{ mb: 4 }}>
                       <Controller
                         name="prompt"
@@ -1055,10 +904,8 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                         )}
                       />
                     </Box>
-                  )}
 
-                  {/* Image Upload - Hidden in Recipe Active Mode */}
-                  {!isRecipeActive && (
+                  {/* Image Upload */}
                     <Box sx={{ mb: 4 }}>
                       <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, mb: 2 }}>
                         Reference Image (Optional)
@@ -1150,7 +997,6 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       </Box>
                     )}
                   </Box>
-                  )}
 
                   {/* Global Options */}
                   <Box sx={{ mb: 4 }}>
@@ -1574,6 +1420,21 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         onClose={() => setBrandKitPresetModalOpen(false)}
         onPresetSelected={handleApplyBrandKitPreset}
       />
+
+      {/* Style Recipe Modal */}
+      {activePreset && (
+        <StyleRecipeModal
+          preset={activePreset}
+          open={recipeModalOpen}
+          onClose={() => {
+            setRecipeModalOpen(false);
+            // Clear the active preset when closing the style recipe modal
+            // This ensures no lingering state from the style adaptation flow
+            setActivePreset(null);
+          }}
+          onRunStarted={onRunStarted}
+        />
+      )}
     </motion.div>
   );
 } 

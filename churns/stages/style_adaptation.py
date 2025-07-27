@@ -8,9 +8,10 @@ It acts as a specialized Creative Director that adapts the saved style to the ne
 import json
 import logging
 import asyncio
+import traceback
 from typing import Dict, Any, Optional
 from churns.pipeline.context import PipelineContext
-from churns.pipeline.preset_loader import merge_recipe_with_overrides
+
 from churns.models import VisualConceptDetails
 from churns.api.database import PresetType
 from churns.core.json_parser import (
@@ -37,49 +38,84 @@ async def run(ctx: PipelineContext) -> None:
     """
     Execute the StyleAdaptation stage to adapt a saved style recipe to a new concept.
     
-    This stage only runs when:
-    1. A STYLE_RECIPE preset is applied (ctx.preset_type == "STYLE_RECIPE")
-    2. The user provides a new text prompt (ctx.overrides.get('prompt'))
+    This stage runs when:
+    1. A STYLE_RECIPE preset is applied.
+    2. A new subject is introduced, typically via a new reference image analysis.
     """
+    stage_name = "StyleAdaptation"
+    logger.info(f"Starting {stage_name} stage")
+    
+    # Check if required models are available
+    if not VisualConceptDetails:
+        error_msg = "Error: StyleAdaptation Pydantic models not available."
+        logger.error(f"ERROR: {error_msg}")
+        ctx.stage_error = error_msg
+        ctx.generated_image_prompts = []
+        return
     
     # Check if StyleAdaptation is needed
     if ctx.preset_type != PresetType.STYLE_RECIPE:
         logger.info("StyleAdaptation skipped - no STYLE_RECIPE preset applied")
         return
     
-    if not ctx.overrides or not ctx.overrides.get('prompt'):
-        logger.info("StyleAdaptation skipped - no new prompt provided")
+    # A new image analysis result is the primary trigger for adaptation.
+    # A new prompt is a secondary, optional input.
+    new_image_analysis = getattr(ctx, 'image_analysis_result', None)
+    new_user_prompt = ctx.adaptation_prompt
+
+    if not new_image_analysis and not new_user_prompt:
+        logger.info("StyleAdaptation skipped - no new image or prompt provided for adaptation.")
         return
     
     if not ctx.preset_data:
-        logger.error("StyleAdaptation failed - no preset data available")
+        error_msg = "StyleAdaptation failed - no preset data available"
+        logger.error(f"ERROR: {error_msg}")
+        ctx.stage_error = error_msg
+        ctx.generated_image_prompts = []
         return
     
     logger.info("🎨 Starting StyleAdaptation stage")
     
     # Extract components from the saved style recipe
     base_recipe = ctx.preset_data
-    new_user_prompt = ctx.overrides.get('prompt')
     
     # Get the original visual concept from the recipe
     original_visual_concept = base_recipe.get('visual_concept', {})
     
-    # Check if we have a new image analysis (for image + prompt combination)
-    new_image_analysis = getattr(ctx, 'image_analysis_result', None)
-    
     # Build the system prompt for the StyleAdaptation agent
-    system_prompt = _build_system_prompt()
+    system_prompt = _build_system_prompt(
+        render_text_enabled=ctx.render_text,
+        apply_branding_enabled=ctx.apply_branding,
+        language=ctx.language
+    )
     
     # Build the user prompt with the recipe data and new request
-    user_prompt = _build_user_prompt(original_visual_concept, new_user_prompt, new_image_analysis)
+    user_prompt = _build_user_prompt(
+        original_visual_concept=original_visual_concept,
+        new_user_request=new_user_prompt,
+        new_image_analysis=new_image_analysis,
+        brand_kit_override=ctx.brand_kit if ctx.apply_branding else None,
+        is_override_event=getattr(ctx, 'brand_kit_is_override', False)
+    )
     
     # Determine parsing strategy using centralized logic
     use_manual_parsing = should_use_manual_parsing(STYLE_ADAPTATION_MODEL_ID)
     client_to_use = base_llm_client_style_adaptation if use_manual_parsing else instructor_client_style_adaptation
     use_instructor_for_call = bool(instructor_client_style_adaptation and not use_manual_parsing)
     
+    # Check if global client is available (injected by pipeline executor)
+    if not instructor_client_style_adaptation and not base_llm_client_style_adaptation:
+        error_msg = "LLM Client for StyleAdaptation not available."
+        logger.error(f"ERROR: {error_msg}")
+        ctx.stage_error = error_msg
+        ctx.generated_image_prompts = []
+        return
+    
     if not client_to_use:
-        logger.error("StyleAdaptation client not configured")
+        error_msg = "StyleAdaptation client not configured"
+        logger.error(f"ERROR: {error_msg}")
+        ctx.stage_error = error_msg
+        ctx.generated_image_prompts = []
         return
     
     # Prepare LLM arguments
@@ -90,7 +126,7 @@ async def run(ctx: PipelineContext) -> None:
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.7,  # Moderate creativity to balance consistency with adaptation
-        "max_tokens": 4000
+        "max_tokens": 6000  # Increased to handle complex JSON responses
     }
     
     # Add response model for instructor mode
@@ -119,26 +155,116 @@ async def run(ctx: PipelineContext) -> None:
             raw_response_content = completion.choices[0].message.content
             
             try:
+                # Custom fallback handler for nested JSON objects
+                def style_adaptation_fallback(data: dict) -> dict:
+                    """Handle nested objects that should be strings."""
+                    if isinstance(data, dict):
+                        # Handle main_subject as nested object
+                        if 'main_subject' in data and isinstance(data['main_subject'], dict):
+                            main_subj_dict = data['main_subject']
+                            if 'description' in main_subj_dict:
+                                desc = main_subj_dict['description']
+                                garnish = main_subj_dict.get('garnish', '')
+                                data['main_subject'] = f"{desc} {garnish}".strip()
+                            else:
+                                data['main_subject'] = str(main_subj_dict)
+                        
+                        # Handle promotional_text_visuals as nested object
+                        if 'promotional_text_visuals' in data and isinstance(data['promotional_text_visuals'], dict):
+                            ptv_dict = data['promotional_text_visuals']
+                            parts = []
+                            if 'text_content' in ptv_dict:
+                                parts.append(f"Text: '{ptv_dict['text_content']}'")
+                            if 'font_style' in ptv_dict:
+                                parts.append(f"Font: {ptv_dict['font_style']}")
+                            if 'color' in ptv_dict:
+                                parts.append(f"Color: {ptv_dict['color']}")
+                            if 'placement' in ptv_dict:
+                                parts.append(f"Placement: {ptv_dict['placement']}")
+                            data['promotional_text_visuals'] = ". ".join(parts) if parts else str(ptv_dict)
+                        
+                        # Handle branding_visuals as nested object
+                        if 'branding_visuals' in data and isinstance(data['branding_visuals'], dict):
+                            bv_dict = data['branding_visuals']
+                            parts = []
+                            if 'logo_description' in bv_dict:
+                                parts.append(f"Logo: {bv_dict['logo_description']}")
+                            if 'placement' in bv_dict:
+                                parts.append(f"Placement: {bv_dict['placement']}")
+                            if 'style' in bv_dict:
+                                parts.append(f"Style: {bv_dict['style']}")
+                            data['branding_visuals'] = ". ".join(parts) if parts else str(bv_dict)
+                    
+                    return data
+                
                 result_data = _json_parser.extract_and_parse(
                     raw_response_content,
-                    expected_schema=VisualConceptDetails
+                    expected_schema=VisualConceptDetails,
+                    fallback_validation=style_adaptation_fallback
                 )
                 adapted_visual_concept = result_data
+                
             except TruncatedResponseError as truncate_err:
-                logger.error(f"StyleAdaptation response was truncated: {truncate_err}")
-                logger.error(f"Raw response preview: {raw_response_content[:500]}...")
-                return
+                current_max_tokens = llm_args.get("max_tokens", 6000)
+                error_details = (
+                    f"StyleAdaptation response was truncated mid-generation. "
+                    f"Current max_tokens: {current_max_tokens}. "
+                    f"Consider increasing max_tokens or trying a different model. "
+                    f"Truncation details: {truncate_err}\n"
+                    f"Raw response preview: {raw_response_content[:500]}..."
+                )
+                raise Exception(error_details)
+                
             except JSONExtractionError as extract_err:
-                logger.error(f"StyleAdaptation JSON extraction failed: {extract_err}")
-                logger.error(f"Raw response: {raw_response_content}")
-                return
+                error_details = f"StyleAdaptation JSON extraction/parsing failed: {extract_err}\nRaw: {raw_response_content}"
+                raise Exception(error_details)
+        
+        # Store original subject for metadata
+        original_visual_concept = base_recipe.get('visual_concept', {})
+        ctx.original_subject = original_visual_concept.get('main_subject', 'unknown_from_recipe')
         
         # Update the preset data with the adapted visual concept
         ctx.preset_data['visual_concept'] = adapted_visual_concept
         
-        # Apply any additional overrides to the adapted recipe
-        if ctx.overrides:
-            ctx.preset_data = merge_recipe_with_overrides(ctx.preset_data, ctx.overrides)
+        # Store adaptation context for metadata
+        ctx.adaptation_context = {
+            "original_visual_concept": original_visual_concept,
+            "adapted_visual_concept": adapted_visual_concept,
+            "adaptation_reasoning": f"Adapted {original_visual_concept.get('visual_style', 'style')} to new subject: {new_image_analysis.get('main_subject') if new_image_analysis else 'prompt override'}",
+            "adaptation_trigger": "new_subject_image" if new_image_analysis else "prompt_override"
+        }
+        
+        # --- NEW: Bridge the data flow gap ---
+        # Mimic the output of the skipped creative stages for downstream consumers.
+        
+        # 1. Populate generated_image_prompts for prompt_assembly
+        ctx.generated_image_prompts = [{
+            "source_strategy_index": 0,
+            "visual_concept": adapted_visual_concept
+        }]
+
+        # 2. Populate suggested_marketing_strategies for the caption stage
+        if 'strategy' in ctx.preset_data:
+            ctx.suggested_marketing_strategies = [ctx.preset_data['strategy']]
+
+        # 3. Populate style_guidance_sets for the caption stage
+        if 'style_guidance' in ctx.preset_data:
+            ctx.style_guidance_sets = [ctx.preset_data['style_guidance']]
+        # --- END: Bridge ---
+        
+        # Note: Brand kit overrides are now handled via the brand_kit_is_override flag
+        # and are incorporated directly into the LLM prompts above
+        
+        # Store token usage for cost calculation (following creative_expert pattern)
+        raw_response_obj = getattr(completion, '_raw_response', completion)
+        if hasattr(raw_response_obj, 'usage') and raw_response_obj.usage:
+            usage_dict = raw_response_obj.usage.model_dump()
+            if not hasattr(ctx, 'llm_usage'):
+                ctx.llm_usage = {}
+            ctx.llm_usage["style_adaptation"] = usage_dict
+            logger.info(f"Token Usage (StyleAdaptation): {usage_dict}")
+        else:
+            logger.info("Token usage data not available for StyleAdaptation.")
         
         logger.info("✅ StyleAdaptation completed successfully")
         
@@ -146,58 +272,96 @@ async def run(ctx: PipelineContext) -> None:
         logger.info(f"Adapted style from '{original_visual_concept.get('main_subject', 'unknown')}' to '{adapted_visual_concept.get('main_subject', 'unknown')}'")
         
     except Exception as e:
-        logger.error(f"StyleAdaptation failed: {str(e)}")
+        # Follow the same error handling pattern as creative_expert
+        error_details = f"StyleAdaptation failed: {str(e)}"
+        if "Raw:" not in error_details and 'raw_response_content' in locals():
+            error_details += f"\nRaw Content: {raw_response_content}"
+        
+        logger.error(f"ERROR (StyleAdaptation): {error_details}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        # Set error state so it's visible in the UI (consistent with executor expectations)
+        ctx.stage_error = error_details
+        ctx.generated_image_prompts = []
+        
         # Don't raise exception - let the pipeline continue with the original recipe
         return
 
 
-def _build_system_prompt() -> str:
-    """Build the system prompt for the StyleAdaptation agent."""
-    return """You are an expert Creative Director at a top-tier advertising agency. Your specialization is adapting a successful, existing visual style to a new creative brief while maintaining brand consistency. You are a master of preserving the *essence* of a style (lighting, mood, color, composition) while applying it to a completely new subject or concept.
+def _build_system_prompt(render_text_enabled: bool, apply_branding_enabled: bool, language: str) -> str:
+    """Build the system prompt by merging dynamic instructions with the best parts of the original static prompt."""
+
+    if render_text_enabled:
+        text_instruction = """- **Adapt Text**: `render_text` is enabled. You MUST generate a `promotional_text_visuals` field. Your description must detail the adapted text content, style, font, placement, and integration with the visual."""
+    else:
+        text_instruction = """- **Omit Text**: `render_text` is disabled. You MUST OMIT the `promotional_text_visuals` field from your JSON output."""
+
+    if apply_branding_enabled:
+        branding_instruction = """- **Adapt Branding**: `apply_branding` is enabled. You MUST generate a `branding_visuals` field. Your description MUST be a specific instruction for logo placement, prioritizing a watermark-style integration (e.g., 'Subtly place the logo in the bottom-right corner'). Avoid instructions that replace the main subject. If a `brand_kit_override` is provided, adapt to it; otherwise, adapt the original recipe's branding."""
+    else:
+        branding_instruction = """- **Omit Branding**: `apply_branding` is disabled. You MUST OMIT the `branding_visuals` field from your JSON output."""
+        
+    language_display = "SIMPLIFIED CHINESE" if language == 'zh' else language.upper()
+    lang_instruction = f"""- **Language Control**: The target language is {language_display}.
+      - `suggested_alt_text` MUST be written entirely in {language_display}.
+      - For `promotional_text_visuals`, the description of the *style* MUST be in ENGLISH. The actual *text content* MUST be in {language_display}.
+      - All other fields MUST be in ENGLISH.""" if language and language != 'en' else "- **Language**: The target language is English. All fields MUST be in English."
+
+    return f"""You are an expert Creative Director at a top-tier advertising agency. Your specialization is adapting a successful, existing visual style to a new creative brief while maintaining brand consistency. You are a master of preserving the *essence* of a style (lighting, mood, color, composition) while applying it to a completely new subject or concept.
 
 **Your Task:**
-You will be given a `base_style_recipe` as a structured JSON object, which represents the detailed aesthetic of a previously successful image. You will also be given a `new_user_request` as a text string, which describes the new concept to be created.
-
-Your job is to intelligently merge these two inputs and produce a single, new `visual_concept` JSON object as your output.
+You will be given a `base_style_recipe`, which represents the detailed aesthetic of a previously successful image. You will also be given a `new_user_request`, which describes the new concept to be created. Your job is to intelligently merge these inputs and produce a single, new `visual_concept` JSON object as your output, strictly following the instructions below.
 
 **Core Principles & Constraints:**
-1. **Preserve the Style**: You MUST preserve the high-level aesthetic of the `base_style_recipe`. The `lighting_and_mood`, `color_palette`, and `visual_style` fields from the original recipe are your primary source of truth. **Keep these three fields *identical* to the base recipe unless the `new_user_request` explicitly asks you to change them (e.g., "make it a nighttime scene").**
-2. **Adapt the Concept**: You MUST adapt the `main_subject`, `composition_and_framing`, and `background_environment` fields to fit the `new_user_request`.
-3. **Handle Precedence**: If the `new_user_request` directly contradicts a field in the `base_style_recipe`, the **new user request always wins**. For example, if the recipe specifies a "warm, sunny" mood but the user asks for "a dark, moody atmosphere," your output must reflect the "dark, moody atmosphere."  
-   • *Brand-visual precedence*: retain `promotional_text_visuals` and `branding_visuals` from the base recipe unless the new_user_request explicitly overrides or removes them.
-   • *Image vs. Text Precedence*: If a `new_image_analysis` is provided alongside a `new_user_request`, treat the user request text as the primary instruction. Use the image analysis for contextual details (like subject shape, specific textures, or background elements) but if the text gives a conflicting instruction, the text instruction always takes precedence.
-4. **No Minor Edits**: You are **FORBIDDEN** from making small, corrective "refinement" style edits. Do not remove small objects, fix typos, or perform minor touch-ups. Your focus is on the high-level creative direction and composition ONLY.
-5. **Output Format**: Your entire output MUST be a single, valid JSON object that conforms to the `VisualConceptDetails` schema. Do not include any commentary, explanations, or text outside of the JSON structure.
-
-**Output Schema (your response):**
-Adhere strictly to the Pydantic JSON output format (`VisualConceptDetails`). Note that `main_subject`, `promotional_text_visuals`, and `branding_visuals` are optional and should be omitted (set to null) if the specific scenario instructs it. The `suggested_alt_text` field is mandatory. Ensure all other required descriptions are detailed enough to guide image generation effectively.
+1.  **Follow Rendering Instructions Precisely**:
+    {text_instruction}
+    {branding_instruction}
+    {lang_instruction}
+2.  **Preserve the Core Style**: You MUST preserve the high-level aesthetic of the `base_style_recipe`. The `lighting_and_mood`, `color_palette`, and `visual_style` fields are your primary source of truth. Keep these fields *identical* to the base recipe unless the `new_user_request` explicitly asks you to change them (e.g., "make it a nighttime scene").
+3.  **Adapt the Concept**: You MUST adapt the `main_subject`, `composition_and_framing`, and `background_environment` fields to fit the new subject and/or the `new_user_request`.
+4.  **Handle Precedence**: If the `new_user_request` directly contradicts a field in the `base_style_recipe`, the **new user request always wins**.
+5.  **No Minor Edits**: You are **FORBIDDEN** from making small, corrective "refinement" style edits. Do not remove small objects, fix typos, or perform minor touch-ups. Your focus is on the high-level creative direction and composition ONLY.
+6.  **Output Format**: Your entire output MUST be a single, valid JSON object that conforms to the `VisualConceptDetails` schema. Do not include any commentary, explanations, or text outside of the JSON structure.
 """
 
 
-def _build_user_prompt(original_visual_concept: Dict[str, Any], new_user_request: str, new_image_analysis: Optional[Dict[str, Any]] = None) -> str:
-    """Build the user prompt for the StyleAdaptation agent."""
+def _build_user_prompt(
+    original_visual_concept: Dict[str, Any], 
+    new_user_request: str, 
+    new_image_analysis: Optional[Dict[str, Any]] = None,
+    brand_kit_override: Optional[Dict[str, Any]] = None,
+    is_override_event: bool = False
+) -> str:
+    """Build the user prompt, including brand kit overrides if detected."""
     
-    prompt = f"""Here is the `base_style_recipe` to adapt:
-```json
-{json.dumps(original_visual_concept, indent=2)}
-```
+    prompt_parts = [f"Here is the `base_style_recipe` to adapt:\n```json\n{json.dumps(original_visual_concept, indent=2)}\n```"]
+    
+    if new_user_request:
+        prompt_parts.append(f'\nHere is the `new_user_request`:\n"{new_user_request}"')
+    elif new_image_analysis:
+        # If no text prompt, explicitly state that the image analysis is the new request.
+        prompt_parts.append('\nA new reference image has been provided. The `new_image_analysis` below defines the new subject and context. Your task is to adapt the `base_style_recipe` to this new subject.')
 
-Here is the `new_user_request`:
-"{new_user_request}"
-"""
-    
     if new_image_analysis:
-        prompt += f"""
-(Optional) Here is the `new_image_analysis` of a provided reference image:
+        prompt_parts.append(f"""
+Here is the `new_image_analysis` of the provided reference image:
 ```json
 {json.dumps(new_image_analysis, indent=2)}
-```
-"""
+```""")
+
+    if brand_kit_override and is_override_event:
+        override_parts = ["\n**CRITICAL: Adapt the base style recipe using this `brand_kit_override`:**"]
+        if brand_kit_override.get('colors'):
+            override_parts.append(f"- **New Brand Colors:** `{brand_kit_override['colors']}`. The `color_palette` in your response MUST be adapted to harmonize with these colors.")
+        if brand_kit_override.get('brand_voice_description'):
+            override_parts.append(f"- **New Brand Voice:** `'{brand_kit_override['brand_voice_description']}'`. The `lighting_and_mood` must be adapted to align with this voice.")
+        if brand_kit_override.get('logo_analysis'):
+            override_parts.append(f"- **New Logo Details:** A new logo is provided. Describe its placement and integration in the `branding_visuals` field. Logo style is: `'{brand_kit_override['logo_analysis'].get('logo_style', 'N/A')}'`.")
+        prompt_parts.append("\n".join(override_parts))
+
+    prompt_parts.append("\nNow, generate the new `visual_concept` JSON object.")
     
-    prompt += """
-Now, generate the new `visual_concept` JSON object that adapts the original style to the new request."""
-    
-    return prompt
+    return "\n".join(prompt_parts)
 
 
 def _apply_token_budget_mitigation(visual_concept: Dict[str, Any]) -> Dict[str, Any]:

@@ -30,113 +30,112 @@ def map_to_supported_aspect_ratio_for_prompt(aspect_ratio: str, ctx: Optional[Pi
         return "1:1"
 
 
+def _get_prompt_prefix(is_style_adaptation: bool, has_reference: bool, has_logo: bool, has_instruction: bool, instruction_text: str) -> str:
+    """Determines the correct prompt prefix based on the scenario using clear, readable conditions."""
+
+    # Style adaptation is a distinct mode that overrides other scenarios.
+    # if is_style_adaptation:
+    #     logo_integration_phrase = ", integrating the provided logo," if has_logo else ""
+    #     return (
+    #         f"Adapt the provided reference image{logo_integration_phrase} to match the following detailed visual concept. "
+    #         "Focus on applying the stylistic elements (lighting, color, mood, texture) from the description to the composition of the reference image: "
+    #     )
+
+    # Scenarios with a reference image
+    if has_reference:
+        if has_logo:  # Complex Edit (Reference + Logo)
+            if has_instruction:
+                return f"Based on the provided primary reference image and the secondary image as a logo, modify it according to the user instruction '{instruction_text}' to achieve the following detailed visual concept: "
+            else:
+                return "Using the provided primary reference image and the secondary logo image, create a composition that integrates both elements according to the following detailed visual concept: "
+        else:  # Reference Image Only
+            if has_instruction: # Instructed Edit
+                return f"Based on the provided reference image, modify it according to the user instruction '{instruction_text}' to achieve the following detailed visual concept: "
+            else: # Default Edit (Preserve Subject)
+                return "Edit the provided image. Preserve the main subject exactly as it is in the original image. Modify only the surrounding context (background, lighting, style, composition, etc.) to match this description: "
+
+    # Scenarios without a reference image
+    if has_logo:  # Logo Only
+        if has_instruction:
+            return f"Using the provided logo, adapt it according to the user instruction '{instruction_text}' to achieve the following detailed visual concept: "
+        else:
+            return "Integrate the provided logo into the following detailed visual concept: "
+
+    # Full Generation (no reference, no logo)
+    return "Create an image based on the following detailed visual concept: "
+
+
+def _assemble_core_description(vc: Dict[str, Any], user_inputs: Dict[str, Any], include_main_subject: bool) -> str:
+    """Assembles the core descriptive parts of the prompt."""
+    parts = []
+    
+    if include_main_subject:
+        parts.append(vc.get("main_subject"))
+        
+    parts.append(f"Composition and Framing: {vc.get('composition_and_framing')}")
+    parts.append(f"Background: {vc.get('background_environment')}")
+    
+    if vc.get("foreground_elements"):
+        parts.append(f"Foreground elements: {vc.get('foreground_elements')}")
+        
+    parts.append(f"Lighting & Mood: {vc.get('lighting_and_mood')}")
+    parts.append(f"Color Palette: {vc.get('color_palette')}")
+    parts.append(f"Visual Style: {vc.get('visual_style')}")
+    
+    if vc.get("texture_and_details"):
+        parts.append(f"Textures & Details: {vc.get('texture_and_details')}")
+        
+    if user_inputs.get("render_text", False) and vc.get("promotional_text_visuals"):
+        parts.append(f"Promotional Text Visuals: {vc.get('promotional_text_visuals')}")
+        
+    if user_inputs.get("apply_branding", False) and vc.get("branding_visuals"):
+        parts.append(f"Branding Visuals: {vc.get('branding_visuals')}")
+        
+    if vc.get("negative_elements"):
+        parts.append(f"Negative Elements to Avoid: {vc.get('negative_elements')}")
+        
+    return " ".join(filter(None, parts))
+
+
 def assemble_final_prompt(structured_prompt_data: Dict[str, Any], user_inputs: Dict[str, Any], platform_aspect_ratio: str) -> str:
     """Assembles the final text prompt string from the structured visual concept details."""
     if not structured_prompt_data or "visual_concept" not in structured_prompt_data:
         return "Error: Invalid structured prompt data for assembly."
-    
+
     vc = structured_prompt_data["visual_concept"]
     image_reference = user_inputs.get("image_reference")
     brand_kit = user_inputs.get("brand_kit")
-    
-    # Determine what image inputs are available
+    is_style_adaptation_run = user_inputs.get("is_style_adaptation_run", False)
+
+    # Determine context from inputs
     has_reference = image_reference is not None
     has_logo = brand_kit is not None and brand_kit.get("saved_logo_path_in_run_dir") is not None
     has_instruction = has_reference and image_reference.get("instruction")
     instruction_text = image_reference.get("instruction", "") if has_instruction else ""
     
-    supported_aspect_ratio_for_prompt = map_to_supported_aspect_ratio_for_prompt(platform_aspect_ratio)
-    is_default_edit_scenario = has_reference and not has_instruction and vc.get("main_subject") is None
+    # Determine the appropriate prompt prefix
+    prefix = _get_prompt_prefix(
+        is_style_adaptation=is_style_adaptation_run,
+        has_reference=has_reference,
+        has_logo=has_logo,
+        has_instruction=has_instruction,
+        instruction_text=instruction_text
+    )
 
-    final_prompt_str = ""
+    # The main subject is only needed if there's no reference image to define it.
+    include_main_subject = not has_reference
     
-    # Common parts for all scenarios
-    branding_visuals_prompt = f"Branding Visuals: {vc.get('branding_visuals')}" if user_inputs.get("apply_branding", False) and vc.get("branding_visuals") else None
+    core_description = _assemble_core_description(
+        vc=vc,
+        user_inputs=user_inputs,
+        include_main_subject=include_main_subject
+    )
 
-    # Determine the appropriate prompt structure based on available inputs
-    if has_reference and has_logo:
-        # COMPLEX EDIT: Both reference image and logo are present
-        if has_instruction:
-            prefix = f"Based on the provided primary reference image and the secondary image as a logo, modify it according to the user instruction '{instruction_text}' to achieve the following detailed visual concept: "
-        else:
-            prefix = "Using the provided primary reference image and the secondary logo image, create a composition that integrates both elements according to the following detailed visual concept: "
-        
-        core_description_parts = [
-            vc.get("main_subject"), 
-            vc.get("composition_and_framing"),
-            f"Background: {vc.get('background_environment')}",
-            f"Foreground elements: {vc.get('foreground_elements')}" if vc.get("foreground_elements") else None,
-            f"Lighting & Mood: {vc.get('lighting_and_mood')}", 
-            f"Color Palette: {vc.get('color_palette')}",
-            f"Visual Style: {vc.get('visual_style')}",
-            f"Textures & Details: {vc.get('texture_and_details')}" if vc.get("texture_and_details") else None,
-            f"Promotional Text Visuals: {vc.get('promotional_text_visuals')}" if user_inputs.get("render_text", False) and vc.get("promotional_text_visuals") else None,
-            branding_visuals_prompt,
-            f"Avoid the following elements: {vc.get('negative_elements')}" if vc.get("negative_elements") else None,
-        ]
-        core_description = " ".join(filter(None, core_description_parts))
-        final_prompt_str = f"{prefix}{core_description} IMPORTANT: Ensure the image strictly adheres to a {supported_aspect_ratio_for_prompt} aspect ratio."
-        
-    elif has_logo and not has_reference:
-        # LOGO ONLY: Only logo is present as reference
-        if has_instruction:
-            prefix = f"Using the provided logo, adapt it according to the user instruction '{instruction_text}' to achieve the following detailed visual concept: "
-        else:
-            prefix = "Using the provided logo as the base, create a composition according to the following detailed visual concept: "
-            
-        core_description_parts = [
-            vc.get("main_subject"), 
-            vc.get("composition_and_framing"),
-            f"Background: {vc.get('background_environment')}",
-            f"Foreground elements: {vc.get('foreground_elements')}" if vc.get("foreground_elements") else None,
-            f"Lighting & Mood: {vc.get('lighting_and_mood')}", 
-            f"Color Palette: {vc.get('color_palette')}",
-            f"Visual Style: {vc.get('visual_style')}",
-            f"Textures & Details: {vc.get('texture_and_details')}" if vc.get("texture_and_details") else None,
-            f"Promotional Text Visuals: {vc.get('promotional_text_visuals')}" if user_inputs.get("render_text", False) and vc.get("promotional_text_visuals") else None,
-            branding_visuals_prompt,
-            f"Avoid the following elements: {vc.get('negative_elements')}" if vc.get("negative_elements") else None,
-        ]
-        core_description = " ".join(filter(None, core_description_parts))
-        final_prompt_str = f"{prefix}{core_description} IMPORTANT: Ensure the image strictly adheres to a {supported_aspect_ratio_for_prompt} aspect ratio."
-        
-    elif is_default_edit_scenario:
-        # DEFAULT EDIT: Existing logic for reference image without instruction
-        prefix = "Edit the provided image. Preserve the main subject exactly as it is in the original image. Modify only the surrounding context (background, lighting, style, composition, etc.) to match this description: "
-        context_parts = [
-            vc.get("composition_and_framing"), 
-            f"Background: {vc.get('background_environment')}",
-            f"Foreground elements: {vc.get('foreground_elements')}" if vc.get("foreground_elements") else None,
-            f"Lighting & Mood: {vc.get('lighting_and_mood')}", 
-            f"Color Palette: {vc.get('color_palette')}",
-            f"Visual Style: {vc.get('visual_style')}",
-            f"Textures & Details: {vc.get('texture_and_details')}" if vc.get("texture_and_details") else None,
-            f"Promotional Text Visuals: {vc.get('promotional_text_visuals')}" if user_inputs.get("render_text", False) and vc.get("promotional_text_visuals") else None,
-            branding_visuals_prompt,
-            f"Avoid the following elements: {vc.get('negative_elements')}" if vc.get("negative_elements") else None,
-        ]
-        context_description = " ".join(filter(None, context_parts))
-        final_prompt_str = f"{prefix}{context_description} IMPORTANT: Ensure the image strictly adheres to a {supported_aspect_ratio_for_prompt} aspect ratio."
-    else:
-        # FULL GENERATION or INSTRUCTED EDIT: Existing logic for generation or instructed edit
-        core_description_parts = [
-            vc.get("main_subject"), 
-            vc.get("composition_and_framing"),
-            f"Background: {vc.get('background_environment')}",
-            f"Foreground elements: {vc.get('foreground_elements')}" if vc.get("foreground_elements") else None,
-            f"Lighting & Mood: {vc.get('lighting_and_mood')}", 
-            f"Color Palette: {vc.get('color_palette')}",
-            f"Visual Style: {vc.get('visual_style')}",
-            f"Textures & Details: {vc.get('texture_and_details')}" if vc.get("texture_and_details") else None,
-            f"Promotional Text Visuals: {vc.get('promotional_text_visuals')}" if user_inputs.get("render_text", False) and vc.get("promotional_text_visuals") else None,
-            branding_visuals_prompt,
-            f"Avoid the following elements: {vc.get('negative_elements')}" if vc.get("negative_elements") else None,
-        ]
-        core_description = " ".join(filter(None, core_description_parts))
-        prefix = ""
-        if has_reference and has_instruction: 
-            prefix = f"Based on the provided reference image, modify it according to the user instruction '{instruction_text}' to achieve the following detailed visual concept: "
-        final_prompt_str = f"{prefix}{core_description} IMPORTANT: Ensure the image strictly adheres to a {supported_aspect_ratio_for_prompt} aspect ratio."
+    supported_aspect_ratio_for_prompt = map_to_supported_aspect_ratio_for_prompt(platform_aspect_ratio)
+    
+    suffix = f" IMPORTANT: Ensure the image strictly adheres to a {supported_aspect_ratio_for_prompt} aspect ratio."
+    
+    final_prompt_str = f"{prefix}{core_description}{suffix}"
     
     return final_prompt_str
 
@@ -155,13 +154,15 @@ async def run(ctx: PipelineContext) -> None:
     
     # Get data from previous stages
     structured_prompts = ctx.generated_image_prompts or []
+    is_style_adaptation_run = hasattr(ctx, 'adaptation_context') and ctx.adaptation_context is not None
     
     # Build user_inputs dict from context fields for compatibility with assemble_final_prompt
     user_inputs = {
         "image_reference": ctx.image_reference,
         "brand_kit": ctx.brand_kit,
         "render_text": ctx.render_text,
-        "apply_branding": ctx.apply_branding
+        "apply_branding": ctx.apply_branding,
+        "is_style_adaptation_run": is_style_adaptation_run,
     }
     
     # Get platform aspect ratio
@@ -189,7 +190,10 @@ async def run(ctx: PipelineContext) -> None:
         
         # Determine assembly type
         assembly_type = "full_generation"  # Default
-        if has_reference and has_logo:
+        if is_style_adaptation_run:
+            assembly_type = "style_adaptation_edit"
+            ctx.log("   (Assembling prompt for style adaptation edit)")
+        elif has_reference and has_logo:
             assembly_type = "complex_edit"
             ctx.log("   (Assembling complex prompt for reference image + logo editing)")
         elif has_logo and not has_reference:
@@ -220,7 +224,8 @@ async def run(ctx: PipelineContext) -> None:
             "supported_aspect_ratio": map_to_supported_aspect_ratio_for_prompt(platform_aspect_ratio),
             "has_reference": has_reference,
             "has_logo": has_logo,
-            "has_instruction": has_instruction
+            "has_instruction": has_instruction,
+            "is_style_adaptation": is_style_adaptation_run,
         }
         
         assembled_prompts.append(assembled_prompt_data)
