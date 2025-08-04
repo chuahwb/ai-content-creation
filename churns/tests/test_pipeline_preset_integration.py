@@ -22,7 +22,7 @@ class TestPipelinePresetIntegration:
             "id": "template_123",
             "name": "Test Template",
             "preset_type": PresetType.INPUT_TEMPLATE,
-            "model_id": "gpt-image-1",
+            "preset_source_type": "user-input",
             "preset_data": {
                 "prompt": "A delicious burger",
                 "task_type": "1. Product Photography",
@@ -57,7 +57,7 @@ class TestPipelinePresetIntegration:
             "id": "recipe_123",
             "name": "Test Recipe",
             "preset_type": PresetType.STYLE_RECIPE,
-            "model_id": "gpt-image-1",
+            "preset_source_type": "style-recipe",
             "preset_data": {
                 "visual_concept": {
                     "main_subject": "A gourmet burger",
@@ -416,15 +416,15 @@ class TestPipelinePresetIntegration:
             )
 
     @pytest.mark.asyncio
-    async def test_model_id_consistency(self, pipeline_context, sample_input_template, mock_db_session):
-        """Test that model_id is consistent between preset and context."""
+    async def test_preset_source_type_tracking(self, pipeline_context, sample_input_template, mock_db_session):
+        """Test that preset source type is properly tracked."""
         # Mock database query to return template
         mock_preset = Mock()
         mock_preset.id = sample_input_template["id"]
         mock_preset.name = sample_input_template["name"]
         mock_preset.preset_type = sample_input_template["preset_type"]
         mock_preset.preset_data = sample_input_template["preset_data"]
-        mock_preset.model_id = "gpt-image-1"
+        mock_preset.preset_source_type = "user-input"
         mock_preset.version = sample_input_template["version"]
         mock_preset.user_id = sample_input_template["user_id"]
         
@@ -434,8 +434,9 @@ class TestPipelinePresetIntegration:
         loader = PresetLoader(mock_db_session)
         await loader.load_preset(pipeline_context, "template_123")
         
-        # Verify model_id is consistent
-        assert pipeline_context.model_id == "gpt-image-1"
+        # Verify preset information is available in context
+        assert pipeline_context.preset_id == "template_123"
+        assert pipeline_context.preset_type == sample_input_template["preset_type"]
 
 if __name__ == "__main__":
     pytest.main([__file__]) 

@@ -1,8 +1,9 @@
-from typing import Optional
-from sqlalchemy import Column, DateTime, Text, JSON, text
+from typing import Optional, Callable, TypeVar, Any
+from sqlalchemy import Column, DateTime, Text, JSON, text, event
 from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import OperationalError
 from sqlmodel import SQLModel, Field
 import uuid
 from datetime import datetime
@@ -10,9 +11,67 @@ from enum import Enum
 from churns.models.presets import PipelineInputSnapshot, StyleRecipeData
 from churns.models import LogoAnalysisResult
 import logging
+import asyncio
+import random
 
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
+
+
+async def retry_db_operation(
+    operation: Callable[[], T], 
+    max_retries: int = 5,
+    base_delay: float = 0.1,
+    max_delay: float = 2.0,
+    operation_name: str = "database operation"
+) -> T:
+    """
+    Retry database operations with exponential backoff to handle SQLite lock contention.
+    
+    Args:
+        operation: Async callable that performs the database operation
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay between retries in seconds
+        max_delay: Maximum delay between retries in seconds
+        operation_name: Name of the operation for logging
+    
+    Returns:
+        Result of the successful operation
+        
+    Raises:
+        OperationalError: If all retries are exhausted
+    """
+    last_error = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await operation()
+        except OperationalError as e:
+            if "database is locked" not in str(e).lower():
+                # If it's not a lock error, don't retry
+                raise
+            
+            last_error = e
+            
+            if attempt == max_retries:
+                logger.error(f"Failed to execute {operation_name} after {max_retries} retries. Last error: {e}")
+                raise
+            
+            # Calculate delay with exponential backoff and jitter
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            jitter = random.uniform(0, delay * 0.1)  # Add up to 10% jitter
+            total_delay = delay + jitter
+            
+            logger.warning(f"Database locked during {operation_name}, retrying in {total_delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(total_delay)
+    
+    # This should never be reached, but just in case
+    if last_error:
+        raise last_error
+    else:
+        raise RuntimeError(f"Unexpected error in retry_db_operation for {operation_name}")
 
 
 class RunStatus(str, Enum):
@@ -127,6 +186,9 @@ class RefinementJob(SQLModel, table=True):
     # Input summary for UI
     refinement_summary: Optional[str] = Field(None, description="Brief description for display")
     
+    # Noise assessment result
+    needs_noise_reduction: Optional[bool] = Field(default=None, description="Noise assessment result: None=not assessed, True=noisy, False=clean")
+    
     # Refinement inputs
     prompt: Optional[str] = Field(None, description="User refinement prompt")
     instructions: Optional[str] = Field(None, description="Specific instructions")
@@ -173,7 +235,7 @@ class BrandPreset(SQLModel, table=True):
     
     # Versioning and metadata
     version: int = Field(default=1, description="Version number for optimistic locking")
-    model_id: str = Field(description="Model identifier used (e.g., 'dall-e-3')")
+    preset_source_type: str = Field(description="Source type of preset: 'user-input', 'brand-kit', or 'style-recipe'")
     pipeline_version: str = Field(description="Version of the pipeline used")
     
     # NEW: Source tracking for Style Recipes
@@ -197,9 +259,58 @@ class BrandPreset(SQLModel, table=True):
     updated_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), onupdate=func.now()))
 
 
-# Database configuration - Updated to use async
+# Database configuration - Updated to use async with improved settings
 DATABASE_URL = "sqlite+aiosqlite:///./data/runs.db"
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL, 
+    echo=False,
+    connect_args={
+        "check_same_thread": False,
+    },
+    pool_size=20,
+    max_overflow=0,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
+
+
+# Configure SQLite pragmas for better performance and concurrency
+async def setup_sqlite_pragmas(connection):
+    """Setup SQLite pragmas for optimal performance with async operations"""
+    try:
+        # Enable WAL mode for better concurrent access
+        await connection.execute(text("PRAGMA journal_mode=WAL"))
+        # Set larger cache size (64MB)
+        await connection.execute(text("PRAGMA cache_size=-64000"))
+        # Enable foreign key constraints
+        await connection.execute(text("PRAGMA foreign_keys=ON"))
+        # Set synchronous mode to NORMAL for better performance
+        await connection.execute(text("PRAGMA synchronous=NORMAL"))
+        # Use memory for temporary storage
+        await connection.execute(text("PRAGMA temp_store=MEMORY"))
+        # Enable memory-mapped I/O (128MB)
+        await connection.execute(text("PRAGMA mmap_size=134217728"))
+        logger.info("SQLite pragmas configured successfully")
+    except Exception as e:
+        logger.warning(f"Failed to configure SQLite pragmas: {e}")
+
+
+# Set up event listener to configure pragmas on new connections
+@event.listens_for(engine.sync_engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Set SQLite pragmas on new connections (sync version for compatibility)"""
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA cache_size=-64000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.execute("PRAGMA mmap_size=134217728")
+        cursor.close()
+    except Exception as e:
+        logger.warning(f"Failed to set SQLite pragmas on connection: {e}")
+
 
 # Create async session factory
 async_session_factory = sessionmaker(
@@ -273,6 +384,8 @@ async def migrate_pipeline_runs_preset_fields():
 async def create_db_and_tables():
     """Create database and tables, including migrations"""
     async with engine.begin() as conn:
+        # Set up SQLite pragmas for this connection
+        await setup_sqlite_pragmas(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
     
     # Run migrations for existing installations

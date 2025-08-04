@@ -214,7 +214,25 @@ class PresetLoader:
             if preset.brand_kit:
                 try:
                     preset_brand_kit = json.loads(preset.brand_kit)
-                    logger.info(f"Parsed brand kit from preset: {preset_brand_kit}")
+                    
+                    # Create a sanitized version for logging (hide base64 data)
+                    sanitized_brand_kit = preset_brand_kit.copy()
+                    if 'logo_base64' in sanitized_brand_kit:
+                        sanitized_brand_kit['logo_base64'] = "[HIDDEN]"
+                    if 'image_content_base64' in sanitized_brand_kit:
+                        sanitized_brand_kit['image_content_base64'] = "[HIDDEN]"
+                    if 'logo_file_base64' in sanitized_brand_kit:
+                        sanitized_brand_kit['logo_file_base64'] = "[HIDDEN]"
+                    # Also check nested structures
+                    if 'logo_analysis' in sanitized_brand_kit and isinstance(sanitized_brand_kit['logo_analysis'], dict):
+                        if 'logo_base64' in sanitized_brand_kit['logo_analysis']:
+                            sanitized_brand_kit['logo_analysis']['logo_base64'] = "[HIDDEN]"
+                        if 'image_content_base64' in sanitized_brand_kit['logo_analysis']:
+                            sanitized_brand_kit['logo_analysis']['image_content_base64'] = "[HIDDEN]"
+                        if 'logo_file_base64' in sanitized_brand_kit['logo_analysis']:
+                            sanitized_brand_kit['logo_analysis']['logo_file_base64'] = "[HIDDEN]"
+                    
+                    logger.info(f"Parsed brand kit from preset: {sanitized_brand_kit}")
                     
                     # Apply brand colors
                     if preset_brand_kit.get('colors'):
@@ -229,7 +247,16 @@ class PresetLoader:
                     # Apply logo analysis
                     if preset_brand_kit.get('logo_analysis'):
                         ctx.brand_kit['logo_analysis'] = preset_brand_kit['logo_analysis']
-                        logger.info(f"Applied logo analysis from preset: {preset_brand_kit['logo_analysis']}")
+                        # Create sanitized version for logging
+                        sanitized_logo_analysis = preset_brand_kit['logo_analysis'].copy() if isinstance(preset_brand_kit['logo_analysis'], dict) else preset_brand_kit['logo_analysis']
+                        if isinstance(sanitized_logo_analysis, dict):
+                            if 'logo_base64' in sanitized_logo_analysis:
+                                sanitized_logo_analysis['logo_base64'] = "[HIDDEN]"
+                            if 'image_content_base64' in sanitized_logo_analysis:
+                                sanitized_logo_analysis['image_content_base64'] = "[HIDDEN]"
+                            if 'logo_file_base64' in sanitized_logo_analysis:
+                                sanitized_logo_analysis['logo_file_base64'] = "[HIDDEN]"
+                        logger.info(f"Applied logo analysis from preset: {sanitized_logo_analysis}")
                     
                     # Apply logo file path if present
                     if preset_brand_kit.get('saved_logo_path_in_run_dir'):

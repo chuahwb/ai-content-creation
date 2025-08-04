@@ -115,8 +115,9 @@ class PipelineCostSummary(BaseModel):
 
 class ImageAssessmentResult(BaseModel):
     """Structured result of image quality assessment."""
-    assessment_scores: Dict[str, int] = Field(..., description="Scores for different assessment criteria (1-5 scale)")
+    assessment_scores: Dict[str, int] = Field(..., description="Scores for different assessment criteria (1-5 scale, noise_and_grain_impact uses 1-3 scale)")
     assessment_justification: Dict[str, str] = Field(..., description="Detailed justification for each score")
+    needs_noise_reduction: bool = Field(False, description="Flag indicating if noise/grain is significant enough for refinement")
 
 class LogoAnalysisResult(BaseModel):
     """Structured result of the visual analysis of a brand logo."""

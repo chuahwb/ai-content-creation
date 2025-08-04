@@ -64,6 +64,125 @@ class ImageAssessor:
         self.model_id = model_id or IMAGE_ASSESSMENT_MODEL_ID
         self.token_manager = get_token_cost_manager()
     
+    def _prepare_system_content(self, assessment_type: str = "full") -> Tuple[str, float, int]:
+        """
+        Prepare system content and API parameters based on model characteristics.
+        
+        Args:
+            assessment_type: Either "full" for complete assessment or "noise" for noise-only
+        
+        Returns:
+            Tuple of (system_content, temperature, max_tokens)
+        """
+        # Check if this is a problematic model that needs special handling
+        is_problematic_model = IMAGE_ASSESSMENT_MODEL_ID in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS
+        
+        # Adjust system prompt for problematic models
+        if is_problematic_model:
+            system_content = """You are an expert art director. You MUST respond with valid JSON in the exact format specified. Do not include any markdown code blocks, explanatory text, or any other formatting. Your response should start directly with { and end with }. Only return the JSON object."""
+            temperature = 0.1  # Lower temperature for more consistent responses
+            max_tokens = 2000  # Slightly higher token limit
+        else:
+            system_content = "You are an expert art director. You MUST respond ONLY with valid JSON in the exact format specified. Do not include any markdown, explanatory text, or formatting - just pure JSON."
+            temperature = 0.1
+            max_tokens = 1500
+        
+        # Special handling for o4-mini model which has known JSON issues
+        if "o4-mini" in self.model_id.lower():
+            system_content = """You are an expert art director. CRITICAL: Your response must be ONLY a valid JSON object. No explanations, no markdown, no text before or after the JSON. Start with { and end with }."""
+            temperature = 0.05  # Very low temperature for consistency
+            max_tokens = 2500  # More tokens to avoid truncation
+            
+            # Add JSON schema hint based on assessment type
+            if assessment_type == "full":
+                system_content += "\n\nJSON SCHEMA REMINDER: The response must match this exact structure:\n{\"assessment_scores\": {\"concept_adherence\": 1-5, ...}, \"assessment_justification\": {...}, \"general_score\": 0.0-5.0, \"needs_subject_repair\": false, \"needs_regeneration\": false, \"needs_text_repair\": false}"
+            else:  # noise assessment
+                system_content += "\n\nJSON SCHEMA REMINDER: The response must match this exact structure:\n{\"noise_and_grain_impact\": 1-3}"
+        
+        return system_content, temperature, max_tokens
+    
+    async def _make_vision_api_call(self, user_content: List[Dict[str, Any]], assessment_type: str = "full") -> str:
+        """
+        Make a vision API call with robust retry logic and response validation.
+        
+        Args:
+            user_content: List of content items for the user message
+            assessment_type: Either "full" for complete assessment or "noise" for noise-only
+            
+        Returns:
+            Raw response content as string
+            
+        Raises:
+            ImageAssessmentError: If API call fails after retries
+        """
+        system_content, temperature, max_tokens = self._prepare_system_content(assessment_type)
+        
+        # Determine retry strategy based on model characteristics
+        is_problematic_model = IMAGE_ASSESSMENT_MODEL_ID in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS
+        max_retries = 2 if is_problematic_model else 1
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    print(f"Vision API retry attempt {attempt + 1}/{max_retries} for model {self.model_id}")
+                
+                # Shorter timeout for retries to fail fast
+                timeout = 30 if attempt == 0 else 15
+                
+                response = await asyncio.to_thread(
+                    self.client.chat.completions.create,
+                    model=self.model_id,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": system_content
+                        },
+                        {
+                            "role": "user",
+                            "content": user_content
+                        }
+                    ],
+                    temperature=temperature,
+                    max_completion_tokens=max_tokens,
+                    timeout=timeout
+                )
+                
+                # Validate response structure
+                if response is None:
+                    raise ImageAssessmentError("API call returned None response")
+                
+                if not hasattr(response, 'choices') or not response.choices:
+                    raise ImageAssessmentError("API response missing choices")
+                
+                if not response.choices[0] or not hasattr(response.choices[0], 'message'):
+                    raise ImageAssessmentError("API response missing message in first choice")
+                
+                raw_content = response.choices[0].message.content
+                if not raw_content:
+                    raise ImageAssessmentError("Empty response from OpenAI")
+                
+                return raw_content
+                
+            except Exception as e:
+                last_exception = e
+                print(f"Vision API attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
+                
+                if attempt < max_retries - 1:
+                    # Shorter wait time to fail faster
+                    wait_time = min(1.0, 0.5 * (attempt + 1))
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    break
+        
+        # All retries failed - provide detailed error context
+        error_context = f"Model: {self.model_id}, Attempts: {max_retries}"
+        if "Could not extract JSON" in str(last_exception):
+            error_context += " (JSON parsing issue - may need model-specific handling)"
+        
+        raise ImageAssessmentError(f"Vision API call failed after {max_retries} attempts: {str(last_exception)}. Context: {error_context}")
+    
     async def assess_image_async(
         self, 
         image_path: str,
@@ -118,118 +237,99 @@ class ImageAssessor:
             has_reference_image, reference_image_data
         )
         
-        # Adjust system prompt for problematic models
-        if is_problematic_model:
-            system_content = """You are an expert art director. You MUST respond with valid JSON in the exact format specified. Do not include any markdown code blocks, explanatory text, or any other formatting. Your response should start directly with { and end with }. Only return the JSON object."""
-            temperature = 0.1  # Lower temperature for more consistent responses
-            max_tokens = 2000  # Slightly higher token limit
-        else:
-            system_content = "You are an expert art director. You MUST respond ONLY with valid JSON in the exact format specified. Do not include any markdown, explanatory text, or formatting - just pure JSON."
-            temperature = 0.1
-            max_tokens = 1500
+        # Use common vision API infrastructure
+        raw_content = await self._make_vision_api_call(user_content)
         
-        # Special handling for o4-mini model which has known JSON issues
-        if "o4-mini" in self.model_id.lower():
-            system_content = """You are an expert art director. CRITICAL: Your response must be ONLY a valid JSON object. No explanations, no markdown, no text before or after the JSON. Start with { and end with }."""
-            temperature = 0.05  # Very low temperature for consistency
-            max_tokens = 2500  # More tokens to avoid truncation
-            # Add JSON schema hint in system prompt for better reliability
-            system_content += "\n\nJSON SCHEMA REMINDER: The response must match this exact structure:\n{\"assessment_scores\": {\"concept_adherence\": 1-5, ...}, \"assessment_justification\": {...}, \"general_score\": 0.0-5.0, \"needs_subject_repair\": false, \"needs_regeneration\": false, \"needs_text_repair\": false}"
+        # Extract and validate JSON with enhanced error reporting
+        try:
+            assessment_data = self._parse_assessment_response(raw_content, has_reference_image, render_text_enabled)
+        except ImageAssessmentError as parse_err:
+            # For JSON extraction failures, log the raw content for debugging
+            if "Could not extract JSON" in str(parse_err) and len(raw_content) < 2000:
+                print(f"JSON extraction failed. Raw content: {raw_content[:500]}...")
+            raise parse_err
         
-        # Make API call to OpenAI with improved retry logic
-        max_retries = 2 if is_problematic_model else 1
-        last_exception = None
+        # Store token usage info for aggregated tracking (but not in individual result)
+        token_info = {
+            "prompt_tokens": image_token_breakdown["total_image_tokens"] + 100,  # Estimated
+            "completion_tokens": 150,  # Estimated
+            "total_tokens": image_token_breakdown["total_image_tokens"] + 250,  # Estimated
+            "model": self.model_id,
+            "image_token_breakdown": image_token_breakdown,
+            "estimated_text_tokens": 100,  # Estimated
+            "detail_level": "high"
+        }
         
-        for attempt in range(max_retries):
-            try:
-                # Log the attempt for debugging
-                if attempt > 0:
-                    print(f"Image assessment retry attempt {attempt + 1}/{max_retries} for model {self.model_id}")
-                
-                # Shorter timeout for retries to fail fast
-                timeout = 30 if attempt == 0 else 15
-                
-                response = await asyncio.to_thread(
-                    self.client.chat.completions.create,
-                    model=self.model_id,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": system_content
-                        },
-                        {
-                            "role": "user",
-                            "content": user_content
-                        }
-                    ],
-                    temperature=temperature,
-                    max_completion_tokens=max_tokens,
-                    timeout=timeout  # Progressive timeout reduction
-                )
-                
-                # Check if response is None
-                if response is None:
-                    raise ImageAssessmentError("API call returned None response")
-                
-                # Check if response has choices
-                if not hasattr(response, 'choices') or not response.choices:
-                    raise ImageAssessmentError("API response missing choices")
-                
-                # Check if first choice exists and has message
-                if not response.choices[0] or not hasattr(response.choices[0], 'message'):
-                    raise ImageAssessmentError("API response missing message in first choice")
-                
-                # Parse and validate response
-                raw_content = response.choices[0].message.content
-                if not raw_content:
-                    raise ImageAssessmentError("Empty response from OpenAI")
-                
-                # Extract and validate JSON with enhanced error reporting
-                try:
-                    assessment_data = self._parse_assessment_response(raw_content, has_reference_image, render_text_enabled)
-                except ImageAssessmentError as parse_err:
-                    # For JSON extraction failures, log the raw content for debugging
-                    if "Could not extract JSON" in str(parse_err) and len(raw_content) < 2000:
-                        print(f"JSON extraction failed for attempt {attempt + 1}. Raw content: {raw_content[:500]}...")
-                    raise parse_err
-                
-                # Store token usage info for aggregated tracking (but not in individual result)
-                token_info = {
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else image_token_breakdown["total_image_tokens"] + 100,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 150,
-                    "total_tokens": response.usage.total_tokens if response.usage else image_token_breakdown["total_image_tokens"] + 250,
-                    "model": self.model_id,
-                    "image_token_breakdown": image_token_breakdown,
-                    "estimated_text_tokens": max(0, (response.usage.prompt_tokens if response.usage else image_token_breakdown["total_image_tokens"] + 100) - image_token_breakdown["total_image_tokens"]),
-                    "detail_level": "high"
-                }
-                
-                # Return assessment data with token info separate for aggregation
-                return {
-                    **assessment_data,
-                    "_token_info": token_info  # Temporary field for aggregation, will be removed
-                }
-                
-            except Exception as e:
-                last_exception = e
-                # Log the specific error for debugging
-                print(f"Image assessment attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
-                
-                if attempt < max_retries - 1:
-                    # Shorter wait time to fail faster (reduce from exponential backoff)
-                    wait_time = min(1.0, 0.5 * (attempt + 1))  # 0.5s, 1s instead of 1s, 2s
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    # Final attempt failed
-                    break
+        # Return assessment data with token info separate for aggregation
+        return {
+            **assessment_data,
+            "_token_info": token_info  # Temporary field for aggregation, will be removed
+        }
+
+    async def assess_noise_only_async(self, image_path: str) -> bool:
+        """
+        Assess image for noise and grain issues only (simplified on-demand assessment).
         
-        # All retries failed - provide detailed error context
-        error_context = f"Model: {self.model_id}, Attempts: {max_retries}"
-        if "Could not extract JSON" in str(last_exception):
-            error_context += " (JSON parsing issue - may need model-specific handling)"
+        This method leverages the common vision API infrastructure to minimize code duplication
+        while providing specialized noise assessment functionality.
         
-        raise ImageAssessmentError(f"OpenAI API call failed after {max_retries} attempts: {str(last_exception)}. Context: {error_context}")
+        Args:
+            image_path: Path to the refined image to assess
+            
+        Returns:
+            True if noise reduction is needed, False if image is clean
+        """
+        # Load the image using existing robust method
+        image_data = await self._load_image_as_base64(image_path)
+        if not image_data:
+            raise ImageAssessmentError(f"Failed to load image: {image_path}")
+        
+        image_base64, content_type = image_data
+        
+        # Create specialized noise assessment prompt
+        noise_assessment_prompt = """# ROLE & TASK
+You are an expert in image quality analysis. Your ONLY task is to assess the provided image for digital noise or unwanted graininess that is a result of the image generation process. Ignore intentional artistic grain.
+
+# REQUIRED JSON RESPONSE
+Respond ONLY with a valid JSON object in this exact format:
+{
+  "noise_and_grain_impact": <integer 1-3>
+}
+
+# SCORING GUIDE (1-3)
+- 3: No significant noise or grain. The image is clean.
+- 2: Mild, acceptable noise/grain is present.
+- 1: Serious noise/grain that degrades quality.
+
+Begin your assessment now."""
+        
+        # Prepare user content with image
+        user_content = [
+            {"type": "text", "text": noise_assessment_prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{image_base64}", "detail": "high"}}
+        ]
+        
+        try:
+            # Use common vision API infrastructure with noise-specific settings
+            raw_response = await self._make_vision_api_call(user_content, "noise")
+            
+            # Parse JSON response
+            json_parser = RobustJSONParser(debug_mode=False)
+            result_data = json_parser.extract_and_parse(raw_response)
+            
+            # Extract noise score and return boolean result
+            noise_score = result_data.get("noise_and_grain_impact", 3)
+            if isinstance(noise_score, (int, float)):
+                # Return True if score is less than 3 (indicating noise needs reduction)
+                return float(noise_score) < 3
+            else:
+                # If parsing fails, default to False (assume clean)
+                return False
+                
+        except Exception as e:
+            # Handle gracefully by returning False (assume clean)
+            print(f"Noise assessment failed for {image_path}: {str(e)}")
+            return False
 
     def assess_image(
         self, 
@@ -398,22 +498,37 @@ Your mission is to evaluate the generated image against specific quality criteri
         """Create the detailed assessment criteria section."""
         criteria_parts = [
             "# ASSESSMENT CRITERIA",
-            "",
-            self._get_concept_adherence_criteria(),
-            self._get_technical_quality_criteria()
+            ""
         ]
         
+        # Track criterion number for dynamic numbering
+        criterion_num = 1
+        
+        # Always include concept adherence and technical quality
+        criteria_parts.append(self._get_concept_adherence_criteria(criterion_num))
+        criterion_num += 1
+        
+        criteria_parts.append(self._get_technical_quality_criteria(criterion_num))
+        criterion_num += 1
+        
+        # Conditionally add subject preservation
         if has_reference_image:
-            criteria_parts.append(self._get_subject_preservation_criteria(creativity_level))
+            criteria_parts.append(self._get_subject_preservation_criteria(creativity_level, criterion_num))
+            criterion_num += 1
             
+        # Conditionally add text rendering
         if render_text_enabled:
-            criteria_parts.append(self._get_text_rendering_criteria(has_reference_image))
+            criteria_parts.append(self._get_text_rendering_criteria(has_reference_image, criterion_num))
+            criterion_num += 1
+            
+        # Always add noise and grain assessment
+        criteria_parts.append(self._get_noise_and_grain_criteria(criterion_num))
             
         return "\n".join(criteria_parts)
 
-    def _get_concept_adherence_criteria(self) -> str:
+    def _get_concept_adherence_criteria(self, criterion_num: int) -> str:
         """Get detailed concept adherence scoring criteria."""
-        return """## 1. CONCEPT ADHERENCE
+        return f"""## {criterion_num}. CONCEPT ADHERENCE
 **Question:** How well does the generated image align with the visual concept?
 
 **Detailed Scoring Guide:**
@@ -425,9 +540,9 @@ Your mission is to evaluate the generated image against specific quality criteri
 
 **Focus Areas:** themes, mood, color palette, composition, described elements"""
 
-    def _get_technical_quality_criteria(self) -> str:
+    def _get_technical_quality_criteria(self, criterion_num: int) -> str:
         """Get detailed technical quality scoring criteria."""
-        return """## 2. TECHNICAL QUALITY
+        return f"""## {criterion_num}. TECHNICAL QUALITY
 **Question:** Is the image technically sound (excluding rendered text)?
 
 **Detailed Scoring Guide:**
@@ -439,7 +554,7 @@ Your mission is to evaluate the generated image against specific quality criteri
 
 **Focus Areas:** artifacts, proportions, lighting, resolution, aspect ratio, anatomical accuracy"""
 
-    def _get_subject_preservation_criteria(self, creativity_level: int) -> str:
+    def _get_subject_preservation_criteria(self, creativity_level: int, criterion_num: int) -> str:
         """Get detailed subject preservation scoring criteria based on creativity level."""
         if creativity_level == 1:
             scoring_guide = """**Detailed Scoring Guide (Low Creativity - Photorealistic):**
@@ -456,7 +571,7 @@ Your mission is to evaluate the generated image against specific quality criteri
 - **2:** The subject's identity is distorted or partially lost due to significant loss of detail or excessive stylization.
 - **1:** The subject is unrecognizable"""
         
-        return f"""## 3. SUBJECT PRESERVATION
+        return f"""## {criterion_num}. SUBJECT PRESERVATION
 **Question:** How faithfully is the reference subject represented considering the creativity level?
 
 {scoring_guide}
@@ -465,7 +580,7 @@ Your mission is to evaluate the generated image against specific quality criteri
 
 **IMPORTANT - Text Assessment Scope:** This criterion also evaluates any text that appears ON or WITHIN the main subject (e.g., text overlaid on the subject, text integrated into the subject's clothing/accessories, text that is part of the subject itself). Text that appears separately from or around the subject is handled by the Text Rendering Quality criterion."""
 
-    def _get_text_rendering_criteria(self, has_reference_image: bool) -> str:
+    def _get_text_rendering_criteria(self, has_reference_image: bool, criterion_num: int) -> str:
         """Get detailed text rendering quality scoring criteria."""
         
         # Define scope based on whether reference image is provided
@@ -474,7 +589,7 @@ Your mission is to evaluate the generated image against specific quality criteri
         else:
             scope_clarification = """**IMPORTANT - Text Assessment Scope:** This criterion evaluates ALL text elements in the image, as no reference subject is provided for comparison."""
         
-        return f"""## 4. TEXT RENDERING QUALITY
+        return f"""## {criterion_num}. TEXT RENDERING QUALITY
 **Question:** If text was requested, is it rendered correctly and integrated well?
 
 **Detailed Scoring Guide:**
@@ -487,6 +602,20 @@ Your mission is to evaluate the generated image against specific quality criteri
 **Focus Areas:** spelling accuracy, legibility, visual integration, stylistic coherence
 
 {scope_clarification}"""
+
+    def _get_noise_and_grain_criteria(self, criterion_num: int) -> str:
+        """Get detailed noise and grain assessment scoring criteria."""
+        return f"""## {criterion_num}. NOISE & GRAIN ASSESSMENT
+**Question:** Is the image affected by unwanted noise, grain, or digital artifacts?
+
+**Detailed Scoring Guide (1-3 scale):**
+- **3:** No significant noise or grain. The image is clean and clear.
+- **2:** Mild noise/grain is present but may be acceptable for the intended use.
+- **1:** Serious noise/grain that degrades image quality and impacts usability.
+
+**Focus Areas:** digital noise, grain texture, unwanted speckles, compression artifacts, smoothness of gradients
+
+**Note:** This assessment focuses on technical artifacts from the generation process, not intentional artistic grain or texture that is part of the desired visual style."""
 
     def _create_visual_concept_section(self, visual_concept: Dict[str, Any]) -> str:
         """Create the visual concept reference section."""
@@ -518,6 +647,9 @@ The following is the target visual concept you must assess against:
         if render_text_enabled:
             scores_structure.append('    "text_rendering_quality": <integer 1-5>')
             justification_structure.append('    "text_rendering_quality": "<detailed explanation>"')
+        
+        # Always add noise and grain assessment (no justification required)
+        scores_structure.append('    "noise_and_grain_impact": <integer 1-3>')
         
         # Pre-calculate the joined strings to avoid backslashes in f-string expressions
         scores_joined = ',\n'.join(scores_structure)
@@ -615,6 +747,9 @@ Begin your assessment now."""
             flags["needs_text_repair"] = scores["text_rendering_quality"] < 4
         else:
             flags["needs_text_repair"] = False
+            
+        # Always check for noise and grain (default to 3 if missing to avoid false positives)
+        flags["needs_noise_reduction"] = scores.get("noise_and_grain_impact", 3) < 3
         
         return flags
     
@@ -676,7 +811,7 @@ Begin your assessment now."""
             "assessment_justification": {}
         }
         
-        # Extract scores (required) - now using 1-5 scale
+        # Extract scores (required) - using 1-5 scale for most, 1-3 for noise_and_grain_impact
         scores = data.get("assessment_scores", {})
         if isinstance(scores, dict):
             for key in ["concept_adherence", "subject_preservation", "technical_quality", "text_rendering_quality"]:
@@ -686,6 +821,14 @@ Begin your assessment now."""
                         result["assessment_scores"][key] = max(1, min(5, score))  # Clamp to 1-5
                     except (ValueError, TypeError):
                         result["assessment_scores"][key] = 3  # Default fallback (middle of 1-5 scale)
+            
+            # Handle noise_and_grain_impact with 1-3 scale
+            if "noise_and_grain_impact" in scores:
+                try:
+                    score = int(scores["noise_and_grain_impact"])
+                    result["assessment_scores"]["noise_and_grain_impact"] = max(1, min(3, score))  # Clamp to 1-3
+                except (ValueError, TypeError):
+                    result["assessment_scores"]["noise_and_grain_impact"] = 3  # Default to best score (no noise)
         
         # Extract justifications
         justifications = data.get("assessment_justification", {})

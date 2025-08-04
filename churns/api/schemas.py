@@ -104,6 +104,7 @@ class RefinementResult(BaseModel):
     image_path: Optional[str] = None
     cost_usd: Optional[float] = None
     refinement_summary: Optional[str] = None
+    needs_noise_reduction: Optional[bool] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
@@ -331,7 +332,7 @@ class BrandPresetCreateRequest(BaseModel):
     style_recipe: Optional[StyleRecipeData] = Field(None, description="Style recipe data for STYLE_RECIPE")
     
     # Metadata
-    model_id: str = Field(description="Model identifier used")
+    preset_source_type: str = Field(description="Source type: 'user-input', 'brand-kit', or 'style-recipe'")
     pipeline_version: str = Field(description="Version of the pipeline used")
 
 
@@ -350,7 +351,7 @@ class BrandPresetResponse(BaseModel):
     name: str = Field(description="User-friendly name")
     preset_type: str = Field(description="Type of preset")
     version: int = Field(description="Current version")
-    model_id: str = Field(description="Model identifier")
+    preset_source_type: str = Field(description="Source type: 'user-input', 'brand-kit', or 'style-recipe'")
     pipeline_version: str = Field(description="Pipeline version")
     usage_count: int = Field(description="Number of times used")
     created_at: datetime = Field(description="Creation timestamp")

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -52,6 +52,11 @@ interface PresetManagementModalProps {
   open: boolean;
   onClose: () => void;
   onPresetSelected: (preset: BrandPresetResponse) => void;
+  onPresetSaved?: () => void;
+}
+
+export interface PresetManagementModalRef {
+  refreshPresets: () => void;
 }
 
 interface TabPanelProps {
@@ -80,11 +85,12 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
-export default function PresetManagementModal({ 
+const PresetManagementModal = forwardRef<PresetManagementModalRef, PresetManagementModalProps>(({ 
   open, 
   onClose, 
-  onPresetSelected 
-}: PresetManagementModalProps) {
+  onPresetSelected,
+  onPresetSaved
+}, ref) => {
   const [activeTab, setActiveTab] = useState(0);
   const [presets, setPresets] = useState<BrandPresetResponse[]>([]);
   const [loading, setLoading] = useState(false);
@@ -121,6 +127,11 @@ export default function PresetManagementModal({
     }
   }, [open]);
 
+  // Expose refresh method to parent component
+  useImperativeHandle(ref, () => ({
+    refreshPresets: loadPresets
+  }));
+
   const loadPresets = async () => {
     setLoading(true);
     setError(null);
@@ -153,17 +164,8 @@ export default function PresetManagementModal({
     onPresetSelected(preset);
     onClose();
     
-    // Check if this is a brand kit preset - if so, don't show notification here
-    // (the brand kit handler will show its own specific notification)
-    const isBrandKitPreset = preset.preset_type === 'INPUT_TEMPLATE' && 
-                            preset.brand_kit && 
-                            (preset.brand_kit.colors?.length || preset.brand_kit.brand_voice_description || preset.brand_kit.logo_file_base64) &&
-                            preset.model_id === 'brand-kit-preset' &&
-                            preset.input_snapshot?.platform_name === 'Brand Kit (Universal)';
-    
-    if (!isBrandKitPreset) {
-      toast.success(`${preset.preset_type === 'INPUT_TEMPLATE' ? 'Template' : 'Recipe'} "${preset.name}" applied`);
-    }
+    // Note: All preset application messaging is now handled by the PipelineForm
+    // to provide comprehensive context and avoid duplicate notifications
   };
 
   const handleRenameClick = () => {
@@ -193,6 +195,7 @@ export default function PresetManagementModal({
       setRenameName('');
       setSelectedPreset(null); // Clear selected preset after successful rename
       loadPresets(); // Refresh list
+      onPresetSaved?.(); // Notify parent of preset change
     } catch (err) {
       toast.error('Failed to rename preset');
       console.error('Error renaming preset:', err);
@@ -214,6 +217,7 @@ export default function PresetManagementModal({
       setDeleteDialogOpen(false);
       setSelectedPreset(null); // Clear selected preset after successful deletion
       loadPresets(); // Refresh list
+      onPresetSaved?.(); // Notify parent of preset change
     } catch (err) {
       toast.error('Failed to delete preset');
       console.error('Error deleting preset:', err);
@@ -335,7 +339,7 @@ export default function PresetManagementModal({
           apply_branding: false, // Brand kit definition doesn't apply itself
           language: 'en', // Default language
         },
-        model_id: 'brand-kit-preset',
+        preset_source_type: 'brand-kit',
         pipeline_version: '1.0.0',
       };
 
@@ -363,6 +367,7 @@ export default function PresetManagementModal({
       setBrandKitDialogOpen(false);
       setSelectedPreset(null);
       loadPresets(); // Refresh the list to show updated data
+      onPresetSaved?.(); // Notify parent of preset change
     } catch (error: any) {
       console.error('Error saving brand kit:', error);
       
@@ -389,7 +394,7 @@ export default function PresetManagementModal({
       // For Templates tab: exclude brand kit presets (they appear in Brand Kit tab only)
       return presets.filter(preset => 
         preset.preset_type === type && 
-        !(preset.model_id === 'brand-kit-preset' && 
+        !(preset.preset_source_type === 'brand-kit' && 
           preset.input_snapshot?.platform_name === 'Brand Kit (Universal)')
       );
     }
@@ -485,9 +490,6 @@ export default function PresetManagementModal({
                     </Typography>
                     <Box display="flex" gap={2} mt={1}>
                       <Typography variant="caption" color="text.secondary">
-                        Model: {preset.model_id}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
                         Used: {preset.usage_count} times
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
@@ -525,7 +527,7 @@ export default function PresetManagementModal({
     const brandKitPresets = presets.filter(preset => 
       preset.preset_type === 'INPUT_TEMPLATE' && 
       (preset.brand_kit?.colors?.length || preset.brand_kit?.brand_voice_description || preset.brand_kit?.logo_file_base64) &&
-      preset.model_id === 'brand-kit-preset' &&
+      preset.preset_source_type === 'brand-kit' &&
       preset.input_snapshot?.platform_name === 'Brand Kit (Universal)'
     );
     
@@ -732,7 +734,7 @@ export default function PresetManagementModal({
                     Brand Kit ({presets.filter(preset => 
                       preset.preset_type === 'INPUT_TEMPLATE' && 
                       (preset.brand_kit?.colors?.length || preset.brand_kit?.brand_voice_description || preset.brand_kit?.logo_file_base64) &&
-                      preset.model_id === 'brand-kit-preset' &&
+                      preset.preset_source_type === 'brand-kit' &&
                       preset.input_snapshot?.platform_name === 'Brand Kit (Universal)'
                     ).length})
                   </Box>
@@ -965,4 +967,8 @@ export default function PresetManagementModal({
       </Dialog>
     </>
   );
-} 
+});
+
+PresetManagementModal.displayName = 'PresetManagementModal';
+
+export default PresetManagementModal;

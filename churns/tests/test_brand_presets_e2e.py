@@ -63,7 +63,7 @@ class TestBrandPresetsE2E:
             "name": "E2E Test Template",
             "description": "Template for E2E testing",
             "preset_type": PresetType.INPUT_TEMPLATE,
-            "model_id": "gpt-image-1",
+            "preset_source_type": "user-input",
             "preset_data": {
                 "prompt": "A delicious gourmet burger",
                 "task_type": "1. Product Photography",
@@ -166,7 +166,7 @@ class TestBrandPresetsE2E:
             "name": "E2E Test Recipe",
             "description": "Recipe for E2E testing",
             "preset_type": PresetType.STYLE_RECIPE,
-            "model_id": "gpt-image-1",
+            "preset_source_type": "style-recipe",
             "preset_data": {
                 "visual_concept": {
                     "main_subject": "A gourmet burger with crispy bacon",
@@ -293,7 +293,7 @@ class TestBrandPresetsE2E:
             "name": "E2E Style Transfer Recipe",
             "description": "Recipe for style transfer testing",
             "preset_type": PresetType.STYLE_RECIPE,
-            "model_id": "gpt-image-1",
+            "preset_source_type": "style-recipe",
             "preset_data": {
                 "visual_concept": {
                     "main_subject": "A gourmet burger with crispy bacon",

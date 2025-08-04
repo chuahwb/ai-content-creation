@@ -9,7 +9,6 @@ import asyncio
 from datetime import datetime, timezone
 import traceback
 import base64
-from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -19,9 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from churns.api.database import (
     get_session, PipelineRun, PipelineStage, RefinementJob, RefinementType,
-    RunStatus, StageStatus, create_db_and_tables, BrandPreset, PresetType
+    RunStatus, StageStatus, create_db_and_tables, BrandPreset, PresetType,
+    retry_db_operation
 )
 from churns.api.dependencies import get_executor, get_refinement_executor, get_caption_executor
+from churns.pipeline.executor import PipelineExecutor
 from churns.api.schemas import (
     PipelineRunRequest, PipelineRunResponse, PipelineRunDetail, 
     RunListResponse, RunListItem, PipelineResults,
@@ -34,7 +35,6 @@ from churns.api.schemas import (
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
-from churns.pipeline.executor import PipelineExecutor
 from churns.core.constants import (
     SOCIAL_MEDIA_PLATFORMS, TASK_TYPES, PLATFORM_DISPLAY_NAMES,
     CAPTION_MODEL_OPTIONS, CAPTION_MODEL_ID
@@ -519,6 +519,7 @@ async def list_refinements(
             image_path=refinement.image_path,
             cost_usd=refinement.cost_usd,
             refinement_summary=refinement.refinement_summary,
+            needs_noise_reduction=refinement.needs_noise_reduction,
             created_at=refinement.created_at,
             completed_at=refinement.completed_at,
             error_message=refinement.error_message
@@ -733,6 +734,47 @@ async def cancel_refinement(
             return {"message": "Stalled refinement marked as cancelled"}
         else:
             return {"message": "Refinement is not currently running"}
+
+
+@api_router.post("/refinements/{job_id}/assess-noise")
+async def assess_refinement_noise(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    executor: PipelineExecutor = Depends(get_refinement_executor)
+):
+    """Assess a refined image for noise and grain issues"""
+    
+    # Validate refinement exists
+    refinement = await session.get(RefinementJob, job_id)
+    if not refinement:
+        raise HTTPException(status_code=404, detail="Refinement job not found")
+    
+    # Check refinement is completed and has an image
+    if refinement.status != RunStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Refinement must be completed. Current status: {refinement.status}")
+    
+    if not refinement.image_path:
+        raise HTTPException(status_code=400, detail="Refinement has no image to assess")
+    
+    # Check if already assessed
+    if refinement.needs_noise_reduction is not None:
+        return {
+            "message": "Noise assessment already completed",
+            "needs_noise_reduction": refinement.needs_noise_reduction
+        }
+    
+    # Start background noise assessment with pre-configured executor
+    background_tasks.add_task(
+        task_processor.run_noise_assessment_for_refinement,
+        job_id,
+        executor
+    )
+    
+    return {
+        "message": "Noise assessment started",
+        "job_id": job_id
+    }
 
 
 def _get_base_image_path(run_id: str, parent_image_id: str, parent_image_type: str, generation_index: Optional[int]) -> Optional[str]:
@@ -1075,31 +1117,53 @@ async def cancel_pipeline_run(
     session: AsyncSession = Depends(get_session)
 ):
     """Cancel a running pipeline"""
-    run = await session.get(PipelineRun, run_id)
+    
+    # Use retry logic for database operations to handle lock contention
+    async def get_run_with_retry():
+        return await session.get(PipelineRun, run_id)
+    
+    run = await retry_db_operation(
+        get_run_with_retry,
+        operation_name=f"get pipeline run {run_id} for cancellation"
+    )
+    
     if not run:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     
     if run.status in [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED]:
         return {"message": f"Pipeline is already in final state: {run.status}"}
     
-    # Attempt to cancel
+    # Attempt to cancel through task processor
     cancelled = await task_processor.cancel_run(run_id)
     
     if cancelled:
         return {"message": "Pipeline cancelled successfully"}
     else:
         # If not cancelled but status is RUNNING, it means the run is stalled
+        # Use retry logic for the database update
+        async def update_stalled_run():
+            # Refresh the run to get latest state
+            fresh_run = await session.get(PipelineRun, run_id)
+            if fresh_run and fresh_run.status == RunStatus.RUNNING:
+                fresh_run.status = RunStatus.CANCELLED
+                fresh_run.completed_at = datetime.now(timezone.utc)
+                fresh_run.error_message = "Pipeline execution was cancelled (stalled run)"
+                if fresh_run.started_at:
+                    fresh_run.total_duration_seconds = (fresh_run.completed_at - fresh_run.started_at).total_seconds()
+                session.add(fresh_run)
+                await session.commit()
+                return True
+            return False
+        
         if run.status == RunStatus.RUNNING:
-            run.status = RunStatus.CANCELLED
-            run.completed_at = datetime.now(timezone.utc)
-            run.error_message = "Pipeline execution was cancelled (stalled run)"
-            if run.started_at:
-                run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
-            session.add(run)
-            await session.commit()
-            return {"message": "Stalled pipeline marked as cancelled"}
-        else:
-            return {"message": "Pipeline is not currently running"}
+            updated = await retry_db_operation(
+                update_stalled_run,
+                operation_name=f"update stalled pipeline run {run_id}"
+            )
+            if updated:
+                return {"message": "Stalled pipeline marked as cancelled"}
+        
+        return {"message": "Pipeline is not currently running"}
 
 
 @runs_router.get("/{run_id}/results", response_model=PipelineResults)
@@ -1174,6 +1238,7 @@ async def get_pipeline_results(
                 image_path=refinement.image_path,
                 cost_usd=refinement.cost_usd,
                 refinement_summary=refinement.refinement_summary,
+                needs_noise_reduction=refinement.needs_noise_reduction,
                 created_at=refinement.created_at,
                 completed_at=refinement.completed_at,
                 error_message=refinement.error_message
@@ -1376,13 +1441,20 @@ async def generate_caption(
 ):
     """Generate a caption for a specific image"""
     
-    # Validate parent run exists and is completed
-    run = await session.get(PipelineRun, run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    # Validate parent run exists and is completed - use retry logic
+    async def validate_caption_run():
+        run = await session.get(PipelineRun, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Pipeline run not found")
+        
+        if run.status != RunStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
+        return run
     
-    if run.status != RunStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
+    run = await retry_db_operation(
+        validate_caption_run,
+        operation_name=f"validate run {run_id} for caption generation"
+    )
     
     # Validate and set model_id
     model_id = request.model_id or CAPTION_MODEL_ID
@@ -1438,13 +1510,20 @@ async def regenerate_caption(
 ):
     """Regenerate a caption with new settings or just new creativity"""
     
-    # Validate parent run exists and is completed
-    run = await session.get(PipelineRun, run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    # Validate parent run exists and is completed - use retry logic
+    async def validate_caption_regeneration_run():
+        run = await session.get(PipelineRun, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Pipeline run not found")
+        
+        if run.status != RunStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
+        return run
     
-    if run.status != RunStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Pipeline must be completed. Current status: {run.status}")
+    run = await retry_db_operation(
+        validate_caption_regeneration_run,
+        operation_name=f"validate run {run_id} for caption regeneration"
+    )
     
     # Determine model_id to use
     model_id = request.model_id or CAPTION_MODEL_ID
@@ -1616,7 +1695,7 @@ async def create_brand_preset(
         name=request.name,
         user_id=user_id,
         preset_type=request.preset_type,
-        model_id=request.model_id,
+        preset_source_type=request.preset_source_type,
         pipeline_version=request.pipeline_version,
         brand_kit=json.dumps(request.brand_kit.model_dump()) if request.brand_kit else None,
         input_snapshot=request.input_snapshot.model_dump_json() if request.input_snapshot else None,
@@ -1904,7 +1983,7 @@ async def save_preset_from_result(
         name=request.name,
         user_id=user_id,
         preset_type=PresetType.STYLE_RECIPE,
-        model_id="dall-e-3",  # TODO: Make this dynamic from run metadata
+        preset_source_type="style-recipe",
         pipeline_version="1.1.0",  # TODO: Get from run metadata
         source_run_id=run_id,
         source_image_path=source_image_path,
@@ -1933,7 +2012,7 @@ def _convert_preset_to_response(preset: BrandPreset) -> BrandPresetResponse:
             name=preset.name,
             preset_type=preset.preset_type,
             version=preset.version,
-            model_id=preset.model_id,
+            preset_source_type=preset.preset_source_type,
             pipeline_version=preset.pipeline_version,
             usage_count=preset.usage_count,
             created_at=preset.created_at,
@@ -1952,7 +2031,7 @@ def _convert_preset_to_response(preset: BrandPreset) -> BrandPresetResponse:
             name=f"{preset.name} (Error Loading)",
             preset_type=preset.preset_type,
             version=preset.version,
-            model_id=preset.model_id,
+            preset_source_type=preset.preset_source_type,
             pipeline_version=preset.pipeline_version,
             usage_count=preset.usage_count,
             created_at=preset.created_at,
