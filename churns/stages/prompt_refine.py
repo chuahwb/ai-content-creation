@@ -31,6 +31,7 @@ from .refinement_utils import (
     cleanup_temporary_files,
     get_image_ctx_and_main_object,
     get_uploaded_reference_image_path,
+    get_original_reference_image_path,
     RefinementError
 )
 from pydantic import BaseModel, Field
@@ -130,16 +131,19 @@ async def run(ctx: PipelineContext) -> None:
         # Perform actual prompt refinement using OpenAI API
         # Determine image size using shared utility
         image_size = determine_api_image_size(base_image.size)
-        ctx._api_image_size = image_size
-        
+        ctx._api_image_size = image_size    
+        original_reference_image_path = get_original_reference_image_path(ctx)
+        ctx.reference_image_path = original_reference_image_path
+        logger.info(f"Original Reference Image Path = {original_reference_image_path}")
+
         result_image_path = await call_openai_images_edit(
             ctx=ctx,
             enhanced_prompt=refined_prompt,
             image_size=image_size,
             mask_path=mask_path,
             image_gen_client=image_gen_client,
-            image_quality_setting="medium",  # Use same quality as original generation to maintain consistency
-            input_fidelity="high"  # High fidelity for all refinement operations
+            image_quality_setting="high",  # Use same quality as original generation to maintain consistency
+            input_fidelity="low"  # High fidelity for all refinement operations
         )
         
         
