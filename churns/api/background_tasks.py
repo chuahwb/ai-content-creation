@@ -677,8 +677,9 @@ class PipelineTaskProcessor:
             
             # Get job details from database - use retry logic
             parent_run = None
+            job = None
             async def get_refinement_job_details():
-                nonlocal parent_run
+                nonlocal parent_run, job
                 async with async_session_factory() as session:
                     job = await session.get(RefinementJob, job_id)
                     if not job:
@@ -908,8 +909,11 @@ class PipelineTaskProcessor:
                 operation_name=f"mark refinement {job_id} failed"
             )
             
-            # Send error notification
-            await connection_manager.send_run_error(job.parent_run_id, error_message, {"traceback": error_traceback, "job_id": job_id})
+            # Send error notification - only if we have job details
+            if job and hasattr(job, 'parent_run_id'):
+                await connection_manager.send_run_error(job.parent_run_id, error_message, {"traceback": error_traceback, "job_id": job_id})
+            else:
+                logger.warning(f"Cannot send error notification for refinement {job_id} - job details not available")
 
     async def _update_refinements_index(self, refinement_result):
         """Update the refinements.json index file"""
