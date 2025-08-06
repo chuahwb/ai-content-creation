@@ -272,7 +272,7 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
         mask_path=None,
         image_gen_client=image_gen_client,
         image_quality_setting="high",  # Use same quality as original generation to maintain consistency
-        input_fidelity="high"  # High fidelity for all refinement operations
+        input_fidelity="low"  # Low fidelity for all refinement operations
     )
     
     return result_image_path
