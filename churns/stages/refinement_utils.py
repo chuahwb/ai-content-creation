@@ -205,6 +205,27 @@ def get_image_ctx_and_main_object(ctx: PipelineContext):
         }
         return minimal_context, "Unknown Subject"
 
+def get_user_inputs(ctx: PipelineContext) -> Dict[str, Any]:
+    """Return user input from original_pipeline_data"""
+    user_inputs = {}
+    if hasattr(ctx, 'original_pipeline_data') and ctx.original_pipeline_data:
+        user_inputs = ctx.original_pipeline_data.get('user_inputs')
+    return user_inputs
+
+def get_assessment_result(ctx: PipelineContext) -> Dict[str, Any]:
+    """Return assessment result from original_pipeline_data"""
+    image_assessment_result = {}
+    if hasattr(ctx, 'original_pipeline_data') and ctx.original_pipeline_data:
+        processing_context = ctx.original_pipeline_data.get('processing_context')
+        if processing_context and isinstance(processing_context, dict):
+            all_assessment_result = processing_context.get('image_assessment')
+            # Iterate and get assessment result for the specific image index
+            for image_assessment in all_assessment_result:
+                if image_assessment.get('image_index') == ctx.generation_index:
+                    image_assessment_result = image_assessment
+                    break
+    return image_assessment_result
+
 def validate_refinement_inputs(ctx: PipelineContext, refinement_type: str) -> None:
     """Common input validation for all refinement stages."""
     
@@ -270,8 +291,8 @@ async def call_openai_images_edit(
     image_size: str,
     mask_path: Optional[str] = None,
     image_gen_client: Optional[OpenAI] = None,
-    image_quality_setting: str = "medium",
-    input_fidelity: str = "high"
+    image_quality_setting: str = "high",
+    input_fidelity: str = "low"
 ) -> str:
     """
     Common OpenAI images.edit API call with enhanced error handling and classification.
@@ -334,6 +355,10 @@ async def call_openai_images_edit(
                 image_list = [
                     open(ctx.base_image_path, "rb")
                 ]
+            # Logo Image Path
+            if hasattr(ctx, 'logo_image_path') and ctx.logo_image_path:
+                ctx.log(f"Found logo image path: {ctx.logo_image_path}")
+                image_list.append(open(ctx.logo_image_path, "rb"))
             ctx.log(f"Image List Length for API Image Edit Call: {len(image_list)}")
             response = await asyncio.to_thread(
                 image_gen_client.images.edit,
