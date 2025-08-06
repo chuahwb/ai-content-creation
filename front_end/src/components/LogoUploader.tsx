@@ -42,10 +42,16 @@ interface LogoAnalysis {
   optimization_suggestions?: string[];
 }
 
-// Logo-optimized formats only: PNG for raster logos with transparency, SVG for vector logos
+// Popular image formats supported by base64 encoding and browsers
 const SUPPORTED_FORMATS = {
   'image/png': ['.png'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/gif': ['.gif'],
+  'image/webp': ['.webp'],
   'image/svg+xml': ['.svg'],
+  'image/bmp': ['.bmp'],
+  'image/tiff': ['.tif', '.tiff'],
+  'image/ico': ['.ico'],
 };
 
 const formatFileSize = (bytes: number): string => {
@@ -63,8 +69,13 @@ const getOptimizationSuggestions = (analysis: LogoAnalysis): string[] => {
     suggestions.push('Consider compressing the logo to reduce file size');
   }
   
-  // Note: Only PNG and SVG are now accepted, so this check is no longer needed
-  // All uploaded logos are already in optimal formats
+  // Format-specific optimization suggestions
+  const format = analysis.format?.toLowerCase();
+  if (format === 'bmp' || format === 'tiff') {
+    suggestions.push('Consider converting to PNG or WebP for better compression');
+  } else if (format === 'gif' && analysis.file_size_kb > 100) {
+    suggestions.push('For static logos, PNG or WebP would provide better quality and smaller size');
+  }
   
   if (analysis.dimensions && analysis.dimensions.includes('x')) {
     const [width, height] = analysis.dimensions.split('x').map(Number);
@@ -77,11 +88,20 @@ const getOptimizationSuggestions = (analysis: LogoAnalysis): string[] => {
 };
 
 const getFileTypeIcon = (format: string) => {
-  // All accepted formats (PNG, SVG) are optimal for logos
+  // Optimal formats for logos get green checkmark
   switch (format?.toLowerCase()) {
     case 'svg':
     case 'png':
       return <CheckCircleIcon color="success" />;
+    case 'webp':
+      return <CheckCircleIcon color="success" />;
+    case 'jpeg':
+    case 'jpg':
+    case 'gif':
+    case 'bmp':
+    case 'tiff':
+    case 'ico':
+      return <InfoIcon color="info" />;
     default:
       return <InfoIcon color="info" />;
   }
@@ -91,7 +111,7 @@ export default function LogoUploader({
   onLogoUpload,
   onLogoRemove,
   currentLogo,
-  maxFileSize = 10, // 10MB default
+  maxFileSize = 50, // 50MB default
   showLabels = true,
 }: LogoUploaderProps) {
   const [uploading, setUploading] = useState(false);
@@ -139,7 +159,7 @@ export default function LogoUploader({
       if (error.code === 'file-too-large') {
         toast.error(`File too large. Maximum size is ${maxFileSize}MB`);
       } else if (error.code === 'file-invalid-type') {
-        toast.error('Unsupported file type. Please upload PNG or SVG files only.');
+        toast.error('Unsupported file type. Please upload PNG, JPEG, GIF, WebP, SVG, BMP, TIFF, or ICO files.');
       } else {
         toast.error('Invalid file. Please try again.');
       }
@@ -224,7 +244,7 @@ export default function LogoUploader({
             {uploading ? 'Please wait while we analyze your logo' : 'or click to select from your computer'}
           </Typography>
           <Typography variant="caption" color="textSecondary" sx={{ mt: 1 }}>
-                            PNG, SVG (max {maxFileSize}MB)
+            PNG, JPEG, GIF, WebP, SVG, BMP, TIFF, ICO (max {maxFileSize}MB)
           </Typography>
           {uploading && (
             <Box sx={{ width: '100%', mt: 2 }}>
