@@ -65,7 +65,7 @@ def sample_input_template():
     return {
         "name": "Test Template",
         "preset_type": "INPUT_TEMPLATE",
-        "model_id": "gpt-image-1",
+        "preset_source_type": "user-input",
         "pipeline_version": "1.0",
         "brand_colors": ["#FF6B35", "#004E89", "#F7931E"],
         "brand_voice_description": "Mouth-watering & Descriptive",
@@ -88,7 +88,7 @@ def sample_style_recipe():
     return {
         "name": "Test Recipe",
         "preset_type": "STYLE_RECIPE",
-        "model_id": "gpt-image-1",
+        "preset_source_type": "style-recipe",
         "pipeline_version": "1.0",
         "brand_colors": ["#FF6B35", "#004E89", "#F7931E"],
         "brand_voice_description": "Professional and appetizing",
@@ -226,7 +226,7 @@ class TestBrandPresetsAPI:
         invalid_preset = {
             "name": "Invalid Preset",
             "preset_type": "INVALID_TYPE",
-            "model_id": "gpt-image-1"
+            "preset_source_type": "user-input"
         }
         response = client.post("/api/v1/brand-presets/", json=invalid_preset)
         assert response.status_code == 422
@@ -369,7 +369,7 @@ class TestBrandPresetsDatabase:
         preset = BrandPreset(
             name="Test Preset",
             preset_type=PresetType.INPUT_TEMPLATE,
-            model_id="gpt-image-1",
+            preset_source_type="user-input",
             user_id="test_user",
             pipeline_version="1.0",
             input_snapshot='{"test": "data"}',
@@ -389,7 +389,7 @@ class TestBrandPresetsDatabase:
         preset = BrandPreset(
             name="Test Preset",
             preset_type=PresetType.INPUT_TEMPLATE,
-            model_id="gpt-image-1",
+            preset_source_type="user-input",
             user_id="test_user",
             pipeline_version="1.0",
             input_snapshot='{"test": "data"}',
@@ -415,7 +415,7 @@ class TestBrandPresetsDatabase:
         preset = BrandPreset(
             name="Test Preset",
             preset_type=PresetType.STYLE_RECIPE,
-            model_id="gpt-image-1",
+            preset_source_type="style-recipe",
             user_id="test_user",
             pipeline_version="1.0",
             style_recipe='{"test": "data"}',

@@ -63,7 +63,7 @@ export default function BrandKitPresetModal({
       const brandKitPresets = response.presets.filter(preset => 
         preset.preset_type === 'INPUT_TEMPLATE' && 
         (preset.brand_kit?.colors?.length || preset.brand_kit?.brand_voice_description || preset.brand_kit?.logo_file_base64) &&
-        preset.model_id === 'brand-kit-preset' &&
+        preset.preset_source_type === 'brand-kit' &&
         preset.input_snapshot?.platform_name === 'Brand Kit (Universal)'
       );
       setPresets(brandKitPresets);

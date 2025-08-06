@@ -359,7 +359,19 @@ Here is the `new_image_analysis` of the provided reference image:
             override_parts.append(f"- **New Logo Details:** A new logo is provided. Describe its placement and integration in the `branding_visuals` field. Logo style is: `'{brand_kit_override['logo_analysis'].get('logo_style', 'N/A')}'`.")
         prompt_parts.append("\n".join(override_parts))
 
-    prompt_parts.append("\nNow, generate the new `visual_concept` JSON object.")
+    # --- NEW: CONSISTENCY CHECKLIST ---
+    prompt_parts.append("""
+### CONSISTENCY CHECKLIST (Must-Pass)
+- Match the **camera angle & framing** from the structural framework exactly.
+- Re-use the **lighting setup & shadow direction** from the framework.
+- Preserve the **text style, font category, colour, and placement**, adapting only the wording to suit the new subject.
+- Use the **branding placement & scale** exactly as defined in the framework.
+- Translate the **colour hierarchy** (primary / accent) into the new palette without introducing off-brand colours.
+""")
+
+    # --- PART 5: FINAL INSTRUCTION ---
+    prompt_parts.append("\nNow, generate the new `visual_concept` JSON object. Remember to replace subject-specific descriptions (like `main_subject`, `foreground_elements`) with new content appropriate for the new subject, while strictly maintaining the specified framework.")
+    prompt_parts.append("\n**CRITICAL: Ensure all descriptions in the new `visual_concept` refer *only* to the new subject and its context. Do not mention the original subject from the framework (e.g., 'soy milk bottle').**")
     
     return "\n".join(prompt_parts)
 

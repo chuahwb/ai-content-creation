@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Card,
   CardContent,
@@ -43,7 +43,7 @@ import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PipelineFormData, PipelineRunResponse, BrandPresetResponse, BrandKitInput } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
-import PresetManagementModal from './PresetManagementModal';
+import PresetManagementModal, { PresetManagementModalRef } from './PresetManagementModal';
 import BrandKitPresetModal from './BrandKitPresetModal';
 import StyleRecipeModal from './StyleRecipeModal';
 import ColorPaletteEditor from './ColorPaletteEditor';
@@ -69,7 +69,7 @@ const formSchema = z.object({
   task_description: z.string().optional(),
   brand_kit: z.object({
     colors: z.array(z.string()).optional(),
-    brand_voice_description: z.string().optional(),
+    brand_voice_description: z.string().nullable().optional(),
     logo_file_base64: z.string().nullable().optional(),
     saved_logo_path_in_run_dir: z.string().nullable().optional(),
   }).optional(),
@@ -93,6 +93,15 @@ const formSchema = z.object({
     }, {
       message: 'Please enter a valid 2-letter ISO-639-1 language code (e.g., es, fr, ja, de, it)',
     }),
+}).refine((data) => {
+  // Conditional validation: task_type is required when mode is task_specific_mode
+  if (data.mode === 'task_specific_mode' && (!data.task_type || data.task_type.trim() === '')) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Task type is required for task-specific mode',
+  path: ['task_type'], // This will show the error on the task_type field
 });
 
 interface PipelineFormProps {
@@ -129,10 +138,12 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showCustomLanguage, setShowCustomLanguage] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   
   // Preset-related state
   const [activePreset, setActivePreset] = useState<BrandPresetResponse | null>(null);
   const [presetModalOpen, setPresetModalOpen] = useState(false);
+  const presetModalRef = useRef<PresetManagementModalRef>(null);
 
   // Add state for save template functionality after the existing state declarations
   // Save template dialog state
@@ -146,6 +157,27 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   // Style recipe modal state
   const [recipeModalOpen, setRecipeModalOpen] = useState(false);
 
+  // Store original default values to ensure reset always goes back to true defaults
+  const originalDefaultValues: PipelineFormData = {
+    mode: 'easy_mode',
+    platform_name: '',
+    creativity_level: 1,
+    num_variants: 3,
+    prompt: '',
+    task_type: '',
+    task_description: '',
+    brand_kit: undefined,
+    image_instruction: '',
+    render_text: false,
+    apply_branding: false,
+    marketing_audience: '',
+    marketing_objective: '',
+    marketing_voice: '',
+    marketing_niche: '',
+    language: 'en',
+    image_file: undefined,
+  };
+
   const {
     control,
     handleSubmit,
@@ -155,16 +187,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     formState: { errors },
   } = useForm<PipelineFormData>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      mode: 'easy_mode',
-      platform_name: '',
-      creativity_level: 1,
-      num_variants: 3,
-      render_text: false,
-      apply_branding: false,
-      language: 'en',
-      brand_kit: undefined,
-    },
+    defaultValues: originalDefaultValues,
   });
 
   const selectedMode = watch('mode');
@@ -221,11 +244,14 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
   // Preset handling functions
   const handlePresetSelected = (preset: BrandPresetResponse) => {
+    // Detect potential conflicts before applying preset
+    const conflicts = detectPresetConflicts(preset);
+    
     // Check if this is a pure brand kit preset (brand kit data + minimal input_snapshot)
     const isBrandKitPreset = preset.preset_type === 'INPUT_TEMPLATE' && 
                             preset.brand_kit && 
                             (preset.brand_kit.colors?.length || preset.brand_kit.brand_voice_description || preset.brand_kit.logo_file_base64) &&
-                            preset.model_id === 'brand-kit-preset' &&
+                            preset.preset_source_type === 'brand-kit' &&
                             preset.input_snapshot?.platform_name === 'Brand Kit (Universal)';
     
     if (isBrandKitPreset) {
@@ -247,17 +273,50 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     setActivePreset(preset);
     applyPresetToForm(preset);
     setPresetModalOpen(false);
-    toast.success(`${preset.preset_type === 'INPUT_TEMPLATE' ? 'Template' : 'Recipe'} "${preset.name}" applied`);
+    // Note: applyPresetToForm handles its own success/validation messaging
   };
 
   const applyPresetToForm = (preset: BrandPresetResponse) => {
     if (preset.preset_type === 'INPUT_TEMPLATE') {
-      // Apply Input Template: Clear form first, then populate with template data
+      // Apply Input Template: Smart handling of existing brand kit data
       const inputData = preset.input_snapshot;
       
       if (inputData) {
-        // Apply template data immediately without setTimeout to avoid race conditions
-        // Reset form to clean state first
+        // Check if user has existing brand kit data that would be overwritten
+        const currentBrandKit = watch('brand_kit');
+        const hasExistingBrandKit = Boolean(
+          currentBrandKit?.colors?.length || 
+          currentBrandKit?.brand_voice_description?.trim() || 
+          currentBrandKit?.logo_file_base64
+        );
+        
+        const templateHasBrandKit = Boolean(
+          inputData.brand_kit?.colors?.length || 
+          inputData.brand_kit?.brand_voice_description?.trim() || 
+          inputData.brand_kit?.logo_file_base64
+        );
+        
+        // Smart brand kit preservation logic
+        let finalBrandKit = inputData.brand_kit;
+        let brandKitMessage = '';
+        if (hasExistingBrandKit && !templateHasBrandKit) {
+          // Preserve user's brand kit if template doesn't have one
+          finalBrandKit = currentBrandKit;
+          brandKitMessage = ' (your brand kit preserved)';
+        } else if (hasExistingBrandKit && templateHasBrandKit) {
+          // Template overrides existing brand kit
+          brandKitMessage = ' (template brand kit applied)';
+        }
+        
+        // Preserve uploaded image when applying template
+        const currentImageFile = watch('image_file');
+        const hasUploadedImage = Boolean(uploadedFile && currentImageFile);
+        let imageMessage = '';
+        if (hasUploadedImage) {
+          imageMessage = ' (uploaded image preserved)';
+        }
+        
+        // Apply template data with smart brand kit handling
         reset({
           mode: (inputData.mode as 'easy_mode' | 'custom_mode' | 'task_specific_mode') || 'easy_mode',
           prompt: inputData.prompt || '',
@@ -266,7 +325,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           num_variants: inputData.num_variants || 3,
           task_type: inputData.task_type || '',
           task_description: inputData.task_description || '',
-          brand_kit: inputData.brand_kit || undefined,
+          brand_kit: finalBrandKit || undefined,
           render_text: inputData.render_text || false,
           apply_branding: inputData.apply_branding || false,
           language: inputData.language || 'en',
@@ -275,15 +334,63 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           marketing_voice: inputData.marketing_voice || '',
           marketing_niche: inputData.marketing_niche || '',
           image_instruction: inputData.image_instruction || '',
+          // Preserve uploaded image
+          image_file: hasUploadedImage ? currentImageFile : undefined,
         });
+        
+        // Single consolidated success message with validation check
+        setTimeout(() => {
+          const newFormData = watch();
+          const validation = validateFormData(newFormData);
+          
+          if (validation.isValid) {
+            // Success message with context about preservations
+            const successMessage = `Template "${preset.name}" applied successfully!${brandKitMessage}${imageMessage}`;
+            toast.success(successMessage);
+          } else {
+            // Warning message indicating template applied but needs attention
+            toast.error(`Template "${preset.name}" applied, but ${validation.error}`);
+          }
+        }, 100); // Small delay to ensure form state is updated
       }
     } 
     // STYLE_RECIPE presets are no longer handled here - they use StyleRecipeModal exclusively
   };
 
-  const clearPreset = () => {
-    setActivePreset(null);
-    toast.success('Preset cleared');
+
+
+  // Helper function to detect potential preset conflicts
+  const detectPresetConflicts = (newPreset: BrandPresetResponse) => {
+    const warnings: string[] = [];
+    
+    // Check for active template when applying brand kit
+    if (newPreset.preset_source_type === 'brand-kit' && activePreset?.preset_type === 'INPUT_TEMPLATE') {
+      warnings.push('Applying brand kit over template - template settings will be preserved');
+    }
+    
+    // Check for existing brand kit when applying template
+    const currentBrandKit = watch('brand_kit');
+    const hasExistingBrandKit = Boolean(
+      currentBrandKit?.colors?.length || 
+      currentBrandKit?.brand_voice_description?.trim() || 
+      currentBrandKit?.logo_file_base64
+    );
+    
+    if (newPreset.preset_type === 'INPUT_TEMPLATE' && hasExistingBrandKit) {
+      const templateHasBrandKit = Boolean(
+        newPreset.input_snapshot?.brand_kit?.colors?.length || 
+        newPreset.input_snapshot?.brand_kit?.brand_voice_description?.trim() || 
+        newPreset.input_snapshot?.brand_kit?.logo_file_base64
+      );
+      
+      if (!templateHasBrandKit) {
+        warnings.push('Your existing brand kit will be preserved');
+      } else {
+        warnings.push('Template will replace your existing brand kit');
+      }
+    }
+    
+    return warnings;
   };
 
   // Shared validation logic for both pipeline run and template saving
@@ -293,13 +400,26 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       return { isValid: false, error: 'Platform selection is required' };
     }
     
-    // Standard form validation (recipe mode is handled by StyleRecipeModal)
-    if (selectedMode === 'easy_mode' && !data.prompt && !uploadedFile) {
-      return { isValid: false, error: 'Easy mode requires either a prompt or an image' };
+    // Use the data's mode, not the current selectedMode, for accurate validation
+    const modeToValidate = data.mode || selectedMode;
+    const modeRequiresTaskType = modeToValidate === 'task_specific_mode';
+    
+    // Universal validation: All modes require either a prompt or an image
+    const hasPrompt = data.prompt && data.prompt.trim().length > 0;
+    const hasImage = data.image_file || uploadedFile;
+    if (!hasPrompt && !hasImage) {
+      const modeNames = {
+        'easy_mode': 'Easy mode',
+        'custom_mode': 'Custom mode', 
+        'task_specific_mode': 'Task-specific mode'
+      };
+      const modeName = modeNames[modeToValidate] || 'This mode';
+      return { isValid: false, error: `${modeName} requires either a prompt or an image` };
     }
     
-    if (requiresTaskType && !data.task_type) {
-      return { isValid: false, error: 'Task type is required for task-specific mode' };
+    // Mode-specific validation
+    if (modeRequiresTaskType && (!data.task_type || data.task_type.trim().length === 0)) {
+      return { isValid: false, error: 'Task-specific mode requires a task type selection' };
     }
 
     return { isValid: true };
@@ -322,6 +442,8 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       // Prepare submit data - don't overwrite form data with preset data
       const submitData = {
         ...data,
+        // Exclude brand_kit from submission when apply_branding is false
+        brand_kit: data.apply_branding ? data.brand_kit : undefined,
         // Add preset information if active (STYLE_RECIPE presets are handled by StyleRecipeModal)
         preset_id: activePreset?.preset_type === 'INPUT_TEMPLATE' ? activePreset?.id : undefined,
         preset_type: activePreset?.preset_type === 'INPUT_TEMPLATE' ? activePreset?.preset_type : undefined,
@@ -350,40 +472,40 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
   // Shared function to properly reset form to clean state
   const resetFormToDefaults = (clearPresets = true) => {
-    reset({
-      mode: 'easy_mode',
-      platform_name: '',
-      creativity_level: 1,
-      num_variants: 3,
-      prompt: '', // Clear prompt field with empty string
-      task_type: '',
-      task_description: '',
-      brand_kit: undefined,
-      image_instruction: '',
-      render_text: false,
-      apply_branding: false,
-      marketing_audience: '',
-      marketing_objective: '',
-      marketing_voice: '',
-      marketing_niche: '',
-      language: 'en',
-    });
+    // Set reset flag to prevent auto-application interference
+    setIsResetting(true);
     
-    // Clear uploaded image
+    // Reset form to original defaultValues (not template values)
+    reset(originalDefaultValues);
+    
+    // Clear uploaded image and related state
     removeImage();
     
     // Clear custom language state
     setShowCustomLanguage(false);
     
+    // Reset additional dialog states that aren't part of the form
+    setSaveTemplateDialogOpen(false);
+    setSaveTemplateName('');
+    setSaveTemplateLoading(false);
+    setBrandKitPresetModalOpen(false);
+    setRecipeModalOpen(false);
+    setPresetModalOpen(false);
+    
     // Only clear presets if requested (not when switching templates)
     if (clearPresets) {
       setActivePreset(null);
     }
+    
+    // Clear reset flag after a short delay to allow form state to settle
+    setTimeout(() => {
+      setIsResetting(false);
+    }, 100);
   };
 
   const handleReset = () => {
     resetFormToDefaults(true); // Clear presets when manually resetting
-    toast.success('Form reset');
+    toast.success('Form reset to default values');
   };
 
   // Add save template dialog functions after the existing preset handling functions
@@ -437,12 +559,14 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         name: saveTemplateName.trim(),
         preset_type: 'INPUT_TEMPLATE',
         input_snapshot: inputSnapshot,
-        model_id: 'current-pipeline',
+        preset_source_type: 'user-input',
         pipeline_version: '1.0.0',
       });
       
       toast.success('Template saved successfully!');
       closeSaveTemplateDialog();
+      // Refresh preset modal if it's open
+      presetModalRef.current?.refreshPresets();
     } catch (error: any) {
       console.error('Failed to save template:', error);
       toast.error(error.message || 'Failed to save template');
@@ -506,10 +630,12 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           apply_branding: false, // Brand kit definition doesn't apply itself
           language: 'en', // Default language
         },
-        model_id: 'brand-kit-preset',
+        preset_source_type: 'brand-kit',
         pipeline_version: '1.0.0',
       });
       toast.success(`Brand kit "${name}" saved successfully!`);
+      // Refresh preset modal if it's open
+      presetModalRef.current?.refreshPresets();
     } catch (error: any) {
       console.error('Failed to save brand kit:', error);
       toast.error(error.message || 'Failed to save brand kit');
@@ -523,12 +649,22 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       
       // Only toggle apply_branding if it wasn't already enabled
       const currentApplyBranding = watch('apply_branding');
+      const wasAlreadyEnabled = currentApplyBranding;
       if (!currentApplyBranding) {
         setValue('apply_branding', true);
       }
       
+      // Keep the activePreset for brand kit presets so preset info is included in submission
+      // This is important for backend processing and pipeline execution
+      setActivePreset(preset);
+      
       setBrandKitPresetModalOpen(false);
-      toast.success(`Brand kit "${preset.name}" applied`);
+      
+      // Single user-centric success message
+      const brandingMessage = wasAlreadyEnabled 
+        ? `Brand kit "${preset.name}" applied successfully!`
+        : `Brand kit "${preset.name}" applied and branding enabled!`;
+      toast.success(brandingMessage);
     }
   };
 
@@ -554,21 +690,67 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   }, [previewUrl]);
 
   // Smart Brand Kit Auto-Application: Auto-enable apply_branding when brand kit data is present
+  // This handles cases where users manually add brand kit data (not via presets)
   useEffect(() => {
-    const brandKit = watch('brand_kit');
-    const hasKitData = Boolean(
-      brandKit?.colors?.length || 
-      brandKit?.brand_voice_description?.trim() || 
-      brandKit?.logo_file_base64
-    );
+    const subscription = watch((value, { name }) => {
+      // Only react to brand_kit changes, not other form changes
+      // Skip during reset operations to prevent interference
+      if (name === 'brand_kit' && !isResetting) {
+        const brandKit = value.brand_kit;
+        const hasKitData = Boolean(
+          brandKit?.colors?.length || 
+          brandKit?.brand_voice_description?.trim() || 
+          brandKit?.logo_file_base64
+        );
+        
+        const applyBrandingCurrentValue = value.apply_branding;
+        
+        // Only auto-enable if there's brand kit data and branding isn't already enabled
+        // Skip auto-enable during form initialization or reset to avoid interfering
+        // Note: No toast message here since preset application handles its own messaging
+        if (hasKitData && !applyBrandingCurrentValue && brandKit) {
+          // Add a small delay to avoid interfering with reset operations
+          setTimeout(() => {
+            // Double-check reset flag in case reset happened during timeout
+            if (!isResetting) {
+              setValue('apply_branding', true);
+            }
+          }, 50);
+        }
+      }
+    });
     
-    const applyBrandingCurrentValue = watch('apply_branding');
+    return () => subscription.unsubscribe();
+  }, [watch, setValue, isResetting]);
+
+  // Brand Kit Reset: Clear brand kit data when apply_branding is toggled off
+  useEffect(() => {
+    const subscription = watch((value, { name }) => {
+      // Only react to apply_branding changes, not other form changes
+      // Skip during reset operations to prevent interference
+      if (name === 'apply_branding' && !isResetting) {
+        const applyBrandingCurrentValue = value.apply_branding;
+        const brandKit = value.brand_kit;
+        
+        // If branding is turned off and there's existing brand kit data, clear it
+        if (!applyBrandingCurrentValue && brandKit) {
+          const hasBrandKitData = Boolean(
+            brandKit?.colors?.length || 
+            brandKit?.brand_voice_description?.trim() || 
+            brandKit?.logo_file_base64
+          );
+          
+          if (hasBrandKitData) {
+            // Clear brand kit data
+            setValue('brand_kit', undefined);
+            toast.success('Brand kit data cleared since branding is disabled');
+          }
+        }
+      }
+    });
     
-    if (hasKitData && !applyBrandingCurrentValue) {
-      setValue('apply_branding', true);
-      toast.success('Apply branding enabled automatically');
-    }
-  }, [watch('brand_kit'), setValue]);
+    return () => subscription.unsubscribe();
+  }, [watch, setValue, isResetting]);
 
   return (
     <motion.div
@@ -624,32 +806,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
               </Grid>
             )}
 
-            {/* Active Preset Display - Only show for INPUT_TEMPLATE presets */}
-            {activePreset && activePreset.preset_type === 'INPUT_TEMPLATE' && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Alert 
-                  severity="info" 
-                  sx={{ mt: 2 }}
-                  action={
-                    <Button size="small" onClick={clearPreset}>
-                      Clear
-                    </Button>
-                  }
-                >
-                  <Box display="flex" alignItems="center" gap={1}>
-                    {activePreset.preset_type === 'INPUT_TEMPLATE' ? <PaletteIcon /> : <StyleIcon />}
-                    <Typography variant="body2">
-                      <strong>{activePreset.preset_type === 'INPUT_TEMPLATE' ? 'Template' : 'Recipe'}</strong> 
-                      &quot;{activePreset.name}&quot; is active
-                    </Typography>
-                  </Box>
-                </Alert>
-              </motion.div>
-            )}
+
 
             {/* Recipe Active Mode - REMOVED: Style recipes now use dedicated StyleRecipeModal */}
           </Box>
@@ -1349,6 +1506,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                     size="large"
                     startIcon={isSubmitting ? <CircularProgress size={20} /> : <SendIcon />}
                     disabled={isSubmitting}
+
                     sx={{ 
                       px: 4, 
                       py: 1.5, 
@@ -1409,6 +1567,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
       {/* Preset Management Modal */}
       <PresetManagementModal
+        ref={presetModalRef}
         open={presetModalOpen}
         onClose={() => setPresetModalOpen(false)}
         onPresetSelected={handlePresetSelected}

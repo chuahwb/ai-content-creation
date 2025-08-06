@@ -47,6 +47,8 @@ import {
   Image as ImageIcon,
   Info as InfoIcon,
   BookmarkAdd as BookmarkAddIcon,
+  Grain as GrainIcon,
+  CheckCircle as CleanIcon,
 } from '@mui/icons-material';
 
 import toast from 'react-hot-toast';
@@ -61,6 +63,7 @@ import {
   GeneratedImageResult,
   CaptionSettings,
   CaptionResult,
+  RefinementResult,
 } from '@/types/api';
 import { PipelineAPI, WebSocketManager } from '@/lib/api';
 import RefinementModal from './RefinementModal';
@@ -367,70 +370,57 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
         iconColor = '#ff9800';
         icon = <WarningIcon sx={{ color: iconColor, fontSize: 18 }} />;
       } else {
-        // Default good status (score 5 or no attention needed)
+        // Default good status - more subtle background
         statusText = score === 5 ? 'Excellent' : 'Good';
+        backgroundColor = 'rgba(232, 245, 232, 0.3)'; // Much more subtle
+        textColor = '#4a5568'; // More neutral text color
+        iconColor = '#4caf50';
       }
     }
 
     return (
       <Box sx={{ 
         display: 'flex', 
-        flexDirection: 'column', 
         alignItems: 'center', 
-        minWidth: 80,
-        p: 1,
-        borderRadius: 1,
+        gap: 0.5,
+        px: 1,
+        py: 0.5,
+        borderRadius: 3,
         backgroundColor,
-        border: 1,
-        borderColor
+        border: needsAttention ? 1 : 0,
+        borderColor: needsAttention ? borderColor : 'transparent',
+        minWidth: 'auto'
       }}>
-        {/* Status Icon */}
-        <Box sx={{ mb: 0.5 }}>
-          {icon}
+        {/* Status Icon - smaller */}
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          {React.cloneElement(icon, { sx: { fontSize: 14, color: iconColor } })}
         </Box>
         
         {/* Label */}
         <Typography 
           variant="caption" 
           sx={{ 
-            fontWeight: 600,
+            fontWeight: 500,
             color: textColor,
-            textAlign: 'center',
-            lineHeight: 1.2,
-            fontSize: '0.7rem'
+            fontSize: '0.7rem',
+            lineHeight: 1
           }}
         >
           {label}
         </Typography>
         
-        {/* Status Text */}
-        <Typography 
-          variant="caption" 
-          sx={{ 
-            color: textColor,
-            textAlign: 'center',
-            lineHeight: 1.1,
-            fontSize: '0.65rem',
-            mt: 0.25
-          }}
-        >
-          {statusText}
-        </Typography>
-        
-        {/* Score if available */}
+        {/* Score if available - inline */}
         {score !== undefined && (
           <Typography 
             variant="caption" 
             sx={{ 
               color: textColor,
-              textAlign: 'center',
-              lineHeight: 1.1,
-              fontSize: '0.6rem',
-              mt: 0.1,
-              fontWeight: 500
+              fontSize: '0.65rem',
+              fontWeight: 600,
+              opacity: 0.8
             }}
           >
-            ({score}/5)
+            {score}
           </Typography>
         )}
       </Box>
@@ -464,8 +454,22 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
         </Button>
       </Box>
       
-      {/* Status Indicators Row */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, justifyContent: 'center', mb: isExpanded ? 2 : 0 }}>
+      {/* Status Indicators - Minimal Row */}
+      <Box sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        gap: 0.5,
+        mb: isExpanded ? 1.5 : 0.5
+      }}>
+        {/* Overall Quality - always first */}
+        {renderStatusIndicator(
+          assessmentData.needs_regeneration,
+          'Overall',
+          'Overall image quality',
+          Math.round(assessmentData.general_score || 0)
+        )}
+        
         {/* Subject Preservation - only show if reference image was used */}
         {assessmentData.assessment_scores && 'subject_preservation' in assessmentData.assessment_scores && (
           renderStatusIndicator(
@@ -476,14 +480,6 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
           )
         )}
         
-        {/* Overall Quality */}
-        {renderStatusIndicator(
-          assessmentData.needs_regeneration,
-          'Overall',
-          'Overall image quality',
-          Math.round(assessmentData.general_score || 0)
-        )}
-        
         {/* Text Quality - only show if text rendering was enabled */}
         {assessmentData.assessment_scores && 'text_rendering_quality' in assessmentData.assessment_scores && (
           renderStatusIndicator(
@@ -491,6 +487,16 @@ const ImageAssessmentIndicators: React.FC<ImageAssessmentIndicatorsProps> = ({
             'Text',
             'Text rendering quality',
             assessmentData.assessment_scores.text_rendering_quality
+          )
+        )}
+        
+        {/* Noise & Grain - only show if assessment was performed */}
+        {assessmentData.assessment_scores && 'noise_and_grain_impact' in assessmentData.assessment_scores && (
+          renderStatusIndicator(
+            assessmentData.needs_noise_reduction,
+            'Noise',
+            'Noise and grain quality',
+            assessmentData.assessment_scores.noise_and_grain_impact
           )
         )}
       </Box>
@@ -561,6 +567,9 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     parentRefinementJobId?: string;
   }>({ open: false, imageIndex: null, imagePath: null });
   
+  // Noise assessment state
+  const [noiseAssessmentLoading, setNoiseAssessmentLoading] = useState<{[jobId: string]: boolean}>({});
+  
   // Refinement display controls
   const [refinementGroupsExpanded, setRefinementGroupsExpanded] = useState<Record<string, boolean>>({});
   const [showAllRefinementsInGroup, setShowAllRefinementsInGroup] = useState<Record<string, boolean>>({});
@@ -591,6 +600,11 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   const [savePresetImageIndex, setSavePresetImageIndex] = useState<number>(0);
   const [savePresetName, setSavePresetName] = useState('');
   const [savePresetLoading, setSavePresetLoading] = useState(false);
+  
+  // Enhanced feedback states
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [lastStatusUpdate, setLastStatusUpdate] = useState<string | null>(null);
   
   const DEVELOPER_CODE = 'dev123'; // Simple code for prototype
 
@@ -710,12 +724,33 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         const stageUpdate = message.data as StageProgressUpdate;
         console.log('📊 Stage update details:', stageUpdate);
         
+        // Enhanced status transition feedback
+        const statusEmoji = {
+          'COMPLETED': '✅',
+          'FAILED': '❌',
+          'RUNNING': '⚡',
+          'PENDING': '⏳'
+        }[stageUpdate.status] || '📝';
+        
+        const statusMessage = `${statusEmoji} ${stageUpdate.stage_name}: ${stageUpdate.message}`;
+        
         addLog(
           stageUpdate.status === 'FAILED' ? 'error' : 
           stageUpdate.status === 'COMPLETED' ? 'success' : 'info',
-          `${stageUpdate.stage_name}: ${stageUpdate.message}`,
+          statusMessage,
           stageUpdate.stage_name
         );
+        
+        // Show status transition notification for key stages
+        if (['COMPLETED', 'FAILED'].includes(stageUpdate.status)) {
+          const stageDisplayInfo = getStageDisplayInfo(stageUpdate.stage_name);
+          const transitionMessage = stageUpdate.status === 'COMPLETED' 
+            ? `✅ ${stageDisplayInfo.label} completed successfully`
+            : `❌ ${stageDisplayInfo.label} failed`;
+          
+          setLastStatusUpdate(transitionMessage);
+          setTimeout(() => setLastStatusUpdate(null), 2000);
+        }
         
         // Special handling for image_assessment stage
         if (stageUpdate.stage_name === 'image_assessment') {
@@ -759,15 +794,20 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         // Check if this is a refinement completion (has job_id) or pipeline completion
         if (message.data?.job_id) {
           // This is a refinement completion
-          addLog('success', `Image refinement completed: ${message.data.summary || 'Refinement successful'}`);
-          toast.success('Image refinement completed! The refined image is now available.');
+          addLog('success', `✨ Image refinement completed: ${message.data.summary || 'Refinement successful'}`);
+          toast.success('🎉 Image refinement completed! The refined image is now available.');
           // Refresh refinements list immediately
           setTimeout(() => loadRefinements(false), 500);
         } else {
           // This is a pipeline completion
-          addLog('success', 'Pipeline run completed successfully!');
+          addLog('success', '🎉 Pipeline run completed successfully!');
+          toast.success('🎉 Pipeline completed! Your images are ready to view and download.');
+          setLastStatusUpdate('🎉 Pipeline completed successfully!');
           setShowConfetti(true);
-          setTimeout(() => setShowConfetti(false), 5000);
+          setTimeout(() => {
+            setShowConfetti(false);
+            setLastStatusUpdate(null);
+          }, 5000);
           fetchRunDetails(); // Refresh final details
         }
         break;
@@ -777,15 +817,20 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
         if (message.data?.job_id) {
           // This is a refinement error
           const errorMessage = message.data.error_message || 'Refinement failed';
-          addLog('error', `Image refinement failed: ${errorMessage}`);
-          toast.error(`Image refinement failed: ${errorMessage}`);
+          addLog('error', `❌ Image refinement failed: ${errorMessage}`);
+          toast.error(`❌ Image refinement failed: ${errorMessage}`);
+          setLastStatusUpdate(`❌ Refinement failed: ${errorMessage}`);
           // Refresh refinements list to update status
           setTimeout(() => loadRefinements(false), 500);
         } else {
           // This is a pipeline error
-          addLog('error', `Pipeline run failed: ${message.data.error_message}`);
+          const errorMessage = message.data.error_message || 'Pipeline execution failed';
+          addLog('error', `❌ Pipeline run failed: ${errorMessage}`);
+          toast.error(`❌ Pipeline failed: ${errorMessage}`);
+          setLastStatusUpdate(`❌ Pipeline failed: ${errorMessage}`);
           fetchRunDetails(); // Refresh to get error details
         }
+        setTimeout(() => setLastStatusUpdate(null), 5000);
         break;
         
       case 'caption_complete':
@@ -834,6 +879,29 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
           setCaptionErrors(prev => ({ ...prev, [imageIndex]: errorMessage }));
           toast.error(`Caption generation failed for Option ${imageIndex + 1}: ${errorMessage}`);
         }
+        break;
+        
+      case 'noise_assessment_started':
+        addLog('info', `Starting noise assessment for refinement`, 'noise_assessment');
+        setNoiseAssessmentLoading(prev => ({ ...prev, [message.data.job_id]: true }));
+        break;
+        
+      case 'noise_assessment_completed':
+        addLog('success', message.data.message || 'Noise assessment completed', 'noise_assessment');
+        setNoiseAssessmentLoading(prev => ({ ...prev, [message.data.job_id]: false }));
+        // Update refinement with noise assessment result
+        setRefinements(prev => prev.map(r => 
+          r.job_id === message.data.job_id 
+            ? { ...r, needs_noise_reduction: message.data.needs_noise_reduction }
+            : r
+        ));
+        toast.success(message.data.message || 'Noise assessment completed');
+        break;
+        
+      case 'noise_assessment_error':
+        addLog('error', message.data.message || 'Noise assessment failed', 'noise_assessment');
+        setNoiseAssessmentLoading(prev => ({ ...prev, [message.data.job_id]: false }));
+        toast.error(message.data.message || 'Noise assessment failed');
         break;
     }
   }, [addLog, fetchRunDetails]);
@@ -887,16 +955,40 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
   }, [runId, handleWebSocketMessage, addLog]); // Removed wsManager from dependencies
 
   const handleCancelRun = async () => {
+    setShowCancelConfirm(false);
+    setIsCancelling(true);
+    
     try {
+      // Optimistic UI update
+      if (runDetails) {
+        setRunDetails(prev => prev ? { 
+          ...prev, 
+          status: 'CANCELLED' as RunStatus 
+        } : null);
+        setLastStatusUpdate('Pipeline cancellation in progress...');
+      }
+      
       await PipelineAPI.cancelRun(runId);
       addLog('warning', 'Run cancellation requested');
-      toast.success('Run cancellation requested');
-      fetchRunDetails();
+      toast.success('✅ Pipeline cancelled successfully');
+      
+      // Refresh details to get the actual status
+      setTimeout(() => fetchRunDetails(), 1000);
     } catch (err: any) {
       const errorMsg = err.message || 'Failed to cancel run';
       addLog('error', errorMsg);
-      toast.error(errorMsg);
+      toast.error(`❌ Cancellation failed: ${errorMsg}`);
+      
+      // Revert optimistic update on error
+      fetchRunDetails();
+    } finally {
+      setIsCancelling(false);
+      setTimeout(() => setLastStatusUpdate(null), 3000);
     }
+  };
+
+  const showCancelConfirmation = () => {
+    setShowCancelConfirm(true);
   };
 
   const downloadImage = async (imagePath: string, filename: string) => {
@@ -1534,6 +1626,20 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
     }
   };
 
+  // Handle noise assessment for refinements
+  const handleNoiseAssessment = async (jobId: string) => {
+    try {
+      setNoiseAssessmentLoading(prev => ({ ...prev, [jobId]: true }));
+      await PipelineAPI.assessRefinementNoise(jobId);
+      // WebSocket will handle the response and update the state
+    } catch (error: any) {
+      const errorMessage = error.message || 'Failed to start noise assessment';
+      addLog('error', errorMessage);
+      toast.error(errorMessage);
+      setNoiseAssessmentLoading(prev => ({ ...prev, [jobId]: false }));
+    }
+  };
+
   // Helper function to get the correct immediate parent image path for comparison
   const getImmediateParentImagePath = (refinement: any): string => {
     try {
@@ -1678,12 +1784,40 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
 
   if (error) {
     return (
-      <Alert severity="error" action={
-        <Button color="inherit" size="small" onClick={fetchRunDetails}>
-          Retry
-        </Button>
-      }>
-        {error}
+      <Alert 
+        severity="error" 
+        sx={{ m: 2 }}
+        action={
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={() => fetchRunDetails()}
+              startIcon={<RefreshIcon />}
+            >
+              Retry
+            </Button>
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={onNewRun}
+              variant="outlined"
+            >
+              New Run
+            </Button>
+          </Box>
+        }
+      >
+        <Box>
+          <Typography variant="subtitle2" gutterBottom>
+            Failed to load pipeline run details
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {error.includes('network') && '🌐 Please check your internet connection and try again.'}
+            {error.includes('404') && '🔍 This pipeline run was not found or may have been deleted.'}
+            {!error.includes('network') && !error.includes('404') && 'An unexpected error occurred. Please try refreshing or start a new run.'}
+          </Typography>
+        </Box>
       </Alert>
     );
   }
@@ -1742,12 +1876,21 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                 <Button
                   variant="outlined"
                   color="error"
-                  startIcon={<StopIcon />}
-                  onClick={handleCancelRun}
+                  startIcon={isCancelling ? <CircularProgress size={16} /> : <StopIcon />}
+                  onClick={showCancelConfirmation}
                   size="small"
-                  sx={{ fontWeight: 500 }}
+                  disabled={isCancelling}
+                  sx={{ 
+                    fontWeight: 500,
+                    minWidth: 100,
+                    '&.Mui-disabled': {
+                      color: 'error.main',
+                      borderColor: 'error.main',
+                      opacity: 0.7
+                    }
+                  }}
                 >
-                  Cancel
+                  {isCancelling ? 'Cancelling...' : 'Cancel'}
                 </Button>
               )}
               
@@ -2256,6 +2399,21 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                                 >
                                                   Details
                                                 </Button>
+                                                {/* Assess Noise Button - only show if not assessed yet */}
+                                                {refinement.needs_noise_reduction === null && (
+                                                  <Button
+                                                    size="small"
+                                                    startIcon={noiseAssessmentLoading[refinement.job_id] ? 
+                                                      <CircularProgress size={14} /> : <GrainIcon />}
+                                                    onClick={() => handleNoiseAssessment(refinement.job_id)}
+                                                    color="warning"
+                                                    variant="outlined"
+                                                    disabled={noiseAssessmentLoading[refinement.job_id]}
+                                                    sx={{ fontSize: '0.75rem' }}
+                                                  >
+                                                    {noiseAssessmentLoading[refinement.job_id] ? 'Assessing...' : 'Assess Noise'}
+                                                  </Button>
+                                                )}
                                                 <Button
                                                   size="small"
                                                   startIcon={<AutoFixHighIcon />}
@@ -2267,6 +2425,23 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                                   Refine
                                                 </Button>
                                               </Box>
+
+                                              {/* Noise Assessment Result Display */}
+                                              {refinement.needs_noise_reduction !== null && (
+                                                <Box sx={{ mb: 2 }}>
+                                                  <Chip
+                                                    icon={refinement.needs_noise_reduction ? <GrainIcon /> : <CleanIcon />}
+                                                    label={refinement.needs_noise_reduction ? 'Noisy' : '✓ Clean'}
+                                                    size="small"
+                                                    color={refinement.needs_noise_reduction ? 'warning' : 'success'}
+                                                    variant="filled"
+                                                    sx={{ 
+                                                      fontWeight: 600,
+                                                      fontSize: '0.7rem'
+                                                    }}
+                                                  />
+                                                </Box>
+                                              )}
                                               
                                               <Box sx={{ display: 'flex', justifyContent: 'space-between', color: 'textSecondary', fontSize: '0.8rem' }}>
                                                 <span>Cost: ${refinement.cost_usd?.toFixed(4) || '0.0000'}</span>
@@ -3509,6 +3684,71 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
             startIcon={savePresetLoading ? <CircularProgress size={16} /> : <BookmarkAddIcon />}
           >
             {savePresetLoading ? 'Saving...' : 'Save Preset'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Status Update Notification */}
+      {lastStatusUpdate && (
+        <Box 
+          sx={{ 
+            position: 'fixed', 
+            top: 20, 
+            left: '50%', 
+            transform: 'translateX(-50%)', 
+            zIndex: 9999,
+            minWidth: 300
+          }}
+        >
+          <Alert 
+            severity="info" 
+            sx={{ 
+              width: '100%',
+              boxShadow: 3,
+              borderRadius: 2
+            }}
+            onClose={() => setLastStatusUpdate(null)}
+          >
+            {lastStatusUpdate}
+          </Alert>
+        </Box>
+      )}
+
+      {/* Cancel Confirmation Dialog */}
+      <Dialog
+        open={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <StopIcon color="error" />
+            Cancel Pipeline Run
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to cancel this pipeline run? This action cannot be undone.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Any work in progress will be lost, but you can start a new run at any time.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => setShowCancelConfirm(false)}
+            variant="outlined"
+          >
+            Keep Running
+          </Button>
+          <Button 
+            onClick={handleCancelRun}
+            color="error"
+            variant="contained"
+            startIcon={<StopIcon />}
+          >
+            Yes, Cancel Run
           </Button>
         </DialogActions>
       </Dialog>

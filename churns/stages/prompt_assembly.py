@@ -99,10 +99,15 @@ def _assemble_core_description(vc: Dict[str, Any], user_inputs: Dict[str, Any], 
 
 def assemble_final_prompt(structured_prompt_data: Dict[str, Any], user_inputs: Dict[str, Any], platform_aspect_ratio: str) -> str:
     """Assembles the final text prompt string from the structured visual concept details."""
-    if not structured_prompt_data or "visual_concept" not in structured_prompt_data:
+    if not structured_prompt_data:
         return "Error: Invalid structured prompt data for assembly."
 
-    vc = structured_prompt_data["visual_concept"]
+    # Extract visual concept - now consistent for both regular and style adaptation runs
+    vc = structured_prompt_data.get("visual_concept")
+    
+    if not vc:
+        return "Error: 'visual_concept' not found in structured prompt data."
+
     image_reference = user_inputs.get("image_reference")
     brand_kit = user_inputs.get("brand_kit")
     is_style_adaptation_run = user_inputs.get("is_style_adaptation_run", False)

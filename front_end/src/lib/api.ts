@@ -116,7 +116,8 @@ export class PipelineAPI {
       // Append preset data
       if (formData.preset_id) requestData.append('preset_id', formData.preset_id);
       if (formData.preset_type) requestData.append('preset_type', formData.preset_type);
-      if (formData.overrides) requestData.append('overrides', JSON.stringify(formData.overrides));
+      if (formData.template_overrides) requestData.append('template_overrides', JSON.stringify(formData.template_overrides));
+      if (formData.adaptation_prompt) requestData.append('adaptation_prompt', formData.adaptation_prompt);
 
       // Append brand_kit as a JSON string
       if (formData.brand_kit) {
@@ -353,6 +354,16 @@ export class PipelineAPI {
   static async savePresetFromResult(runId: string, data: SavePresetFromResultRequest): Promise<BrandPresetResponse> {
     try {
       const response = await apiClient.post(`/runs/${runId}/save-as-preset`, data);
+      return response.data;
+    } catch (error) {
+      return handleApiError(error as AxiosError);
+    }
+  }
+
+  // Assess noise for a refinement
+  static async assessRefinementNoise(jobId: string): Promise<{ message: string; job_id: string }> {
+    try {
+      const response = await apiClient.post(`/refinements/${jobId}/assess-noise`);
       return response.data;
     } catch (error) {
       return handleApiError(error as AxiosError);

@@ -13,12 +13,13 @@ from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from churns.api.database import (
     get_session, PipelineRun, PipelineStage, RefinementJob,
-    RunStatus, StageStatus, engine, async_session_factory
+    RunStatus, StageStatus, engine, async_session_factory,
+    retry_db_operation
 )
 from churns.pipeline.executor import PipelineExecutor
 from churns.api.schemas import (
     PipelineRunRequest, StageProgressUpdate, 
-    GeneratedImageResult, PipelineResults
+    GeneratedImageResult, PipelineResults, WebSocketMessage
 )
 from churns.api.websocket import connection_manager
 from churns.pipeline.context import PipelineContext
@@ -36,6 +37,7 @@ from churns.core.constants import (
 )
 from churns.core.model_selector import get_caption_model_for_processing_mode
 from churns.core.token_cost_manager import get_token_cost_manager, calculate_stage_cost_from_usage
+from churns.stages.image_assessment import ImageAssessor
 
 logger = logging.getLogger(__name__)
 
@@ -64,30 +66,6 @@ def get_model_pricing(model_id: str, fallback_input_rate: float = 0.001, fallbac
         "input_rate": pricing["input_cost_per_mtok"],
         "output_rate": pricing["output_cost_per_mtok"]
     }
-
-
-def _sanitize_brand_kit_for_logging(brand_kit: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """
-    Sanitizes brand kit data for logging by removing or truncating sensitive data like base64 encoded logos.
-    """
-    if not brand_kit:
-        return brand_kit
-    
-    # Create a deep copy to avoid modifying the original data
-    sanitized = deepcopy(brand_kit)
-    
-    # Remove or truncate base64 logo data
-    if 'logo_file_base64' in sanitized:
-        logo_data = sanitized['logo_file_base64']
-        if logo_data and len(logo_data) > 50:
-            # Keep only the data URI header for logging
-            if ',' in logo_data:
-                header, _ = logo_data.split(',', 1)
-                sanitized['logo_file_base64'] = f"{header},[BASE64_DATA_TRUNCATED]"
-            else:
-                sanitized['logo_file_base64'] = "[BASE64_DATA_TRUNCATED]"
-    
-    return sanitized
 
 
 class PipelineTaskProcessor:
@@ -141,34 +119,45 @@ class PipelineTaskProcessor:
         logger.info(f"start_pipeline_run called with run_id: {run_id}")
         logger.info(f"Request details: mode={request.mode}, platform={request.platform_name}, preset_id={request.preset_id}")
         
-        # First check if there's a stalled run
-        async with async_session_factory() as session:
-            run = await session.get(PipelineRun, run_id)
-            if not run:
-                logger.error(f"Run {run_id} not found in database")
-                return
-            
-            # If run exists but shows as running and not in active tasks, it's stalled
-            if run.status == RunStatus.RUNNING and run_id not in self.active_tasks:
-                run.status = RunStatus.FAILED
-                run.completed_at = datetime.utcnow()
-                run.error_message = "Pipeline execution was interrupted unexpectedly"
-                if run.started_at:
-                    run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
-                session.add(run)
-                await session.commit()
+        # First check if there's a stalled run - use retry logic
+        async def check_and_handle_stalled_run():
+            async with async_session_factory() as session:
+                run = await session.get(PipelineRun, run_id)
+                if not run:
+                    logger.error(f"Run {run_id} not found in database")
+                    return False
                 
-                await connection_manager.send_run_error(
-                    run_id,
-                    "Pipeline execution was interrupted unexpectedly",
-                    {"type": "stalled"}
-                )
-                return
-            
-            # If run is already active, don't start again
-            if run_id in self.active_tasks:
-                logger.warning(f"Pipeline run {run_id} is already running")
-                return
+                # If run exists but shows as running and not in active tasks, it's stalled
+                if run.status == RunStatus.RUNNING and run_id not in self.active_tasks:
+                    run.status = RunStatus.FAILED
+                    run.completed_at = datetime.utcnow()
+                    run.error_message = "Pipeline execution was interrupted unexpectedly"
+                    if run.started_at:
+                        run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                    session.add(run)
+                    await session.commit()
+                    
+                    await connection_manager.send_run_error(
+                        run_id,
+                        "Pipeline execution was interrupted unexpectedly",
+                        {"type": "stalled"}
+                    )
+                    return False  # Indicates we should not continue
+                
+                # If run is already active, don't start again
+                if run_id in self.active_tasks:
+                    logger.warning(f"Pipeline run {run_id} is already running")
+                    return False
+                
+                return True  # All good, continue with execution
+        
+        should_continue = await retry_db_operation(
+            check_and_handle_stalled_run,
+            operation_name=f"check stalled run {run_id}"
+        )
+        
+        if not should_continue:
+            return
         
         # Create and start the background task (don't update status to RUNNING here)
         task = asyncio.create_task(self._execute_pipeline(run_id, request, image_data, executor))
@@ -193,19 +182,29 @@ class PipelineTaskProcessor:
         logger.info(f"_execute_pipeline called for run {run_id}")
         
         try:
-            # Update run status to running
-            async with async_session_factory() as session:
-                run = await session.get(PipelineRun, run_id)
-                if not run:
-                    logger.error(f"Run {run_id} not found in database")
-                    return
-                
-                run.status = RunStatus.RUNNING
-                run.started_at = datetime.utcnow()
-                session.add(run)
-                await session.commit()
-                
-                logger.info(f"Updated run {run_id} status to RUNNING")
+            # Update run status to running - use retry logic
+            async def update_run_status_to_running():
+                async with async_session_factory() as session:
+                    run = await session.get(PipelineRun, run_id)
+                    if not run:
+                        logger.error(f"Run {run_id} not found in database")
+                        return False
+                    
+                    run.status = RunStatus.RUNNING
+                    run.started_at = datetime.utcnow()
+                    session.add(run)
+                    await session.commit()
+                    
+                    logger.info(f"Updated run {run_id} status to RUNNING")
+                    return True
+            
+            status_updated = await retry_db_operation(
+                update_run_status_to_running,
+                operation_name=f"update run {run_id} status to RUNNING"
+            )
+            
+            if not status_updated:
+                return
             
             # Create output directory
             output_dir = Path(f"./data/runs/{run_id}")
@@ -457,67 +456,76 @@ class PipelineTaskProcessor:
             # Process results
             await self._process_pipeline_results(run_id, context, str(output_dir))
             
-            # Mark as completed
-            async with async_session_factory() as session:
-                run = await session.get(PipelineRun, run_id)
-                if run:
-                    run.status = RunStatus.COMPLETED
-                    run.completed_at = datetime.utcnow()
-                    run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
-                    run.output_directory = str(output_dir)
-                    
-                    # Extract cost information from context
-                    extracted_cost = None
-                    try:
-                        # Access cost_summary directly from context object (not via data property)
-                        cost_summary = context.cost_summary
-                        if cost_summary and isinstance(cost_summary, dict):
-                            extracted_cost = cost_summary.get("total_pipeline_cost_usd")
-                            logger.info(f"Extracted cost from context: ${extracted_cost}")
-                            logger.debug(f"Cost summary structure: {cost_summary}")
-                        else:
-                            logger.warning(f"Cost summary not found or not dict: {type(cost_summary)}")
-                            # Fallback: try accessing via data property
-                            try:
-                                processing_context = (context.data or {}).get("processing_context", {})
-                                if processing_context and isinstance(processing_context, dict):
-                                    fallback_cost_summary = processing_context.get("cost_summary", {})
-                                    if fallback_cost_summary and isinstance(fallback_cost_summary, dict):
-                                        extracted_cost = fallback_cost_summary.get("total_pipeline_cost_usd")
-                                        logger.info(f"Extracted cost from context via fallback: ${extracted_cost}")
-                            except Exception as fallback_e:
-                                logger.warning(f"Fallback cost extraction also failed: {fallback_e}")
-                    except Exception as e:
-                        logger.warning(f"Failed to extract cost from context: {e}")
-                        logger.warning(f"Context cost_summary type: {type(getattr(context, 'cost_summary', None))}")
-                    
-                    # Fallback: try to calculate from stage costs if context cost failed
-                    if extracted_cost is None or extracted_cost == 0.0:
+            # Mark as completed - use retry logic
+            async def mark_pipeline_completed():
+                async with async_session_factory() as session:
+                    run = await session.get(PipelineRun, run_id)
+                    if run:
+                        run.status = RunStatus.COMPLETED
+                        run.completed_at = datetime.utcnow()
+                        run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                        run.output_directory = str(output_dir)
+                        
+                        # Extract cost information from context
+                        extracted_cost = None
                         try:
-                            # Calculate total from stage costs
-                            calculated_cost = sum(c["cost_usd"] for c in stage_costs)
-                            if calculated_cost > 0:
-                                extracted_cost = calculated_cost
-                                logger.info(f"Calculated cost from stage costs: ${extracted_cost}")
+                            # Access cost_summary directly from context object (not via data property)
+                            cost_summary = context.cost_summary
+                            if cost_summary and isinstance(cost_summary, dict):
+                                extracted_cost = cost_summary.get("total_pipeline_cost_usd")
+                                logger.info(f"Extracted cost from context: ${extracted_cost}")
+                                logger.debug(f"Cost summary structure: {cost_summary}")
+                            else:
+                                logger.warning(f"Cost summary not found or not dict: {type(cost_summary)}")
+                                # Fallback: try accessing via data property
+                                try:
+                                    processing_context = (context.data or {}).get("processing_context", {})
+                                    if processing_context and isinstance(processing_context, dict):
+                                        fallback_cost_summary = processing_context.get("cost_summary", {})
+                                        if fallback_cost_summary and isinstance(fallback_cost_summary, dict):
+                                            extracted_cost = fallback_cost_summary.get("total_pipeline_cost_usd")
+                                            logger.info(f"Extracted cost from context via fallback: ${extracted_cost}")
+                                except Exception as fallback_e:
+                                    logger.warning(f"Fallback cost extraction also failed: {fallback_e}")
                         except Exception as e:
-                            logger.warning(f"Failed to calculate cost from stage costs: {e}")
-                    
-                    # Set the final cost
-                    if extracted_cost is not None and extracted_cost > 0:
-                        run.total_cost_usd = extracted_cost
-                        logger.info(f"Set run total cost to: ${run.total_cost_usd}")
-                    else:
-                        logger.warning(f"No valid cost found for run {run_id}")
-                    
-                    # Update brand kit data from final context (important for preset-loaded data)
-                    if context.brand_kit:
-                        import json
-                        run.brand_kit = json.dumps(context.brand_kit)
-                        logger.info(f"Updated database with final brand kit data: {len(str(context.brand_kit))} characters")
-                    
-                    session.add(run)
-                    await session.commit()
-                    
+                            logger.warning(f"Failed to extract cost from context: {e}")
+                            logger.warning(f"Context cost_summary type: {type(getattr(context, 'cost_summary', None))}")
+                        
+                        # Fallback: try to calculate from stage costs if context cost failed
+                        if extracted_cost is None or extracted_cost == 0.0:
+                            try:
+                                # Calculate total from stage costs
+                                calculated_cost = sum(c["cost_usd"] for c in stage_costs)
+                                if calculated_cost > 0:
+                                    extracted_cost = calculated_cost
+                                    logger.info(f"Calculated cost from stage costs: ${extracted_cost}")
+                            except Exception as e:
+                                logger.warning(f"Failed to calculate cost from stage costs: {e}")
+                        
+                        # Set the final cost
+                        if extracted_cost is not None and extracted_cost > 0:
+                            run.total_cost_usd = extracted_cost
+                            logger.info(f"Set run total cost to: ${run.total_cost_usd}")
+                        else:
+                            logger.warning(f"No valid cost found for run {run_id}")
+                        
+                        # Update brand kit data from final context (important for preset-loaded data)
+                        # Only store if branding was enabled
+                        if context.brand_kit and context.apply_branding:
+                            import json
+                            run.brand_kit = json.dumps(context.brand_kit)
+                            logger.info(f"Updated database with final brand kit data: {len(str(context.brand_kit))} characters")
+                        
+                        session.add(run)
+                        await session.commit()
+                        return True
+                    return False
+            
+            await retry_db_operation(
+                mark_pipeline_completed,
+                operation_name=f"mark pipeline {run_id} completed"
+            )
+            
             # Send completion notification
             results = self._extract_pipeline_results(context)
             await connection_manager.send_run_complete(run_id, results.model_dump())
@@ -529,56 +537,74 @@ class PipelineTaskProcessor:
             error_traceback = traceback.format_exc()
             logger.error(f"Pipeline run {run_id} failed: {error_message}\n{error_traceback}")
             
-            # Update database with error
-            async with async_session_factory() as session:
-                run = await session.get(PipelineRun, run_id)
-                if run:
-                    run.status = RunStatus.FAILED
-                    run.completed_at = datetime.utcnow()
-                    run.error_message = error_message
-                    if run.started_at:
-                        run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
-                    session.add(run)
-                    await session.commit()
+            # Update database with error - use retry logic
+            async def mark_pipeline_failed():
+                async with async_session_factory() as session:
+                    run = await session.get(PipelineRun, run_id)
+                    if run:
+                        run.status = RunStatus.FAILED
+                        run.completed_at = datetime.utcnow()
+                        run.error_message = error_message
+                        if run.started_at:
+                            run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                        session.add(run)
+                        await session.commit()
+                        return True
+                    return False
+            
+            await retry_db_operation(
+                mark_pipeline_failed,
+                operation_name=f"mark pipeline {run_id} failed"
+            )
             
             # Send error notification
             await connection_manager.send_run_error(run_id, error_message, {"traceback": error_traceback})
 
     async def start_refinement_job(self, job_id: str, refinement_data: Dict[str, Any], executor: Optional[PipelineExecutor] = None):
         """Start a refinement job in the background"""
-        # Check if there's a stalled refinement job
-        async with async_session_factory() as session:
-            job = await session.get(RefinementJob, job_id)
-            if not job:
-                logger.error(f"Refinement job {job_id} not found in database")
-                return
-            
-            # If job exists but shows as running and not in active tasks, it's stalled
-            if job.status == RunStatus.RUNNING and job_id not in self.active_tasks:
-                job.status = RunStatus.FAILED
-                job.completed_at = datetime.utcnow()
-                job.error_message = "Refinement execution was interrupted unexpectedly"
+        # Check if there's a stalled refinement job - use retry logic
+        async def check_and_handle_stalled_refinement():
+            async with async_session_factory() as session:
+                job = await session.get(RefinementJob, job_id)
+                if not job:
+                    logger.error(f"Refinement job {job_id} not found in database")
+                    return False
+                
+                # If job exists but shows as running and not in active tasks, it's stalled
+                if job.status == RunStatus.RUNNING and job_id not in self.active_tasks:
+                    job.status = RunStatus.FAILED
+                    job.completed_at = datetime.utcnow()
+                    job.error_message = "Refinement execution was interrupted unexpectedly"
+                    session.add(job)
+                    await session.commit()
+                    
+                    await connection_manager.send_run_error(
+                        job_id,
+                        "Refinement execution was interrupted unexpectedly",
+                        {"type": "stalled"}
+                    )
+                    return False
+                
+                # If job is already active, don't start again
+                if job_id in self.active_tasks:
+                    logger.warning(f"Refinement job {job_id} is already running")
+                    return False
+                
+                # Start the job
+                job.status = RunStatus.RUNNING
+                job.created_at = datetime.utcnow()
+                job.error_message = None  # Clear any previous error
                 session.add(job)
                 await session.commit()
-                
-                await connection_manager.send_run_error(
-                    job_id,
-                    "Refinement execution was interrupted unexpectedly",
-                    {"type": "stalled"}
-                )
-                return
-            
-            # If job is already active, don't start again
-            if job_id in self.active_tasks:
-                logger.warning(f"Refinement job {job_id} is already running")
-                return
-            
-            # Start the job
-            job.status = RunStatus.RUNNING
-            job.created_at = datetime.utcnow()
-            job.error_message = None  # Clear any previous error
-            session.add(job)
-            await session.commit()
+                return True
+        
+        should_continue = await retry_db_operation(
+            check_and_handle_stalled_refinement,
+            operation_name=f"check and start refinement job {job_id}"
+        )
+        
+        if not should_continue:
+            return
         
         # Create and start the background task
         task = asyncio.create_task(self._execute_refinement(job_id, refinement_data, executor))
@@ -618,15 +644,23 @@ class PipelineTaskProcessor:
             task.cancel()
             self.active_tasks.pop(job_id, None)
             
-            # Update database
-            async with async_session_factory() as session:
-                job = await session.get(RefinementJob, job_id)
-                if job and job.status == RunStatus.RUNNING:
-                    job.status = RunStatus.FAILED
-                    job.completed_at = datetime.utcnow()
-                    job.error_message = "Refinement execution timed out"
-                    session.add(job)
-                    await session.commit()
+            # Update database - use retry logic
+            async def mark_refinement_timeout():
+                async with async_session_factory() as session:
+                    job = await session.get(RefinementJob, job_id)
+                    if job and job.status == RunStatus.RUNNING:
+                        job.status = RunStatus.FAILED
+                        job.completed_at = datetime.utcnow()
+                        job.error_message = "Refinement execution timed out"
+                        session.add(job)
+                        await session.commit()
+                        return True
+                    return False
+            
+            await retry_db_operation(
+                mark_refinement_timeout,
+                operation_name=f"mark refinement {job_id} timeout"
+            )
             
             # Notify clients
             await connection_manager.send_run_error(
@@ -641,22 +675,35 @@ class PipelineTaskProcessor:
             logger.info(f"Starting refinement execution - Job ID: {job_id}")
             logger.debug(f"Refinement data: {refinement_data}")
             
-            # Get job details from database
-            async with async_session_factory() as session:
-                job = await session.get(RefinementJob, job_id)
-                if not job:
-                    logger.error(f"Refinement job {job_id} not found in database")
-                    return
-                
-                job.status = RunStatus.RUNNING
-                job.created_at = datetime.utcnow()
-                session.add(job)
-                await session.commit()
-                
-                # Get parent run details for context
-                parent_run = await session.get(PipelineRun, job.parent_run_id)
-                if not parent_run:
-                    raise ValueError(f"Parent run {job.parent_run_id} not found")
+            # Get job details from database - use retry logic
+            parent_run = None
+            job = None
+            async def get_refinement_job_details():
+                nonlocal parent_run, job
+                async with async_session_factory() as session:
+                    job = await session.get(RefinementJob, job_id)
+                    if not job:
+                        logger.error(f"Refinement job {job_id} not found in database")
+                        return False
+                    
+                    job.status = RunStatus.RUNNING
+                    job.created_at = datetime.utcnow()
+                    session.add(job)
+                    await session.commit()
+                    
+                    # Get parent run details for context
+                    parent_run = await session.get(PipelineRun, job.parent_run_id)
+                    if not parent_run:
+                        raise ValueError(f"Parent run {job.parent_run_id} not found")
+                    return True
+            
+            details_loaded = await retry_db_operation(
+                get_refinement_job_details,
+                operation_name=f"get refinement job {job_id} details"
+            )
+            
+            if not details_loaded:
+                return
             
             # Set up directories
             parent_run_dir = Path(f"./data/runs/{job.parent_run_id}").resolve()  # Make absolute
@@ -844,18 +891,29 @@ class PipelineTaskProcessor:
             error_traceback = traceback.format_exc()
             logger.error(f"Refinement job {job_id} failed: {error_message}\n{error_traceback}")
             
-            # Update database with error
-            async with async_session_factory() as session:
-                job = await session.get(RefinementJob, job_id)
-                if job:
-                    job.status = RunStatus.FAILED
-                    job.completed_at = datetime.utcnow()
-                    job.error_message = error_message
-                    session.add(job)
-                    await session.commit()
+            # Update database with error - use retry logic
+            async def mark_refinement_failed():
+                async with async_session_factory() as session:
+                    job = await session.get(RefinementJob, job_id)
+                    if job:
+                        job.status = RunStatus.FAILED
+                        job.completed_at = datetime.utcnow()
+                        job.error_message = error_message
+                        session.add(job)
+                        await session.commit()
+                        return True
+                    return False
             
-            # Send error notification
-            await connection_manager.send_run_error(job.parent_run_id, error_message, {"traceback": error_traceback, "job_id": job_id})
+            await retry_db_operation(
+                mark_refinement_failed,
+                operation_name=f"mark refinement {job_id} failed"
+            )
+            
+            # Send error notification - only if we have job details
+            if job and hasattr(job, 'parent_run_id'):
+                await connection_manager.send_run_error(job.parent_run_id, error_message, {"traceback": error_traceback, "job_id": job_id})
+            else:
+                logger.warning(f"Cannot send error notification for refinement {job_id} - job details not available")
 
     async def _update_refinements_index(self, refinement_result):
         """Update the refinements.json index file"""
@@ -927,49 +985,67 @@ class PipelineTaskProcessor:
         stage_completed_at = None
         stage_duration_seconds = duration_seconds
         
+        # Check if this is a refinement job by trying to find it in refinement_jobs table
+        is_refinement_job = False
+        parent_run_id = None
+        
         async with async_session_factory() as session:
-            # Find or create stage record
-            result = await session.execute(
-                select(PipelineStage).where(
-                    PipelineStage.run_id == run_id,
-                    PipelineStage.stage_name == stage_name
-                )
+            # Check if run_id is a refinement job
+            refinement_result = await session.execute(
+                select(RefinementJob).where(RefinementJob.id == run_id)
             )
-            stage = result.scalars().first()
+            refinement_job = refinement_result.scalars().first()
             
-            if not stage:
-                stage = PipelineStage(
-                    run_id=run_id,
-                    stage_name=stage_name,
-                    stage_order=stage_order,
-                    status=status
+            if refinement_job:
+                is_refinement_job = True
+                parent_run_id = refinement_job.parent_run_id
+                # For refinements, skip pipeline stage creation to avoid foreign key constraint
+                # Refinement progress is tracked separately in the RefinementJob table
+                logger.debug(f"Skipping pipeline stage creation for refinement job {run_id}")
+            else:
+                # This is a regular pipeline run - proceed with stage tracking
+                # Find or create stage record
+                result = await session.execute(
+                    select(PipelineStage).where(
+                        PipelineStage.run_id == run_id,
+                        PipelineStage.stage_name == stage_name
+                    )
                 )
-            
-            # Update stage status and timing
-            stage.status = status
-            if status == StageStatus.RUNNING and not stage.started_at:
-                stage.started_at = datetime.utcnow()
-            elif status in [StageStatus.COMPLETED, StageStatus.FAILED] and not stage.completed_at:
-                stage.completed_at = datetime.utcnow()
-                if stage.started_at:
-                    stage.duration_seconds = (stage.completed_at - stage.started_at).total_seconds()
-            
-            if duration_seconds is not None:
-                stage.duration_seconds = duration_seconds
-            
-            if output_data:
-                stage.output_data = json.dumps(output_data)
-            
-            if error_message:
-                stage.error_message = error_message
+                stage = result.scalars().first()
                 
-            session.add(stage)
-            await session.commit()
-            
-            # Capture values while still in session
-            stage_started_at = stage.started_at
-            stage_completed_at = stage.completed_at
-            stage_duration_seconds = stage.duration_seconds
+                if not stage:
+                    stage = PipelineStage(
+                        run_id=run_id,
+                        stage_name=stage_name,
+                        stage_order=stage_order,
+                        status=status
+                    )
+                
+                # Update stage status and timing
+                stage.status = status
+                if status == StageStatus.RUNNING and not stage.started_at:
+                    stage.started_at = datetime.utcnow()
+                elif status in [StageStatus.COMPLETED, StageStatus.FAILED] and not stage.completed_at:
+                    stage.completed_at = datetime.utcnow()
+                    if stage.started_at:
+                        stage.duration_seconds = (stage.completed_at - stage.started_at).total_seconds()
+                
+                if duration_seconds is not None:
+                    stage.duration_seconds = duration_seconds
+                
+                if output_data:
+                    stage.output_data = json.dumps(output_data)
+                
+                if error_message:
+                    stage.error_message = error_message
+                    
+                session.add(stage)
+                await session.commit()
+                
+                # Capture values while still in session
+                stage_started_at = stage.started_at
+                stage_completed_at = stage.completed_at
+                stage_duration_seconds = stage.duration_seconds
         
         # Small delay to ensure database consistency before WebSocket update
         await asyncio.sleep(0.1)
@@ -987,7 +1063,9 @@ class PipelineTaskProcessor:
             error_message=error_message
         )
         
-        await connection_manager.send_stage_update(run_id, update)
+        # For refinements, send WebSocket updates to the parent run
+        websocket_run_id = parent_run_id if is_refinement_job else run_id
+        await connection_manager.send_stage_update(websocket_run_id, update)
     
     def _convert_request_to_pipeline_data(self, request: PipelineRunRequest, 
                                         output_dir: str, image_path: Optional[Path] = None, 
@@ -1021,8 +1099,8 @@ class PipelineTaskProcessor:
                 "preset_type": request.preset_type,
                 "template_overrides": request.template_overrides,
                 "adaptation_prompt": request.adaptation_prompt,
-                # NEW: Unified brand_kit object
-                "brand_kit": request.brand_kit.model_dump() if request.brand_kit else None,
+                # NEW: Unified brand_kit object - only include if branding is enabled
+                "brand_kit": request.brand_kit.model_dump() if (request.brand_kit and request.apply_branding) else None,
             },
             "processing_context": {
                 "initial_json_valid": True,
@@ -1058,8 +1136,8 @@ class PipelineTaskProcessor:
                 "niche": request.marketing_goals.niche
             }
 
-        # Add brand kit and handle logo upload
-        if pipeline_data["user_inputs"]["brand_kit"] and pipeline_data["user_inputs"]["brand_kit"].get("logo_file_base64"):
+        # Add brand kit and handle logo upload - only if branding is enabled
+        if pipeline_data["user_inputs"]["brand_kit"] and pipeline_data["user_inputs"]["brand_kit"].get("logo_file_base64") and request.apply_branding:
             brand_kit_data = pipeline_data["user_inputs"]["brand_kit"]
             try:
                 # Decode the base64 string
@@ -1250,25 +1328,31 @@ class PipelineTaskProcessor:
     async def cancel_run(self, run_id: str) -> bool:
         """Cancel a running pipeline"""
         if run_id not in self.active_tasks:
-            # Check if run exists but is stalled
-            async with async_session_factory() as session:
-                run = await session.get(PipelineRun, run_id)
-                if run and run.status == RunStatus.RUNNING:
-                    run.status = RunStatus.CANCELLED
-                    run.completed_at = datetime.utcnow()
-                    run.error_message = "Pipeline execution was cancelled"
-                    if run.started_at:
-                        run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
-                    session.add(run)
-                    await session.commit()
-                    
-                    asyncio.create_task(connection_manager.send_run_error(
-                        run_id,
-                        "Pipeline execution was cancelled",
-                        {"type": "cancelled"}
-                    ))
-                    return True
-            return False
+            # Check if run exists but is stalled, use retry logic
+            async def cancel_stalled_run():
+                async with async_session_factory() as session:
+                    run = await session.get(PipelineRun, run_id)
+                    if run and run.status == RunStatus.RUNNING:
+                        run.status = RunStatus.CANCELLED
+                        run.completed_at = datetime.utcnow()
+                        run.error_message = "Pipeline execution was cancelled"
+                        if run.started_at:
+                            run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                        session.add(run)
+                        await session.commit()
+                        
+                        asyncio.create_task(connection_manager.send_run_error(
+                            run_id,
+                            "Pipeline execution was cancelled",
+                            {"type": "cancelled"}
+                        ))
+                        return True
+                    return False
+            
+            return await retry_db_operation(
+                cancel_stalled_run,
+                operation_name=f"cancel stalled pipeline run {run_id}"
+            )
         
         # Cancel active task
         task = self.active_tasks[run_id]
@@ -1278,17 +1362,25 @@ class PipelineTaskProcessor:
         if run_id in self.run_timeouts:
             self.run_timeouts[run_id].cancel()
         
-        # Update database
-        async with async_session_factory() as session:
-            run = await session.get(PipelineRun, run_id)
-            if run:
-                run.status = RunStatus.CANCELLED
-                run.completed_at = datetime.utcnow()
-                run.error_message = "Pipeline execution was cancelled"
-                if run.started_at:
-                    run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
-                session.add(run)
-                await session.commit()
+        # Update database with retry logic
+        async def update_cancelled_run():
+            async with async_session_factory() as session:
+                run = await session.get(PipelineRun, run_id)
+                if run:
+                    run.status = RunStatus.CANCELLED
+                    run.completed_at = datetime.utcnow()
+                    run.error_message = "Pipeline execution was cancelled"
+                    if run.started_at:
+                        run.total_duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                    session.add(run)
+                    await session.commit()
+                    return True
+                return False
+        
+        await retry_db_operation(
+            update_cancelled_run,
+            operation_name=f"update cancelled pipeline run {run_id}"
+        )
         
         logger.info(f"Cancelled pipeline run {run_id}")
         return True
@@ -1296,23 +1388,29 @@ class PipelineTaskProcessor:
     async def cancel_refinement(self, job_id: str) -> bool:
         """Cancel a running refinement job"""
         if job_id not in self.active_tasks:
-            # Check if job exists but is stalled
-            async with async_session_factory() as session:
-                job = await session.get(RefinementJob, job_id)
-                if job and job.status == RunStatus.RUNNING:
-                    job.status = RunStatus.CANCELLED
-                    job.completed_at = datetime.utcnow()
-                    job.error_message = "Refinement execution was cancelled"
-                    session.add(job)
-                    await session.commit()
-                    
-                    asyncio.create_task(connection_manager.send_run_error(
-                        job_id,
-                        "Refinement execution was cancelled",
-                        {"type": "cancelled"}
-                    ))
-                    return True
-            return False
+            # Check if job exists but is stalled, use retry logic
+            async def cancel_stalled_refinement():
+                async with async_session_factory() as session:
+                    job = await session.get(RefinementJob, job_id)
+                    if job and job.status == RunStatus.RUNNING:
+                        job.status = RunStatus.CANCELLED
+                        job.completed_at = datetime.utcnow()
+                        job.error_message = "Refinement execution was cancelled"
+                        session.add(job)
+                        await session.commit()
+                        
+                        asyncio.create_task(connection_manager.send_run_error(
+                            job_id,
+                            "Refinement execution was cancelled",
+                            {"type": "cancelled"}
+                        ))
+                        return True
+                    return False
+            
+            return await retry_db_operation(
+                cancel_stalled_refinement,
+                operation_name=f"cancel stalled refinement job {job_id}"
+            )
         
         # Cancel active task
         task = self.active_tasks[job_id]
@@ -1322,15 +1420,23 @@ class PipelineTaskProcessor:
         if job_id in self.run_timeouts:
             self.run_timeouts[job_id].cancel()
         
-        # Update database
-        async with async_session_factory() as session:
-            job = await session.get(RefinementJob, job_id)
-            if job:
-                job.status = RunStatus.CANCELLED
-                job.completed_at = datetime.utcnow()
-                job.error_message = "Refinement execution was cancelled"
-                session.add(job)
-                await session.commit()
+        # Update database with retry logic
+        async def update_cancelled_refinement():
+            async with async_session_factory() as session:
+                job = await session.get(RefinementJob, job_id)
+                if job:
+                    job.status = RunStatus.CANCELLED
+                    job.completed_at = datetime.utcnow()
+                    job.error_message = "Refinement execution was cancelled"
+                    session.add(job)
+                    await session.commit()
+                    return True
+                return False
+        
+        await retry_db_operation(
+            update_cancelled_refinement,
+            operation_name=f"update cancelled refinement job {job_id}"
+        )
         
         logger.info(f"Cancelled refinement job {job_id}")
         return True
@@ -1644,14 +1750,23 @@ class PipelineTaskProcessor:
             
             logger.info(f"Starting caption generation for image {image_id} in run {run_id} using model {model_id}")
             
-            # Load the original pipeline context to get metadata
-            async with async_session_factory() as session:
-                run = await session.get(PipelineRun, run_id)
-                if not run:
-                    raise Exception(f"Pipeline run {run_id} not found")
-                
-                if not run.output_directory:
-                    raise Exception(f"No output directory found for run {run_id}")
+            # Load the original pipeline context to get metadata - use retry logic
+            run = None
+            async def load_caption_run_metadata():
+                nonlocal run
+                async with async_session_factory() as session:
+                    run = await session.get(PipelineRun, run_id)
+                    if not run:
+                        raise Exception(f"Pipeline run {run_id} not found")
+                    
+                    if not run.output_directory:
+                        raise Exception(f"No output directory found for run {run_id}")
+                    return True
+            
+            await retry_db_operation(
+                load_caption_run_metadata,
+                operation_name=f"load run metadata for caption {caption_id}"
+            )
             
             # Load metadata from the original run
             metadata_path = Path(run.output_directory) / "pipeline_metadata.json"
@@ -1874,6 +1989,148 @@ class PipelineTaskProcessor:
                 }
             )
             await connection_manager.send_message_to_run(run_id, error_message_obj)
+
+    async def run_noise_assessment_for_refinement(self, job_id: str, executor: Optional[PipelineExecutor] = None):
+        """Run noise assessment for a completed refinement job"""
+        try:
+            logger.info(f"Starting noise assessment for refinement job: {job_id}")
+            
+            # Get refinement details from database
+            async with async_session_factory() as session:
+                refinement = await session.get(RefinementJob, job_id)
+                if not refinement:
+                    logger.error(f"Refinement job {job_id} not found")
+                    return
+                
+                if refinement.status != RunStatus.COMPLETED:
+                    logger.error(f"Refinement {job_id} is not completed (status: {refinement.status})")
+                    return
+                
+                if not refinement.image_path:
+                    logger.error(f"Refinement {job_id} has no image path")
+                    return
+                
+                if refinement.needs_noise_reduction is not None:
+                    logger.info(f"Refinement {job_id} already has noise assessment result: {refinement.needs_noise_reduction}")
+                    return
+                
+                # Construct full image path
+                from pathlib import Path
+                parent_run_dir = Path(f"./data/runs/{refinement.parent_run_id}")
+                refinements_dir = parent_run_dir / "refinements"
+                image_path = refinements_dir / refinement.image_path
+                
+                if not image_path.exists():
+                    # Try alternative path without refinements subdirectory
+                    image_path = parent_run_dir / refinement.image_path
+                    if not image_path.exists():
+                        logger.error(f"Refinement image not found at {image_path}")
+                        return
+                
+                # Send WebSocket notification that assessment is starting
+                await connection_manager.send_message_to_run(
+                    refinement.parent_run_id,
+                    WebSocketMessage(
+                        type="noise_assessment_started",
+                        run_id=refinement.parent_run_id,
+                        data={
+                            "job_id": job_id,
+                            "message": "Starting noise assessment..."
+                        }
+                    )
+                )
+                
+                # Access pre-configured client from shared executor
+                if executor is None:
+                    logger.error("No executor provided for noise assessment")
+                    await connection_manager.send_message_to_run(
+                        refinement.parent_run_id,
+                        WebSocketMessage(
+                            type="noise_assessment_error",
+                            run_id=refinement.parent_run_id,
+                            data={
+                                "job_id": job_id,
+                                "error": "Executor not provided",
+                                "message": "Noise assessment failed: no executor"
+                            }
+                        )
+                    )
+                    return
+                
+                # Access pre-configured client from shared executor
+                image_assessment_client = executor.clients.get('base_llm_client_image_assessment')
+                model_config = executor.clients.get('model_config', {})
+                
+                if not image_assessment_client:
+                    logger.error("Image assessment client not configured")
+                    await connection_manager.send_message_to_run(
+                        refinement.parent_run_id,
+                        WebSocketMessage(
+                            type="noise_assessment_error",
+                            run_id=refinement.parent_run_id,
+                            data={
+                                "job_id": job_id,
+                                "error": "Client not configured",
+                                "message": "Noise assessment failed: client not configured"
+                            }
+                        )
+                    )
+                    return
+                
+                # Create assessor with shared pre-configured client
+                model_id = model_config.get('IMAGE_ASSESSMENT_MODEL_ID', IMAGE_ASSESSMENT_MODEL_ID)
+                assessor = ImageAssessor(model_id=model_id, client=image_assessment_client)
+                
+                # Run noise assessment
+                needs_noise_reduction = await assessor.assess_noise_only_async(str(image_path))
+                
+                # Update database with fresh session to avoid detached object issues
+                async with async_session_factory() as update_session:
+                    fresh_refinement = await update_session.get(RefinementJob, job_id)
+                    if fresh_refinement:
+                        fresh_refinement.needs_noise_reduction = needs_noise_reduction
+                        update_session.add(fresh_refinement)
+                        await update_session.commit()
+                    else:
+                        logger.error(f"Could not find refinement {job_id} for database update")
+                        return
+                
+                # Send completion notification
+                await connection_manager.send_message_to_run(
+                    refinement.parent_run_id,
+                    WebSocketMessage(
+                        type="noise_assessment_completed",
+                        run_id=refinement.parent_run_id,
+                        data={
+                            "job_id": job_id,
+                            "needs_noise_reduction": needs_noise_reduction,
+                            "message": f"Assessment complete: {'Noise detected' if needs_noise_reduction else 'Image is clean'}"
+                        }
+                    )
+                )
+                
+        except Exception as e:
+            logger.error(f"Noise assessment failed for job {job_id}: {str(e)}")
+            
+            # Send error notification
+            try:
+                async with async_session_factory() as session:
+                    refinement = await session.get(RefinementJob, job_id)
+                    if refinement:
+                        await connection_manager.send_message_to_run(
+                            refinement.parent_run_id,
+                            WebSocketMessage(
+                                type="noise_assessment_error",
+                                run_id=refinement.parent_run_id,
+                                data={
+                                    "job_id": job_id,
+                                    "error": str(e),
+                                    "message": "Noise assessment failed"
+                                }
+                            )
+                        )
+            except Exception as cleanup_error:
+                logger.error(f"Error sending failure notification for job {job_id}: {str(cleanup_error)}")
 
 
 # Global task processor instance

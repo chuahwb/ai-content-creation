@@ -166,6 +166,7 @@ export interface ImageAssessmentData {
     technical_quality: number;
     subject_preservation?: number;
     text_rendering_quality?: number;
+    noise_and_grain_impact?: number;
   };
   assessment_justification: {
     concept_adherence: string;
@@ -177,6 +178,7 @@ export interface ImageAssessmentData {
   needs_subject_repair: boolean;
   needs_regeneration: boolean;
   needs_text_repair: boolean;
+  needs_noise_reduction: boolean;
   consistency_metrics?: {
     clip_similarity?: number;
     color_histogram_similarity?: number;
@@ -201,6 +203,26 @@ export interface GeneratedImageResult {
   assessment?: ImageAssessmentData;
 }
 
+// Refinement types
+export type RefinementType = 'subject' | 'prompt';
+
+export interface RefinementResult {
+  job_id: string;
+  parent_run_id: string;
+  refinement_type: RefinementType;
+  status: RunStatus;
+  parent_image_id: string;
+  parent_image_type: string;
+  generation_index?: number;
+  image_path?: string;
+  cost_usd?: number;
+  refinement_summary?: string;
+  needs_noise_reduction?: boolean | null;
+  created_at: string;
+  completed_at?: string;
+  error_message?: string;
+}
+
 export interface PipelineResults {
   run_id: string;
   status: RunStatus;
@@ -212,6 +234,8 @@ export interface PipelineResults {
   generated_images?: GeneratedImageResult[];
   // NEW: Image assessments
   image_assessments?: ImageAssessmentData[];
+  // NEW: Refinements
+  refinements?: RefinementResult[];
   total_cost_usd?: number;
   total_duration_seconds?: number;
   stage_costs?: Record<string, any>[];
@@ -312,7 +336,7 @@ export interface RunListResponse {
 
 // WebSocket message types
 export interface WebSocketMessage {
-  type: 'stage_update' | 'run_complete' | 'run_error' | 'ping' | 'caption_update' | 'caption_complete' | 'caption_error';
+  type: 'stage_update' | 'run_complete' | 'run_error' | 'ping' | 'caption_update' | 'caption_complete' | 'caption_error' | 'noise_assessment_started' | 'noise_assessment_completed' | 'noise_assessment_error';
   run_id: string;
   timestamp: string;
   data: Record<string, any>;
@@ -365,7 +389,7 @@ export interface BrandPresetCreateRequest {
   brand_kit?: BrandKitInput;
   input_snapshot?: PipelineInputSnapshot;
   style_recipe?: StyleRecipeData;
-  model_id: string;
+  preset_source_type: string;
   pipeline_version: string;
 }
 
@@ -380,7 +404,7 @@ export interface BrandPresetResponse {
   name: string;
   preset_type: PresetType;
   version: number;
-  model_id: string;
+  preset_source_type: string;
   pipeline_version: string;
   usage_count: number;
   created_at: string;
@@ -406,7 +430,7 @@ export interface BrandPreset {
   name: string;
   preset_type: PresetType;
   version: number;
-  model_id: string;
+  preset_source_type: string;
   pipeline_version: string;
   usage_count: number;
   created_at: string;

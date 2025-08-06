@@ -114,6 +114,7 @@ class TestImageAssessmentStage:
             "needs_subject_repair": False,
             "needs_regeneration": False,
             "needs_text_repair": False,
+            "needs_noise_reduction": False,
             "_meta": {"tokens_used": 45000, "model": IMAGE_ASSESSMENT_MODEL_ID}
         }
 
@@ -142,6 +143,7 @@ class TestImageAssessmentStage:
         assert "needs_subject_repair" in result
         assert "needs_regeneration" in result
         assert "needs_text_repair" in result
+        assert "needs_noise_reduction" in result
         
         # Verify assessments were called
         assert mock_assess.call_count == 2
@@ -360,7 +362,7 @@ class TestImageAssessorClass:
         
         # Test basic prompt
         prompt = assessor._create_assessment_prompt(
-            visual_concept, 2, False, False, "Test Task", "Instagram"
+            visual_concept, 2, False, False, "Test Task", "Instagram", False
         )
         
         assert "Test Task" in prompt
@@ -371,7 +373,7 @@ class TestImageAssessorClass:
         
         # Test with reference image
         prompt_with_ref = assessor._create_assessment_prompt(
-            visual_concept, 1, True, False, "Test Task", "Instagram"
+            visual_concept, 1, True, False, "Test Task", "Instagram", False
         )
         
         assert "subject_preservation" in prompt_with_ref
@@ -379,10 +381,39 @@ class TestImageAssessorClass:
         
         # Test with text rendering
         prompt_with_text = assessor._create_assessment_prompt(
-            visual_concept, 3, False, True, "Test Task", "Instagram"
+            visual_concept, 3, False, True, "Test Task", "Instagram", False
         )
         
         assert "text_rendering_quality" in prompt_with_text
+        
+        # Test dynamic numbering - no reference image, no text rendering
+        prompt_basic = assessor._create_assessment_prompt(
+            visual_concept, 2, False, False, "Test Task", "Instagram", False
+        )
+        assert "## 1. CONCEPT ADHERENCE" in prompt_basic
+        assert "## 2. TECHNICAL QUALITY" in prompt_basic
+        assert "## 3. NOISE & GRAIN ASSESSMENT" in prompt_basic
+        assert "## 3. SUBJECT PRESERVATION" not in prompt_basic
+        assert "## 4. TEXT RENDERING QUALITY" not in prompt_basic
+        
+        # Test dynamic numbering - with reference image, no text rendering
+        prompt_with_ref_only = assessor._create_assessment_prompt(
+            visual_concept, 2, True, False, "Test Task", "Instagram", False
+        )
+        assert "## 1. CONCEPT ADHERENCE" in prompt_with_ref_only
+        assert "## 2. TECHNICAL QUALITY" in prompt_with_ref_only
+        assert "## 3. SUBJECT PRESERVATION" in prompt_with_ref_only
+        assert "## 4. NOISE & GRAIN ASSESSMENT" in prompt_with_ref_only
+        
+        # Test dynamic numbering - with both reference image and text rendering
+        prompt_with_both = assessor._create_assessment_prompt(
+            visual_concept, 2, True, True, "Test Task", "Instagram", False
+        )
+        assert "## 1. CONCEPT ADHERENCE" in prompt_with_both
+        assert "## 2. TECHNICAL QUALITY" in prompt_with_both
+        assert "## 3. SUBJECT PRESERVATION" in prompt_with_both
+        assert "## 4. TEXT RENDERING QUALITY" in prompt_with_both
+        assert "## 5. NOISE & GRAIN ASSESSMENT" in prompt_with_both
 
     def test_extract_json_from_response(self):
         """Test JSON extraction from various LLM response formats."""
@@ -475,6 +506,7 @@ class TestImageAssessmentIntegration:
             "needs_subject_repair": False,
             "needs_regeneration": False,
             "needs_text_repair": False,
+            "needs_noise_reduction": False,
             "_meta": {"tokens_used": 45000, "model": IMAGE_ASSESSMENT_MODEL_ID}
         }
         
@@ -493,4 +525,104 @@ class TestImageAssessmentIntegration:
         
         # Verify usage tracking
         assert "image_assessment" in ctx.llm_usage
-        assert ctx.llm_usage["image_assessment"][0]["total_tokens"] == 45000 
+        assert ctx.llm_usage["image_assessment"][0]["total_tokens"] == 45000
+
+    def test_noise_and_grain_assessment(self):
+        """Test noise and grain assessment functionality."""
+        assessor = ImageAssessor()
+        
+        # Test prompt includes noise and grain criteria
+        visual_concept = {
+            "main_subject": "Test burger",
+            "composition_and_framing": "Close-up shot"
+        }
+        
+        prompt = assessor._create_assessment_prompt(
+            visual_concept, 2, False, False, "Test Task", "Instagram", False
+        )
+        
+        assert "NOISE & GRAIN ASSESSMENT" in prompt
+        assert "noise_and_grain_impact" in prompt
+        assert "1-3 scale" in prompt
+        assert "digital noise" in prompt
+        assert "compression artifacts" in prompt
+        
+        # Test refinement flag calculation
+        assessment_data_clean = {
+            "assessment_scores": {
+                "concept_adherence": 4,
+                "technical_quality": 4,
+                "noise_and_grain_impact": 3  # Clean image
+            },
+            "general_score": 4.0
+        }
+        
+        flags_clean = assessor._calculate_refinement_flags(assessment_data_clean, False, False)
+        assert flags_clean["needs_noise_reduction"] is False
+        
+        # Test with noisy image
+        assessment_data_noisy = {
+            "assessment_scores": {
+                "concept_adherence": 4,
+                "technical_quality": 4,
+                "noise_and_grain_impact": 2  # Mild noise
+            },
+            "general_score": 4.0
+        }
+        
+        flags_noisy = assessor._calculate_refinement_flags(assessment_data_noisy, False, False)
+        assert flags_noisy["needs_noise_reduction"] is True
+        
+        # Test with very noisy image
+        assessment_data_very_noisy = {
+            "assessment_scores": {
+                "concept_adherence": 4,
+                "technical_quality": 4,
+                "noise_and_grain_impact": 1  # Serious noise
+            },
+            "general_score": 4.0
+        }
+        
+        flags_very_noisy = assessor._calculate_refinement_flags(assessment_data_very_noisy, False, False)
+        assert flags_very_noisy["needs_noise_reduction"] is True
+        
+        # Test with missing score (should default to no flag)
+        assessment_data_missing = {
+            "assessment_scores": {
+                "concept_adherence": 4,
+                "technical_quality": 4
+                # noise_and_grain_impact missing
+            },
+            "general_score": 4.0
+        }
+        
+        flags_missing = assessor._calculate_refinement_flags(assessment_data_missing, False, False)
+        assert flags_missing["needs_noise_reduction"] is False  # Default to 3, so no flag
+        
+        # Test validation handles noise score correctly
+        raw_data_with_noise = {
+            "assessment_scores": {
+                "concept_adherence": 4,
+                "technical_quality": 4,
+                "noise_and_grain_impact": 2
+            },
+            "assessment_justification": {
+                "concept_adherence": "Good concept",
+                "technical_quality": "Good quality"
+            }
+        }
+        
+        validated_data = assessor._validate_and_fix_assessment_data(raw_data_with_noise)
+        assert validated_data["assessment_scores"]["noise_and_grain_impact"] == 2
+        
+        # Test clamping of noise score (should be 1-3)
+        raw_data_invalid_score = {
+            "assessment_scores": {
+                "concept_adherence": 4,
+                "technical_quality": 4,
+                "noise_and_grain_impact": 5  # Invalid for 1-3 scale
+            }
+        }
+        
+        validated_data_clamped = assessor._validate_and_fix_assessment_data(raw_data_invalid_score)
+        assert validated_data_clamped["assessment_scores"]["noise_and_grain_impact"] == 3  # Clamped to max 

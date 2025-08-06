@@ -193,3 +193,5 @@ scripts/caption_benchmark_results_*.json
 # Dummy/testing files
 churns/stages/creative_expert_1.py
 churns/stages/creative_expert_2.py 
+churns/stages/style_adaptation_1.py
+churns/stages/style_adaptation_2.py
