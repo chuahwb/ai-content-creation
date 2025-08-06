@@ -985,49 +985,67 @@ class PipelineTaskProcessor:
         stage_completed_at = None
         stage_duration_seconds = duration_seconds
         
+        # Check if this is a refinement job by trying to find it in refinement_jobs table
+        is_refinement_job = False
+        parent_run_id = None
+        
         async with async_session_factory() as session:
-            # Find or create stage record
-            result = await session.execute(
-                select(PipelineStage).where(
-                    PipelineStage.run_id == run_id,
-                    PipelineStage.stage_name == stage_name
-                )
+            # Check if run_id is a refinement job
+            refinement_result = await session.execute(
+                select(RefinementJob).where(RefinementJob.id == run_id)
             )
-            stage = result.scalars().first()
+            refinement_job = refinement_result.scalars().first()
             
-            if not stage:
-                stage = PipelineStage(
-                    run_id=run_id,
-                    stage_name=stage_name,
-                    stage_order=stage_order,
-                    status=status
+            if refinement_job:
+                is_refinement_job = True
+                parent_run_id = refinement_job.parent_run_id
+                # For refinements, skip pipeline stage creation to avoid foreign key constraint
+                # Refinement progress is tracked separately in the RefinementJob table
+                logger.debug(f"Skipping pipeline stage creation for refinement job {run_id}")
+            else:
+                # This is a regular pipeline run - proceed with stage tracking
+                # Find or create stage record
+                result = await session.execute(
+                    select(PipelineStage).where(
+                        PipelineStage.run_id == run_id,
+                        PipelineStage.stage_name == stage_name
+                    )
                 )
-            
-            # Update stage status and timing
-            stage.status = status
-            if status == StageStatus.RUNNING and not stage.started_at:
-                stage.started_at = datetime.utcnow()
-            elif status in [StageStatus.COMPLETED, StageStatus.FAILED] and not stage.completed_at:
-                stage.completed_at = datetime.utcnow()
-                if stage.started_at:
-                    stage.duration_seconds = (stage.completed_at - stage.started_at).total_seconds()
-            
-            if duration_seconds is not None:
-                stage.duration_seconds = duration_seconds
-            
-            if output_data:
-                stage.output_data = json.dumps(output_data)
-            
-            if error_message:
-                stage.error_message = error_message
+                stage = result.scalars().first()
                 
-            session.add(stage)
-            await session.commit()
-            
-            # Capture values while still in session
-            stage_started_at = stage.started_at
-            stage_completed_at = stage.completed_at
-            stage_duration_seconds = stage.duration_seconds
+                if not stage:
+                    stage = PipelineStage(
+                        run_id=run_id,
+                        stage_name=stage_name,
+                        stage_order=stage_order,
+                        status=status
+                    )
+                
+                # Update stage status and timing
+                stage.status = status
+                if status == StageStatus.RUNNING and not stage.started_at:
+                    stage.started_at = datetime.utcnow()
+                elif status in [StageStatus.COMPLETED, StageStatus.FAILED] and not stage.completed_at:
+                    stage.completed_at = datetime.utcnow()
+                    if stage.started_at:
+                        stage.duration_seconds = (stage.completed_at - stage.started_at).total_seconds()
+                
+                if duration_seconds is not None:
+                    stage.duration_seconds = duration_seconds
+                
+                if output_data:
+                    stage.output_data = json.dumps(output_data)
+                
+                if error_message:
+                    stage.error_message = error_message
+                    
+                session.add(stage)
+                await session.commit()
+                
+                # Capture values while still in session
+                stage_started_at = stage.started_at
+                stage_completed_at = stage.completed_at
+                stage_duration_seconds = stage.duration_seconds
         
         # Small delay to ensure database consistency before WebSocket update
         await asyncio.sleep(0.1)
@@ -1045,7 +1063,9 @@ class PipelineTaskProcessor:
             error_message=error_message
         )
         
-        await connection_manager.send_stage_update(run_id, update)
+        # For refinements, send WebSocket updates to the parent run
+        websocket_run_id = parent_run_id if is_refinement_job else run_id
+        await connection_manager.send_stage_update(websocket_run_id, update)
     
     def _convert_request_to_pipeline_data(self, request: PipelineRunRequest, 
                                         output_dir: str, image_path: Optional[Path] = None, 
