@@ -21,6 +21,9 @@ import {
   BrandPresetCreateRequest,
   BrandPresetUpdateRequest,
   SavePresetFromResultRequest,
+  // --- Added for brand kit sanitization ---
+  BrandKitInput,
+  BrandColor,
 } from '@/types/api';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
@@ -35,6 +38,31 @@ const apiClient = axios.create({
     'ngrok-skip-browser-warning': 'true', // Bypass ngrok browser warning
   },
 });
+
+// --- Helper: sanitize BrandKitInput to only send server-supported fields ---
+const sanitizeBrandKitInput = (kit?: BrandKitInput | null): BrandKitInput | undefined => {
+  if (!kit) return undefined;
+  const sanitized: BrandKitInput = {
+    // Colors: strip frontend-only fields (isAuto, isCustomRatio, isLocked)
+    colors: kit.colors?.map((c: any) => {
+      const color: BrandColor = {
+        hex: typeof c === 'string' ? c : c.hex,
+        role: typeof c === 'string' ? 'accent' : c.role,
+      } as BrandColor;
+      if (typeof c !== 'string') {
+        if (c.label) color.label = c.label;
+        if (typeof c.ratio === 'number') color.ratio = c.ratio;
+      }
+      return color;
+    }),
+    // Pass-through fields
+    brand_voice_description: kit.brand_voice_description || undefined,
+    logo_file_base64: kit.logo_file_base64 || undefined,
+    saved_logo_path_in_run_dir: kit.saved_logo_path_in_run_dir || undefined,
+    logo_analysis: kit.logo_analysis || undefined,
+  };
+  return sanitized;
+};
 
 // Error handling
 export class ApiError extends Error {
@@ -60,8 +88,6 @@ const handleApiError = (error: AxiosError): never => {
 
 // Main API class
 export class PipelineAPI {
-
-
   // Get status of API service
   static async getApiStatus(): Promise<ApiStatusResponse> {
     try {
@@ -119,9 +145,10 @@ export class PipelineAPI {
       if (formData.template_overrides) requestData.append('template_overrides', JSON.stringify(formData.template_overrides));
       if (formData.adaptation_prompt) requestData.append('adaptation_prompt', formData.adaptation_prompt);
 
-      // Append brand_kit as a JSON string
+      // Append brand_kit as a sanitized JSON string
       if (formData.brand_kit) {
-        requestData.append('brand_kit', JSON.stringify(formData.brand_kit));
+        const safeBrandKit = sanitizeBrandKitInput(formData.brand_kit);
+        requestData.append('brand_kit', JSON.stringify(safeBrandKit));
       }
 
       // Append image file if provided
@@ -326,7 +353,11 @@ export class PipelineAPI {
 
   static async createBrandPreset(data: BrandPresetCreateRequest): Promise<BrandPresetResponse> {
     try {
-      const response = await apiClient.post('/brand-presets', data);
+      const payload: BrandPresetCreateRequest = {
+        ...data,
+        brand_kit: sanitizeBrandKitInput(data.brand_kit),
+      };
+      const response = await apiClient.post('/brand-presets', payload);
       return response.data;
     } catch (error) {
       return handleApiError(error as AxiosError);
@@ -335,7 +366,11 @@ export class PipelineAPI {
 
   static async updateBrandPreset(presetId: string, data: BrandPresetUpdateRequest): Promise<BrandPresetResponse> {
     try {
-      const response = await apiClient.put(`/brand-presets/${presetId}`, data);
+      const payload: BrandPresetUpdateRequest = {
+        ...data,
+        brand_kit: sanitizeBrandKitInput(data.brand_kit),
+      };
+      const response = await apiClient.put(`/brand-presets/${presetId}`, payload);
       return response.data;
     } catch (error) {
       return handleApiError(error as AxiosError);
@@ -353,7 +388,11 @@ export class PipelineAPI {
 
   static async savePresetFromResult(runId: string, data: SavePresetFromResultRequest): Promise<BrandPresetResponse> {
     try {
-      const response = await apiClient.post(`/runs/${runId}/save-as-preset`, data);
+      const payload: SavePresetFromResultRequest = {
+        ...data,
+        brand_kit: sanitizeBrandKitInput(data.brand_kit),
+      };
+      const response = await apiClient.post(`/runs/${runId}/save-as-preset`, payload);
       return response.data;
     } catch (error) {
       return handleApiError(error as AxiosError);
@@ -465,5 +504,38 @@ export class WebSocketManager {
     return this.ws?.readyState ?? WebSocket.CLOSED;
   }
 }
+
+// Generic utility function for API calls with retry logic
+export const apiCallWithRetry = async (
+  apiCall: () => Promise<Response>,
+  retries: number = 2,
+  delay: number = 1000
+): Promise<Response> => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await apiCall();
+      if (response.ok) {
+        return response;
+      }
+      
+      // If it's the last attempt or a non-retryable error, throw
+      if (attempt === retries || response.status < 500) {
+        throw new Error(`API call failed with status: ${response.status}`);
+      }
+      
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
+    } catch (error) {
+      if (attempt === retries) {
+        throw error;
+      }
+      
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
+    }
+  }
+  
+  throw new Error('API call failed after all retries');
+};
 
 export default PipelineAPI; 

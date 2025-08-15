@@ -26,9 +26,20 @@ export interface MarketingGoalsInput {
   niche?: string;
 }
 
+// Brand Color interface with semantic roles
+export interface BrandColor {
+  hex: string;
+  role: string;
+  label?: string;
+  ratio?: number;
+  isAuto?: boolean; // Indicates if this is an auto-generated neutral
+  isCustomRatio?: boolean; // Indicates if user manually adjusted ratio
+  isLocked?: boolean; // Indicates if ratio is locked from normalization
+}
+
 // Brand Kit interface for unified brand management
 export interface BrandKitInput {
-  colors?: string[];
+  colors?: BrandColor[];
   brand_voice_description?: string;
   logo_file_base64?: string;
   // Runtime fields - populated during processing

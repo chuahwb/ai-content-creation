@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import traceback
 import base64
 
+
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlmodel import select
@@ -41,6 +42,7 @@ from churns.core.constants import (
 )
 from churns.models.presets import StyleRecipeEnvelope, StyleRecipeData
 from churns.models import VisualConceptDetails, MarketingGoalSetFinal, StyleGuidance
+from churns.core.brand_kit_utils import extract_colors_from_image, generate_color_harmonies
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -51,6 +53,7 @@ runs_router = APIRouter(prefix="/runs", tags=["Pipeline Runs"])
 files_router = APIRouter(prefix="/files", tags=["File Operations"])
 ws_router = APIRouter(prefix="/ws", tags=["WebSocket"])
 presets_router = APIRouter(prefix="/brand-presets", tags=["Brand Presets"])
+brand_kit_utils_router = APIRouter(prefix="/brand-kit", tags=["Brand Kit Utilities"])
 
 
 @api_router.on_event("startup")
@@ -2042,8 +2045,72 @@ def _convert_preset_to_response(preset: BrandPreset) -> BrandPresetResponse:
         )
 
 
+# Brand Kit Utility Endpoints
+@brand_kit_utils_router.post("/extract-colors-from-image")
+async def extract_colors_from_image_endpoint(
+    image_file: UploadFile = File(..., description="Image file to extract colors from")
+):
+    """Extract a color palette from an uploaded image using color analysis."""
+    try:
+        # Validate file type
+        if not image_file.content_type or not image_file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        
+        # Read image data
+        image_data = await image_file.read()
+        
+        # Use utility function to extract colors
+        brand_colors = extract_colors_from_image(image_data)
+        
+        return {
+            "success": True,
+            "colors": brand_colors,
+            "message": f"Extracted {len(brand_colors)} colors from image"
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error extracting colors from image: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error extracting colors from image: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract colors: {str(e)}")
+
+
+@brand_kit_utils_router.post("/color-harmonies")
+async def get_color_harmonies_endpoint(
+    base_color: str = Form(..., description="Base hex color (e.g., #FF5733)"),
+    target_role: Optional[str] = Form(None, description="Target role for curated suggestions (e.g., accent, secondary)"),
+    offset: str = Form("0", description="Offset for pagination of suggestions")
+):
+    """Generate color harmony suggestions based on a base color, optionally curated for a specific role."""
+    try:
+        # Convert offset to int (FastAPI Form params come as strings)
+        try:
+            offset_int = int(offset) if offset else 0
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid offset value '{offset}': {e}. Using 0.")
+            offset_int = 0
+        
+        # Use utility function to generate harmonies
+        result = generate_color_harmonies(base_color, target_role, offset_int)
+        
+        return {
+            "success": True,
+            **result,
+            "message": f"Generated color harmony suggestions{f' for {target_role}' if target_role else ''}"
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error generating color harmonies: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error generating color harmonies: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate harmonies: {str(e)}")
+
+
 # Include routers in main API router
 api_router.include_router(runs_router)
 api_router.include_router(files_router)
 api_router.include_router(ws_router)
-api_router.include_router(presets_router) 
+api_router.include_router(presets_router)
+api_router.include_router(brand_kit_utils_router) 

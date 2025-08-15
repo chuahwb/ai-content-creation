@@ -42,9 +42,9 @@ import {
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { BrandPreset, BrandPresetListResponse, BrandPresetResponse } from '@/types/api';
+import { BrandPreset, BrandPresetListResponse, BrandPresetResponse, BrandColor } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
-import ColorPaletteEditor from './ColorPaletteEditor';
+import EnhancedColorPaletteEditor from './EnhancedColorPaletteEditor';
 import LogoUploader from './LogoUploader';
 import CompactLogoDisplay from './CompactLogoDisplay';
 
@@ -110,7 +110,7 @@ const PresetManagementModal = forwardRef<PresetManagementModalRef, PresetManagem
   const [brandKitEditMode, setBrandKitEditMode] = useState<'create' | 'edit'>('create');
   const [brandKitData, setBrandKitData] = useState<{
     name: string;
-    colors: string[];
+    colors: BrandColor[];
     brandVoice: string;
     logo: any;
   }>({
@@ -268,9 +268,28 @@ const PresetManagementModal = forwardRef<PresetManagementModalRef, PresetManagem
       };
     }
     
+    // Migrate colors from old string[] format to new BrandColor[] format if needed
+    const migrateColors = (colors: any[]): BrandColor[] => {
+      if (!colors || colors.length === 0) return [];
+      
+      // Check if colors are already in new format (objects with hex, role properties)
+      if (typeof colors[0] === 'object' && colors[0].hex && colors[0].role) {
+        return colors as BrandColor[];
+      }
+      
+      // Migrate from old string[] format
+      const roles = ['primary', 'accent', 'neutral_light', 'neutral_dark'];
+      return colors.map((color, index) => ({
+        hex: color as string,
+        role: roles[index] || 'accent',
+        label: undefined,
+        ratio: undefined,
+      }));
+    };
+
     setBrandKitData({
       name: preset.name,
-      colors: preset.brand_kit?.colors || [],
+      colors: migrateColors(preset.brand_kit?.colors || []),
       brandVoice: preset.brand_kit?.brand_voice_description || '',
       logo: logoData,
     });
@@ -304,8 +323,8 @@ const PresetManagementModal = forwardRef<PresetManagementModalRef, PresetManagem
     // Validate colors format (basic hex validation)
     for (const color of brandKitData.colors) {
       const hexRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
-      if (!hexRegex.test(color)) {
-        toast.error(`Invalid color format: ${color}. Please use valid hex colors (e.g., #FF0000)`);
+      if (!hexRegex.test(color.hex)) {
+        toast.error(`Invalid color format: ${color.hex}. Please use valid hex colors (e.g., #FF0000)`);
         return;
       }
     }
@@ -632,7 +651,7 @@ const PresetManagementModal = forwardRef<PresetManagementModalRef, PresetManagem
                             sx={{
                               width: 20,
                               height: 20,
-                              backgroundColor: color,
+                              backgroundColor: typeof color === 'string' ? color : color.hex,
                               borderRadius: '50%',
                               border: 1,
                               borderColor: 'divider',
@@ -853,7 +872,7 @@ const PresetManagementModal = forwardRef<PresetManagementModalRef, PresetManagem
       </Dialog>
 
       {/* Brand Kit Editor Dialog */}
-      <Dialog open={brandKitDialogOpen} onClose={handleBrandKitCancel} maxWidth="sm" fullWidth>
+      <Dialog open={brandKitDialogOpen} onClose={handleBrandKitCancel} maxWidth="md" fullWidth>
         <DialogTitle>
           <Box display="flex" alignItems="center" justifyContent="space-between">
             <Typography variant="h6">
@@ -879,12 +898,13 @@ const PresetManagementModal = forwardRef<PresetManagementModalRef, PresetManagem
               />
             </Box>
 
-            {/* Color Palette - Compact */}
+            {/* Color Palette - Enhanced */}
             <Box sx={{ mb: 2.5 }}>
-              <ColorPaletteEditor
+              <EnhancedColorPaletteEditor
                 colors={brandKitData.colors}
                 onChange={(colors) => setBrandKitData(prev => ({ ...prev, colors }))}
                 showLabels={true}
+                logoFile={brandKitData.logo?.file || null}
               />
             </Box>
 

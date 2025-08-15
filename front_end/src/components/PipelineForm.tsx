@@ -41,12 +41,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PipelineFormData, PipelineRunResponse, BrandPresetResponse, BrandKitInput } from '@/types/api';
+import { PipelineFormData, PipelineRunResponse, BrandPresetResponse, BrandKitInput, BrandColor } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
 import PresetManagementModal, { PresetManagementModalRef } from './PresetManagementModal';
 import BrandKitPresetModal from './BrandKitPresetModal';
 import StyleRecipeModal from './StyleRecipeModal';
-import ColorPaletteEditor from './ColorPaletteEditor';
+import EnhancedColorPaletteEditor from './EnhancedColorPaletteEditor';
+import CompactColorPreview from './CompactColorPreview';
+import ColorPaletteModal from './ColorPaletteModal';
 import LogoUploader from './LogoUploader';
 import CompactLogoDisplay from './CompactLogoDisplay';
 
@@ -68,7 +70,16 @@ const formSchema = z.object({
   task_type: z.string().optional(),
   task_description: z.string().optional(),
   brand_kit: z.object({
-    colors: z.array(z.string()).optional(),
+    colors: z.array(z.object({
+      hex: z.string(),
+      role: z.string(),
+      label: z.string().optional(),
+      ratio: z.number().optional(),
+      // Frontend-specific fields are optional for validation
+      isAuto: z.boolean().optional(),
+      isCustomRatio: z.boolean().optional(),
+      isLocked: z.boolean().optional(),
+    })).optional(),
     brand_voice_description: z.string().nullable().optional(),
     logo_file_base64: z.string().nullable().optional(),
     saved_logo_path_in_run_dir: z.string().nullable().optional(),
@@ -148,6 +159,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   // Add state for save template functionality after the existing state declarations
   // Save template dialog state
   const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false);
+  
+  // Color palette modal state
+  const [colorPaletteModalOpen, setColorPaletteModalOpen] = useState(false);
   const [saveTemplateName, setSaveTemplateName] = useState('');
   const [saveTemplateLoading, setSaveTemplateLoading] = useState(false);
 
@@ -296,8 +310,33 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           inputData.brand_kit?.logo_file_base64
         );
         
-        // Smart brand kit preservation logic
+        // Migrate colors from old string[] format to new BrandColor[] format if needed
+        const migrateColors = (colors: any[]): BrandColor[] => {
+          if (!colors || colors.length === 0) return [];
+          
+          // Check if colors are already in new format (objects with hex, role properties)
+          if (typeof colors[0] === 'object' && colors[0].hex && colors[0].role) {
+            return colors as BrandColor[];
+          }
+          
+          // Migrate from old string[] format
+          const roles = ['primary', 'accent', 'neutral_light', 'neutral_dark'];
+          return colors.map((color, index) => ({
+            hex: color as string,
+            role: roles[index] || 'accent',
+            label: undefined,
+            ratio: undefined,
+          }));
+        };
+        
+        // Smart brand kit preservation logic with migration
         let finalBrandKit = inputData.brand_kit;
+        if (finalBrandKit?.colors) {
+          finalBrandKit = {
+            ...finalBrandKit,
+            colors: migrateColors(finalBrandKit.colors)
+          };
+        }
         let brandKitMessage = '';
         if (hasExistingBrandKit && !templateHasBrandKit) {
           // Preserve user's brand kit if template doesn't have one
@@ -606,8 +645,8 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     if (brandKit?.colors) {
       for (const color of brandKit.colors) {
         const hexRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
-        if (!hexRegex.test(color)) {
-          toast.error(`Invalid color format: ${color}. Please use valid hex colors (e.g., #FF0000)`);
+        if (!hexRegex.test(color.hex)) {
+          toast.error(`Invalid color format: ${color.hex}. Please use valid hex colors (e.g., #FF0000)`);
           return;
         }
       }
@@ -644,8 +683,36 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
 
   const handleApplyBrandKitPreset = (preset: BrandPresetResponse) => {
     if (preset.brand_kit) {
+      // Migrate colors from old string[] format to new BrandColor[] format if needed
+      const migrateColors = (colors: any[]): BrandColor[] => {
+        if (!colors || colors.length === 0) return [];
+        
+        // Check if colors are already in new format (objects with hex, role properties)
+        if (typeof colors[0] === 'object' && colors[0].hex && colors[0].role) {
+          return colors as BrandColor[];
+        }
+        
+        // Migrate from old string[] format
+        const roles = ['primary', 'accent', 'neutral_light', 'neutral_dark'];
+        return colors.map((color, index) => ({
+          hex: color as string,
+          role: roles[index] || 'accent',
+          label: undefined,
+          ratio: undefined,
+        }));
+      };
+      
+      // Migrate brand kit colors if needed
+      let migratedBrandKit = preset.brand_kit;
+      if (migratedBrandKit?.colors) {
+        migratedBrandKit = {
+          ...migratedBrandKit,
+          colors: migrateColors(migratedBrandKit.colors)
+        };
+      }
+      
       // Apply brand kit data without resetting entire form
-      setValue('brand_kit', preset.brand_kit);
+      setValue('brand_kit', migratedBrandKit);
       
       // Only toggle apply_branding if it wasn't already enabled
       const currentApplyBranding = watch('apply_branding');
@@ -1226,18 +1293,20 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                             </Box>
                           </Box>
                           <Grid container spacing={2}>
-                            {/* Color Palette Editor */}
+                            {/* Color Palette Preview */}
                             <Grid item xs={12}>
                               <Controller
                                 name="brand_kit"
                                 control={control}
                                 render={({ field }) => (
-                                  <ColorPaletteEditor
+                                  <CompactColorPreview
                                     colors={field.value?.colors || []}
-                                    onChange={(colors) => field.onChange({
-                                      ...field.value,
-                                      colors
-                                    })}
+                                    onEditClick={() => setColorPaletteModalOpen(true)}
+                                    onRemove={() => {
+                                      const currentBrandKit = field.value || {};
+                                      field.onChange({ ...currentBrandKit, colors: [] });
+                                    }}
+                                    showRatios={true}
                                   />
                                 )}
                               />
@@ -1578,6 +1647,20 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         open={brandKitPresetModalOpen}
         onClose={() => setBrandKitPresetModalOpen(false)}
         onPresetSelected={handleApplyBrandKitPreset}
+      />
+
+      {/* Color Palette Modal */}
+      <ColorPaletteModal
+        open={colorPaletteModalOpen}
+        onClose={() => setColorPaletteModalOpen(false)}
+        colors={watch('brand_kit')?.colors || []}
+        onChange={(colors) => {
+          const currentBrandKit = watch('brand_kit') || {};
+          setValue('brand_kit', { ...currentBrandKit, colors });
+        }}
+        maxColors={7}
+        logoFile={null}
+        title="Brand Color Palette"
       />
 
       {/* Style Recipe Modal */}

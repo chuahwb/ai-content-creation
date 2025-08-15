@@ -1,2 +1,2 @@
-// Minimal Jest setup
-console.log('Jest setup loaded'); 
+// Testing Library matchers
+import '@testing-library/jest-dom';

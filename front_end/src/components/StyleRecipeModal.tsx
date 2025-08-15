@@ -40,10 +40,11 @@ import {
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { BrandPresetResponse, PipelineRunResponse, PipelineFormData, StyleRecipeEnvelope, BrandKitInput } from '@/types/api';
+import { BrandPresetResponse, PipelineRunResponse, PipelineFormData, StyleRecipeEnvelope, BrandKitInput, BrandColor } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
 import ImageWithAuth from './ImageWithAuth';
-import ColorPaletteEditor from './ColorPaletteEditor';
+import CompactColorPreview from './CompactColorPreview';
+import ColorPaletteModal from './ColorPaletteModal';
 import LogoUploader from './LogoUploader';
 import CompactLogoDisplay from './CompactLogoDisplay';
 
@@ -98,6 +99,7 @@ export default function StyleRecipeModal({
   const [showCustomLanguage, setShowCustomLanguage] = useState(false);
   const [brandKit, setBrandKit] = useState<BrandKitInput | undefined>(undefined);
   const [brandingExpanded, setBrandingExpanded] = useState(false);
+  const [colorPaletteModalOpen, setColorPaletteModalOpen] = useState(false);
 
   // --- Original (saved) values state ---
   const [originalSettings, setOriginalSettings] = useState<Partial<StyleRecipeEnvelope & { brand_kit?: BrandKitInput }>>({});
@@ -107,12 +109,40 @@ export default function StyleRecipeModal({
     if (open && preset) {
       const { style_recipe, brand_kit: presetBrandKit } = preset;
       
+      // Migrate colors from old string[] format to new BrandColor[] format if needed
+      const migrateColors = (colors: any[]): BrandColor[] => {
+        if (!colors || colors.length === 0) return [];
+        
+        // Check if colors are already in new format (objects with hex, role properties)
+        if (typeof colors[0] === 'object' && colors[0].hex && colors[0].role) {
+          return colors as BrandColor[];
+        }
+        
+        // Migrate from old string[] format
+        const roles = ['primary', 'accent', 'neutral_light', 'neutral_dark'];
+        return colors.map((color, index) => ({
+          hex: color as string,
+          role: roles[index] || 'accent',
+          label: undefined,
+          ratio: undefined,
+        }));
+      };
+      
+      // Migrate brand kit colors if needed
+      let migratedBrandKit = presetBrandKit;
+      if (migratedBrandKit?.colors) {
+        migratedBrandKit = {
+          ...migratedBrandKit,
+          colors: migrateColors(migratedBrandKit.colors)
+        };
+      }
+      
       const savedSettings = {
         render_text: style_recipe?.render_text ?? false,
         apply_branding: style_recipe?.apply_branding ?? false,
         source_platform: style_recipe?.source_platform || platforms[0],
         language: style_recipe?.language || 'en',
-        brand_kit: presetBrandKit,
+        brand_kit: migratedBrandKit,
       };
 
               // Set current values
@@ -676,10 +706,12 @@ export default function StyleRecipeModal({
                               <Typography variant="caption" fontWeight="medium" sx={{ mb: 1, display: 'block' }}>
                                 Brand Colors
                               </Typography>
-                              <ColorPaletteEditor
+                              <CompactColorPreview
                                 colors={brandKit?.colors || []}
-                                onChange={(colors) => setBrandKit(prev => ({...(prev || {}), colors}))}
-                                showLabels={false}
+                                onEditClick={() => setColorPaletteModalOpen(true)}
+                                onRemove={() => setBrandKit(prev => ({...(prev || {}), colors: []}))}
+                                showRatios={false}
+                                maxDisplayColors={5}
                               />
                             </Box>
                             
@@ -812,6 +844,17 @@ export default function StyleRecipeModal({
           {isSubmitting ? 'Starting...' : 'Run Style Adaptation'}
         </Button>
       </DialogActions>
+
+      {/* Color Palette Modal */}
+      <ColorPaletteModal
+        open={colorPaletteModalOpen}
+        onClose={() => setColorPaletteModalOpen(false)}
+        colors={brandKit?.colors || []}
+        onChange={(colors) => setBrandKit(prev => ({...(prev || {}), colors}))}
+        maxColors={7}
+        logoFile={null}
+        title="Brand Color Palette"
+      />
     </Dialog>
   );
 } 

@@ -2904,7 +2904,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                       sx={{
                                         width: 20,
                                         height: 20,
-                                        backgroundColor: color,
+                                        backgroundColor: typeof color === 'string' ? color : color.hex,
                                         borderRadius: '50%',
                                         border: 1,
                                         borderColor: 'grey.300',
@@ -2918,7 +2918,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                       fontWeight: 500,
                                       color: 'text.primary'
                                     }}>
-                                      {color.toUpperCase()}
+                                      {(typeof color === 'string' ? color : color.hex).toUpperCase()}
                                     </Typography>
                                   </Box>
                                 ))}
