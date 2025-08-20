@@ -3,7 +3,7 @@ Pydantic models for the AI Marketing Pipeline.
 All models copied verbatim from the original combined_pipeline.py
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field
 
 # --- Brand Kit Models ---
@@ -145,6 +145,7 @@ class CaptionBrief(BaseModel):
     primary_call_to_action: str = Field(..., description="The final call to action string.")
     hashtags: List[str] = Field(..., description="An array of generated hashtag strings, including the # symbol.")
     emoji_suggestions: List[str] = Field(..., description="An array of 2-3 relevant emoji characters to consider.")
+    length_guidance: Optional[str] = Field(None, description="A specific instruction for the writer regarding the desired length of the caption. Set to null if no specific length is requested.")
     task_type_notes: Optional[str] = Field(None, description="Optional task-type specific guidance notes for the writer.")
 
 class CaptionSettings(BaseModel):
@@ -153,6 +154,8 @@ class CaptionSettings(BaseModel):
     call_to_action: Optional[str] = Field(None, description="User-defined call to action text")
     include_emojis: Optional[bool] = Field(True, description="Whether to include emojis in the caption")
     hashtag_strategy: Optional[str] = Field(None, description="Hashtag strategy ('None', 'Niche & Specific', 'Broad & Trending', 'Balanced Mix')")
+    user_instructions: Optional[str] = Field(None, description="Direct user instructions for the caption generation")
+    caption_length: Optional[Literal["Auto", "Short", "Medium", "Long"]] = Field("Auto", description="Desired caption length")
     # New fields for mode tracking
     generation_mode: Optional[str] = Field(None, description="Auto or Custom - indicates how the settings were determined")
     processing_mode: Optional[str] = Field(None, description="Fast or Analytical - indicates the model sophistication level used")

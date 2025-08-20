@@ -273,6 +273,8 @@ class CaptionSettings(BaseModel):
     call_to_action: Optional[str] = Field(None, description="User-defined call to action text")
     include_emojis: Optional[bool] = Field(True, description="Whether to include emojis in the caption")
     hashtag_strategy: Optional[str] = Field(None, description="Hashtag strategy ('None', 'Niche & Specific', 'Broad & Trending', 'Balanced Mix')")
+    user_instructions: Optional[str] = Field(None, description="Direct user instructions for the caption generation")
+    caption_length: Optional[Literal["Auto", "Short", "Medium", "Long"]] = Field("Auto", description="Desired caption length")
     generation_mode: Literal['Auto', 'Custom'] = Field('Auto', description="Auto or Custom - indicates how the settings were determined")
     processing_mode: Optional[Literal['Fast', 'Analytical']] = Field(None, description="Fast (quick response) or Analytical (thoughtful analysis) - determines model selection")
 

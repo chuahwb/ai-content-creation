@@ -1095,6 +1095,7 @@ export default function EnhancedColorPaletteEditor({
   const getAvailableRoles = () => {
     const availableRoles: string[] = [];
     const priorityRoles: string[] = [];
+    const neutralRoles: string[] = [];
     
     // Define the natural order of roles
     const roleOrder = ['primary', 'secondary', 'accent', 'neutral_light', 'neutral_dark'];
@@ -1105,8 +1106,12 @@ export default function EnhancedColorPaletteEditor({
         const existingCount = colorsByRole[roleKey]?.length || 0;
         
         if (existingCount < roleConfig.maxCount) {
+          // Separate neutral roles for special handling
+          if (roleKey.includes('neutral')) {
+            neutralRoles.push(roleKey);
+          }
           // Always follow natural order, but prioritize missing secondary/accent after primary is filled
-          if ((roleKey === 'accent' || roleKey === 'secondary') && existingCount === 0 && colorsByRole['primary']?.length > 0) {
+          else if ((roleKey === 'accent' || roleKey === 'secondary') && existingCount === 0 && colorsByRole['primary']?.length > 0) {
             priorityRoles.push(roleKey);
           } else {
             availableRoles.push(roleKey);
@@ -1115,8 +1120,14 @@ export default function EnhancedColorPaletteEditor({
       }
     });
     
-    // Return priority roles first, then others in natural order
-    return [...priorityRoles, ...availableRoles];
+    // When auto neutrals are disabled and neutral roles are available, prioritize them
+    // This helps users who turned off auto neutrals to manually add neutral colors
+    if (!autoNeutralsEnabled && neutralRoles.length > 0) {
+      return [...neutralRoles, ...priorityRoles, ...availableRoles];
+    }
+    
+    // Return priority roles first, then others in natural order, then neutrals
+    return [...priorityRoles, ...availableRoles, ...neutralRoles];
   };
 
   const handleAddColor = () => {
@@ -2741,10 +2752,17 @@ export default function EnhancedColorPaletteEditor({
                     if (!newEnabled) {
                       const nonAutoColors = colors.filter(c => !c.isAuto);
                       if (nonAutoColors.length !== colors.length) {
+                        if (nonAutoColors.length === 0) {
+                          // Prevent completely empty palette - show warning
+                          toast.error('Cannot remove all colors. Add manual colors before disabling auto-neutrals.', {
+                            duration: 4000
+                          });
+                          return; // Don't disable auto-neutrals if it would result in empty palette
+                        }
                         onChange(nonAutoColors);
-                        toast('Neutral colors removed', {
+                        toast('Auto-generated neutral colors removed', {
                           icon: '🎨',
-                          duration: 1500
+                          duration: 2000
                         });
                       }
                     }
@@ -4065,7 +4083,8 @@ export default function EnhancedColorPaletteEditor({
                   const newColors = [...colors];
                   newColors[suggestionMode.targetIndex] = {
                     ...suggestion,
-                    role: suggestions.role
+                    role: suggestions.role,
+                    ratio: suggestion.ratio || undefined // Convert null to undefined
                   };
                   onChange(newColors);
                   
@@ -4080,7 +4099,8 @@ export default function EnhancedColorPaletteEditor({
                   
                   handleSaveColor({
                     ...suggestion,
-                    role: suggestions.role
+                    role: suggestions.role,
+                    ratio: suggestion.ratio || undefined // Convert null to undefined
                   });
                 }
                 

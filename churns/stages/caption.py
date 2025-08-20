@@ -195,6 +195,19 @@ def _resolve_final_instructions(
         instructions['hashtags'] = "Your task is to generate a 'Balanced Mix' of hashtags. This involves extracting specific keywords from the provided style and subject matter to create niche hashtags, and then supplementing those with 1-2 broader, high-traffic terms."
     else:
         instructions['hashtags'] = f"You MUST follow this user-provided hashtag strategy precisely: '{hashtag_strategy}'."
+    
+    # 5. Resolve User Instructions
+    if settings.user_instructions:
+        instructions['user_request'] = f"You MUST prioritize and directly address the following user instruction in your brief. It should heavily influence the 'core_message' and 'key_themes_to_include'. User Instruction: '{settings.user_instructions}'"
+    
+    # 6. Resolve Caption Length Instruction
+    if settings.caption_length and settings.caption_length != "Auto":
+        if settings.caption_length == "Short":
+            instructions['length'] = "The user has requested a 'Short' caption. Your task is to populate the `length_guidance` field in the JSON brief with a clear, firm instruction for the writer, such as: 'Generate a very concise, high-impact caption, under 125 characters. It must be a powerful hook or a direct question to grab attention immediately. This is ideal for visually-driven content where the message must be instant.'"
+        elif settings.caption_length == "Medium":
+            instructions['length'] = "The user has requested a 'Medium' caption. Your task is to populate the `length_guidance` field in the JSON brief with a clear, firm instruction for the writer, such as: 'Generate a balanced caption of about 3-5 sentences (around 125-500 characters). This length should provide valuable context, tell a mini-story, and encourage engagement without overwhelming the reader.'"
+        elif settings.caption_length == "Long":
+            instructions['length'] = "The user has requested a 'Long' caption. Your task is to populate the `length_guidance` field in the JSON brief with a clear, firm instruction for the writer, such as: 'Generate a detailed, long-form caption (500+ characters), like a micro-blog post. This must be used for in-depth storytelling or providing significant educational value. Structure it with line breaks for readability to create save-worthy content.'"
 
     return instructions
 
@@ -251,6 +264,7 @@ You must output a valid JSON object with exactly these fields. Do not omit any f
   "primary_call_to_action": "The final call to action string, derived from your instructions.",
   "hashtags": ["Array of hashtag strings with # symbol, derived from your instructions"],
   "emoji_suggestions": ["Array of 2-3 relevant emoji characters, derived from your instructions"],
+  "length_guidance": "Optional. A specific instruction for the writer regarding the desired length of the caption. Set to null if no specific length is requested.",
   "task_type_notes": "Optional concise note about task-type optimization. Set to null if no task type guidance was provided."
 }}
 
@@ -463,11 +477,22 @@ def _get_analyst_user_prompt(
         "",
         "**INSTRUCTIONS_FOR_BRIEF**",
         "Based on all the CONTEXT_DATA above, you must follow these explicit instructions to generate the CaptionBrief JSON object:",
+    ])
+    
+    # Add user request instruction first if present (highest priority)
+    if 'user_request' in final_instructions:
+        prompt_parts.append(f"- User Request Instruction: {final_instructions['user_request']}")
+    
+    prompt_parts.extend([
         f"- Tone of Voice Instruction: {final_instructions['tone']}",
         f"- Call to Action Instruction: {final_instructions['cta']}",
         f"- Emoji Usage Instruction: {final_instructions['emojis']}",
         f"- Hashtag Strategy Instruction: {final_instructions['hashtags']}",
     ])
+    
+    # Add length instruction if present
+    if 'length' in final_instructions:
+        prompt_parts.append(f"- Length Instruction: {final_instructions['length']}")
     
     prompt_parts.extend([
         "",
@@ -508,6 +533,7 @@ def _get_writer_system_prompt(language: str = 'en') -> str:
 - **Language Adherence:** Write the final caption in {language_name}, keeping cultural/brand terms as-is. Only use a different language if explicitly present in those terms.
 - **CRITICAL TONE OF VOICE:** You MUST adopt the following tone: **{{brief.tone_of_voice}}**. This is the most important instruction and is non-negotiable.
 - **CRITICAL STRUCTURE:** You MUST strictly adhere to the `caption_structure` and `style_notes` provided in the `platform_optimizations` section of the brief. This structure is key to the caption's success on that specific platform.
+- **CRITICAL LENGTH:** If a 'Length Requirement' is provided in the brief, you MUST strictly adhere to it. This is a non-negotiable instruction.
 - Read the entire brief carefully to understand the strategic goals.
 - Write a caption that feels authentic and human, not like it was written by an AI.
 - Seamlessly integrate the `seo_keywords` into the text without making it sound forced.
@@ -548,6 +574,10 @@ def _get_writer_user_prompt(brief: CaptionBrief) -> str:
     # Add task type notes if available
     if getattr(brief, 'task_type_notes', None):
         prompt_parts.append(f"**Task Note:** {brief.task_type_notes}")
+    
+    # Add length requirement if present
+    if getattr(brief, 'length_guidance', None):
+        prompt_parts.append(f"**Length Requirement:** {brief.length_guidance}")
     
     prompt_parts.extend([
         f"**Key Themes to Include:** {', '.join(brief.key_themes_to_include)}",
@@ -924,7 +954,9 @@ async def run(ctx: PipelineContext) -> None:
             original_settings.get('tone') or 
             original_settings.get('call_to_action') or 
             original_settings.get('hashtag_strategy') or 
-            original_settings.get('include_emojis') is False
+            original_settings.get('include_emojis') is False or
+            original_settings.get('user_instructions') or
+            (original_settings.get('caption_length') and original_settings.get('caption_length') != 'Auto')
         )
         # This ensures the settings object passed to the resolver has the correct mode
         settings.generation_mode = 'Custom' if user_provided_settings else 'Auto'

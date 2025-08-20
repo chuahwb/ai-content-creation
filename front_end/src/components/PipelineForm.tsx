@@ -74,7 +74,7 @@ const formSchema = z.object({
       hex: z.string(),
       role: z.string(),
       label: z.string().optional(),
-      ratio: z.number().optional(),
+      ratio: z.number().nullable().optional(),
       // Frontend-specific fields are optional for validation
       isAuto: z.boolean().optional(),
       isCustomRatio: z.boolean().optional(),
@@ -113,6 +113,22 @@ const formSchema = z.object({
 }, {
   message: 'Task type is required for task-specific mode',
   path: ['task_type'], // This will show the error on the task_type field
+}).refine((data) => {
+  // Conditional validation: brand kit data is required when apply_branding is true
+  if (data.apply_branding) {
+    const hasBrandKitData = Boolean(
+      data.brand_kit?.colors?.length || 
+      data.brand_kit?.brand_voice_description?.trim() ||
+      data.brand_kit?.logo_file_base64
+    );
+    if (!hasBrandKitData) {
+      return false;
+    }
+  }
+  return true;
+}, {
+  message: 'Brand kit data (colors, voice description, or logo) is required when branding is enabled',
+  path: ['apply_branding'], // This will show the error on the apply_branding field
 });
 
 interface PipelineFormProps {
@@ -1241,11 +1257,18 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       <Controller
                         name="apply_branding"
                         control={control}
-                        render={({ field }) => (
-                          <FormControlLabel
-                            control={<Switch {...field} checked={field.value} />}
-                            label="Apply Branding"
-                          />
+                        render={({ field, fieldState }) => (
+                          <Box>
+                            <FormControlLabel
+                              control={<Switch {...field} checked={field.value} />}
+                              label="Apply Branding"
+                            />
+                            {fieldState.error && (
+                              <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+                                {fieldState.error.message}
+                              </Typography>
+                            )}
+                          </Box>
                         )}
                       />
                     </Box>
@@ -1575,6 +1598,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                     size="large"
                     startIcon={isSubmitting ? <CircularProgress size={20} /> : <SendIcon />}
                     disabled={isSubmitting}
+
 
                     sx={{ 
                       px: 4, 

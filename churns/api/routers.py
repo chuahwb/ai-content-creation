@@ -966,6 +966,23 @@ async def get_pipeline_run(
     stages = stages_result.scalars().all()
     
     # Convert stages to response format
+    # Apply selective masking: mask pipeline progress but preserve stage outputs for developers
+    from churns.core.user_config import get_user_settings, obfuscate_stage_name
+    user_settings = get_user_settings()
+    
+    # Determine if this run should be masked based on run type and presentation mode
+    should_mask_run = False
+    has_style_adaptation = False
+    if user_settings.presentation_mode:
+        # Mask generation runs and style adaptation runs (they reveal our proprietary pipeline)
+        # Don't mask simple refinement/caption runs (they're basic operations)
+        if run.preset_type == "STYLE_RECIPE" or not run.preset_type:
+            # Style adaptation runs or regular generation runs - mask them
+            should_mask_run = True
+            
+            # Check if any stage has fractional order (indicates style adaptation)
+            has_style_adaptation = any(getattr(stage, 'stage_order', 0) % 1 != 0 for stage in stages)
+    
     stage_updates = []
     for stage in stages:
         # Parse output data if present - use getattr for safe access
@@ -977,17 +994,49 @@ async def get_pipeline_run(
             except:
                 pass
         
-        stage_updates.append({
-            "stage_name": getattr(stage, 'stage_name', ''),
-            "stage_order": getattr(stage, 'stage_order', 0),
-            "status": getattr(stage, 'status', StageStatus.PENDING),
-            "started_at": getattr(stage, 'started_at', None),
-            "completed_at": getattr(stage, 'completed_at', None),
-            "duration_seconds": getattr(stage, 'duration_seconds', None),
-            "message": f"Stage {getattr(stage, 'stage_name', 'unknown')} {getattr(stage, 'status', StageStatus.PENDING).value if hasattr(getattr(stage, 'status', StageStatus.PENDING), 'value') else getattr(stage, 'status', StageStatus.PENDING)}",
-            "output_data": output_data,
-            "error_message": getattr(stage, 'error_message', None)
-        })
+        stage_name = getattr(stage, 'stage_name', '')
+        stage_order = getattr(stage, 'stage_order', 0)
+        stage_status = getattr(stage, 'status', StageStatus.PENDING)
+        
+        # Apply masking to stage names and messages, but preserve output_data for developers
+        if should_mask_run:
+            # Determine pipeline mode for masking
+            pipeline_mode = "generation"
+            if run.preset_type == "STYLE_RECIPE":
+                pipeline_mode = "generation"  # Style adaptation uses generation pipeline
+            elif stage_name in ["load_base_image", "conditional_stage", "save_outputs"]:
+                pipeline_mode = "refinement"
+            elif stage_name == "caption":
+                pipeline_mode = "caption"
+            
+            # Mask stage name and message
+            masked_stage_name, message = obfuscate_stage_name(stage_order, pipeline_mode, has_style_adaptation)
+            
+            # Keep output_data for developers (stage outputs section) but mask stage names
+            stage_updates.append({
+                "stage_name": masked_stage_name,
+                "stage_order": stage_order,
+                "status": stage_status,
+                "started_at": getattr(stage, 'started_at', None),
+                "completed_at": getattr(stage, 'completed_at', None),
+                "duration_seconds": getattr(stage, 'duration_seconds', None),
+                "message": message,
+                "output_data": output_data,  # KEEP for developers - this is the "stage outputs" section
+                "error_message": getattr(stage, 'error_message', None)  # KEEP for developers
+            })
+        else:
+            message = f"Stage {stage_name} {stage_status.value if hasattr(stage_status, 'value') else stage_status}"
+            stage_updates.append({
+                "stage_name": stage_name,
+                "stage_order": stage_order,
+                "status": stage_status,
+                "started_at": getattr(stage, 'started_at', None),
+                "completed_at": getattr(stage, 'completed_at', None),
+                "duration_seconds": getattr(stage, 'duration_seconds', None),
+                "message": message,
+                "output_data": output_data,
+                "error_message": getattr(stage, 'error_message', None)
+            })
     
     # NEW: Handle parent preset for STYLE_RECIPE runs
     parent_preset_info = None

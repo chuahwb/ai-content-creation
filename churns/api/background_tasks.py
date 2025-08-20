@@ -1063,9 +1063,16 @@ class PipelineTaskProcessor:
             error_message=error_message
         )
         
+        # Determine pipeline mode based on context
+        pipeline_mode = "refinement" if is_refinement_job else "generation"
+        
+        # Check if this is a caption generation (stage_name is "caption")
+        if stage_name == "caption":
+            pipeline_mode = "caption"
+        
         # For refinements, send WebSocket updates to the parent run
         websocket_run_id = parent_run_id if is_refinement_job else run_id
-        await connection_manager.send_stage_update(websocket_run_id, update)
+        await connection_manager.send_stage_update(websocket_run_id, update, pipeline_mode)
     
     def _convert_request_to_pipeline_data(self, request: PipelineRunRequest, 
                                         output_dir: str, image_path: Optional[Path] = None, 
