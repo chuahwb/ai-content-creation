@@ -258,9 +258,11 @@ export interface CaptionSettings {
   call_to_action?: string;
   include_emojis?: boolean;
   hashtag_strategy?: string;
+  user_instructions?: string;
+  caption_length?: 'Auto' | 'Short' | 'Medium' | 'Long';
   // New fields for mode tracking
-  generation_mode?: string;
-  processing_mode?: string;
+  generation_mode?: 'Auto' | 'Custom';
+  processing_mode?: 'Fast' | 'Analytical';
 }
 
 export interface CaptionModelOption {
