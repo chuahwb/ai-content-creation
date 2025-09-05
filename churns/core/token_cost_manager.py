@@ -49,7 +49,8 @@ from .constants import (
     STYLE_GUIDER_MODEL_PROVIDER, STYLE_GUIDER_MODEL_ID,
     CREATIVE_EXPERT_MODEL_PROVIDER, CREATIVE_EXPERT_MODEL_ID,
     IMAGE_ASSESSMENT_MODEL_PROVIDER, IMAGE_ASSESSMENT_MODEL_ID,
-    IMAGE_GENERATION_MODEL_ID
+    IMAGE_GENERATION_PROVIDER,
+    get_image_generation_model_id
 )
 
 logger = logging.getLogger(__name__)
@@ -629,8 +630,8 @@ class TokenCostManager:
                 cost.output_cost = (usage.completion_tokens / 1_000_000) * cost.output_rate
                 cost.total_cost = cost.input_cost + cost.output_cost
             
-            # Image generation model cost calculation (gpt-image-1 style)
-            elif usage.model == "gpt-image-1" and image_details:
+            # Image generation model cost calculation (both OpenAI and Gemini)
+            elif (usage.model == "gpt-image-1" or usage.model.startswith("gemini-")) and image_details:
                 cost = self._calculate_image_generation_cost(usage, image_details, pricing)
             
             # Vision model with image input tokens
@@ -658,10 +659,23 @@ class TokenCostManager:
         """Calculate cost for image generation models."""
         cost = CostBreakdown(model=usage.model, provider=usage.provider)
         
+        # Separate text and image input costs
+        text_tokens = getattr(usage, 'text_tokens', 0)
+        image_tokens = getattr(usage, 'image_tokens', 0)
+        
+        # If text_tokens not provided, derive from prompt_tokens - image_tokens
+        if text_tokens == 0 and usage.prompt_tokens > 0:
+            text_tokens = max(usage.prompt_tokens - image_tokens, 0)
+        
         # Text input cost
-        if "input_text_cost_per_mtok" in pricing and usage.prompt_tokens > 0:
+        if "input_text_cost_per_mtok" in pricing and text_tokens > 0:
             cost.input_rate = pricing["input_text_cost_per_mtok"]
-            cost.input_cost = (usage.prompt_tokens / 1_000_000) * cost.input_rate
+            cost.input_cost = (text_tokens / 1_000_000) * cost.input_rate
+        
+        # Image input cost
+        if "input_image_cost_per_mtok" in pricing and image_tokens > 0:
+            cost.image_input_rate = pricing["input_image_cost_per_mtok"]
+            cost.image_input_cost = (image_tokens / 1_000_000) * cost.image_input_rate
         
         # Image output cost - check if using token-based or per-image pricing
         if "output_image_cost_per_mtok" in pricing:
@@ -675,7 +689,13 @@ class TokenCostManager:
             
             # Get token count from pricing table
             token_counts = pricing.get("token_counts_by_quality", {})
-            tokens_per_image = token_counts.get(quality, {}).get(resolution, 1056)  # Default to medium 1024x1024
+            quality_tokens = token_counts.get(quality, {})
+            
+            # If quality not found, fall back to "default" for Gemini
+            if not quality_tokens and "default" in token_counts:
+                quality_tokens = token_counts["default"]
+            
+            tokens_per_image = quality_tokens.get(resolution, 1056)  # Final fallback to medium 1024x1024
             
             total_image_tokens = tokens_per_image * image_count
             cost.image_output_cost = (total_image_tokens / 1_000_000) * cost.image_output_rate
@@ -693,7 +713,7 @@ class TokenCostManager:
             
             cost.notes = f"Image generation: {image_count} {quality} {resolution} images (${cost_per_image:.3f} each)"
         
-        cost.total_cost = cost.input_cost + cost.image_output_cost
+        cost.total_cost = cost.input_cost + cost.image_input_cost + cost.image_output_cost
         return cost
     
     def _calculate_vision_model_cost(self, usage: TokenUsage, pricing: Dict[str, Any]) -> CostBreakdown:
@@ -898,7 +918,7 @@ def _get_provider_for_model(model_id: str) -> str:
         STYLE_GUIDER_MODEL_ID: STYLE_GUIDER_MODEL_PROVIDER.lower(),
         CREATIVE_EXPERT_MODEL_ID: CREATIVE_EXPERT_MODEL_PROVIDER.lower(),
         IMAGE_ASSESSMENT_MODEL_ID: IMAGE_ASSESSMENT_MODEL_PROVIDER.lower(),
-        IMAGE_GENERATION_MODEL_ID: "openai"  # gpt-image-1 is always OpenAI
+        get_image_generation_model_id(): IMAGE_GENERATION_PROVIDER.lower() if IMAGE_GENERATION_PROVIDER else "openai"
     }
     
     provider = model_to_provider.get(model_id)
@@ -914,6 +934,8 @@ def _get_provider_for_model(model_id: str) -> str:
     # Final fallback for unknown models
     if model_id.startswith('gpt-') or model_id.startswith('o1') or model_id.startswith('o3'):
         return 'openai'
+    elif model_id.startswith('gemini-'):
+        return 'google'
     elif '/' in model_id:  # OpenRouter format (provider/model)
         return 'openrouter'
     else:

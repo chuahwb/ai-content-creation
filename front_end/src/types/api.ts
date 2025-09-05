@@ -26,6 +26,19 @@ export interface MarketingGoalsInput {
   niche?: string;
 }
 
+// NEW: Unified input system types
+export interface TextOverlay {
+  raw?: string;
+  language?: "en" | "zh" | "auto";
+}
+
+export interface UnifiedBrief {
+  intentType: "fullGeneration" | "defaultEdit" | "instructedEdit" | "styleAdaptation" | "logoOnly";
+  generalBrief: string;
+  editInstruction?: string;
+  textOverlay?: TextOverlay;
+}
+
 // Brand Color interface with semantic roles
 export interface BrandColor {
   hex: string;
@@ -105,6 +118,8 @@ export interface PipelineRunRequest {
   adaptation_prompt?: string;
   // Brand kit data (UPDATED: unified brand kit structure)
   brand_kit?: BrandKitInput;
+  // NEW: Unified input system
+  unifiedBrief?: UnifiedBrief;
 }
 
 export interface StageProgressUpdate {
@@ -166,6 +181,9 @@ export interface PipelineRunDetail extends PipelineRunResponse {
   
   // Brand Kit data (UPDATED: unified brand kit structure)
   brand_kit?: BrandKitInput;
+  
+  // NEW: Unified input system
+  unified_brief?: UnifiedBrief;
 }
 
 // NEW: Assessment data structure
@@ -379,6 +397,8 @@ export interface PipelineFormData {
   preset_type?: PresetType; // To distinguish between style recipes and templates
   template_overrides?: Record<string, any>;
   adaptation_prompt?: string;
+  // NEW: Unified input system
+  unifiedBrief?: UnifiedBrief;
 }
 
 // Configuration types

@@ -186,7 +186,12 @@ You will be provided with specific `Style Guidance` for this concept. Your `visu
     # Add text and branding guidance based on flags
     text_branding_field_instruction_ce = "**Text & Branding Fields:**\n"
     if render_text_flag:
-        text_branding_field_instruction_ce += f"- `promotional_text_visuals`: {task_guidance['text_style']}. Describe text content, style, font, placement, and integration with the visual.\n"
+        text_branding_field_instruction_ce += (
+            f"- `promotional_text_visuals`: {task_guidance['text_style']}. The user will provide a 'Specific Task Content/Description' for text overlay. You MUST interpret this input as follows:\n"
+            "  - Text enclosed in **double quotes** (e.g., `\"Summer Special\"`) is **LITERAL CONTENT** that must appear on the image. Your description must specify this exact text.\n"
+            "  - Text **outside** of double quotes is a **CONTENT AND CREATIVE BRIEF**. Use it to understand the user's intent for the text's style, tone, placement, and **most importantly, to generate the specific text to be rendered if the user has not provided it in quotes.**\n"
+            "  - Your final output in the `promotional_text_visuals` field must be a cohesive description that synthesizes this brief and any literal text into a complete visual plan.\n"
+        )
     else:
         text_branding_field_instruction_ce += "- `promotional_text_visuals`: This field MUST be omitted (set to null) as text rendering is disabled.\n"
     

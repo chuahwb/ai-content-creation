@@ -121,7 +121,8 @@ export class PipelineAPI {
       const requestData = new FormData();
 
       // Append all simple key-value pairs from formData
-      requestData.append('mode', formData.mode);
+      // Skip mode if undefined (deprecated field)
+      if (formData.mode) requestData.append('mode', formData.mode);
       requestData.append('platform_name', formData.platform_name);
       requestData.append('creativity_level', formData.creativity_level.toString());
       requestData.append('num_variants', formData.num_variants.toString());
@@ -149,6 +150,11 @@ export class PipelineAPI {
       if (formData.brand_kit) {
         const safeBrandKit = sanitizeBrandKitInput(formData.brand_kit);
         requestData.append('brand_kit', JSON.stringify(safeBrandKit));
+      }
+
+      // NEW: Append unifiedBrief for dual-mode compatibility
+      if (formData.unifiedBrief) {
+        requestData.append('unified_brief', JSON.stringify(formData.unifiedBrief));
       }
 
       // Append image file if provided

@@ -259,7 +259,7 @@ async def run(ctx: PipelineContext) -> None:
             {"role": "user", "content": user_prompt_sg}
         ],
         "temperature": 0.8, 
-        "max_tokens": 1500 * num_strategies, 
+        "max_tokens": 2000 * num_strategies, 
         "extra_body": {}
     }
     

@@ -18,7 +18,7 @@ from typing import Dict, Any, Optional, Tuple
 from PIL import Image, ImageDraw
 from openai import OpenAI
 from ..pipeline.context import PipelineContext
-from ..core.constants import IMAGE_GENERATION_MODEL_ID, MODEL_PRICING
+from ..core.constants import MODEL_PRICING, IMAGE_REFINEMENT_MODEL_ID
 from ..core.token_cost_manager import TokenCostManager, TokenUsage, CostBreakdown
 from ..models import CostDetail
 
@@ -291,8 +291,8 @@ async def call_openai_images_edit(
         Use "high" if you want enhanced quality refinements that may differ from originals.
     """    
     
-    # Use global model ID (same pattern as image_generation.py)
-    model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"
+    # Use dedicated refinement model ID from constants (single source of truth)
+    model_id = IMAGE_REFINEMENT_MODEL_ID
     
     operation_type = "regional editing" if mask_path else "global editing"
     ctx.log(f"Calling OpenAI Images Edit API ({model_id})")
@@ -584,7 +584,7 @@ def _save_refinement_metadata(ctx: PipelineContext, refinement_dir: Path) -> Non
         
         # Get processing info with safe access
         processing = {
-            "model_used": IMAGE_GENERATION_MODEL_ID or "gpt-image-1",
+            "model_used": IMAGE_REFINEMENT_MODEL_ID,
             "api_image_size": getattr(ctx, '_api_image_size', None),
             "operation_type": "regional_editing" if getattr(ctx, 'mask_file_path', None) else "global_editing",
         }
@@ -605,7 +605,7 @@ def _save_refinement_metadata(ctx: PipelineContext, refinement_dir: Path) -> Non
             
         costs = {
             "refinement_cost_usd": refinement_cost,
-            "model_pricing_used": MODEL_PRICING.get(IMAGE_GENERATION_MODEL_ID or "gpt-image-1", {}),
+            "model_pricing_used": MODEL_PRICING.get(IMAGE_REFINEMENT_MODEL_ID, {}),
         }
         
         # Get image info with safe access
@@ -734,7 +734,7 @@ def calculate_refinement_cost(
     """
     
     # Get model pricing from constants
-    model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"
+    model_id = IMAGE_REFINEMENT_MODEL_ID
     pricing = MODEL_PRICING.get(model_id, {})
     
     if not pricing:
@@ -789,7 +789,7 @@ def track_refinement_cost(
         prompt_tokens = len(prompt_text.split()) if prompt_text else 0
         
         # Get model info from constants
-        model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"
+        model_id = IMAGE_REFINEMENT_MODEL_ID
         
         cost_detail = CostDetail(
             stage_name=stage_name,

@@ -422,6 +422,16 @@ def _get_analyst_user_prompt(
     if strategy_data['target_niche']:
         prompt_parts.append(f"- Target Niche: {strategy_data['target_niche']}")
     
+    # === STYLE ADAPTATION INSTRUCTION ===
+    if getattr(ctx, 'is_style_adaptation', False):
+        prompt_parts.extend([
+            "",
+            "**STYLE ADAPTATION MODE:** The provided marketing strategy is from another image. "
+            f"Your task is to adapt its core intent (objective, voice, audience) to the new Main Subject: '{main_subject}'. "
+            "The final caption brief must be entirely about the new subject."
+        ])
+    # ====================================
+
     prompt_parts.extend([
         "",
         "**Visual Context:**",

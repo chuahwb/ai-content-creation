@@ -32,7 +32,8 @@ from churns.api.schemas import (
     CaptionRequest, CaptionResponse, CaptionRegenerateRequest, CaptionSettings,
     CaptionModelsResponse, CaptionModelOption,
     BrandPresetCreateRequest, BrandPresetUpdateRequest, BrandPresetResponse,
-    BrandPresetListResponse, SavePresetFromResultRequest, ParentPresetInfo
+    BrandPresetListResponse, SavePresetFromResultRequest, ParentPresetInfo,
+    UnifiedBrief
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
@@ -68,9 +69,9 @@ async def startup_event():
 # Pipeline Run Endpoints
 @runs_router.post("", response_model=PipelineRunResponse)
 async def create_pipeline_run(
-    # Required fields
-    mode: str = Form(..., description="Pipeline mode"),
+    # Core fields
     platform_name: str = Form(..., description="Target platform"),
+    mode: Optional[str] = Form(None, description="Pipeline mode (deprecated, optional)"),
     creativity_level: int = Form(2, description="Creativity level 1-3"),
     num_variants: int = Form(3, description="Number of variants to generate"),
     
@@ -107,6 +108,9 @@ async def create_pipeline_run(
     # Brand Kit data
     brand_kit: Optional[str] = Form(None, description="JSON string of BrandKitInput"),
     
+    # NEW: Unified input system
+    unified_brief: Optional[str] = Form(None, description="JSON string of UnifiedBrief"),
+    
     session: AsyncSession = Depends(get_session),
     executor: PipelineExecutor = Depends(get_executor)
 ):
@@ -114,9 +118,6 @@ async def create_pipeline_run(
     
     try:
         # Validate inputs
-        if mode not in ["easy_mode", "custom_mode", "task_specific_mode"]:
-            raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
-        
         if platform_name not in SOCIAL_MEDIA_PLATFORMS:
             raise HTTPException(status_code=400, detail=f"Invalid platform: {platform_name}")
         
@@ -126,9 +127,11 @@ async def create_pipeline_run(
         if num_variants < 1 or num_variants > 6:
             raise HTTPException(status_code=400, detail=f"Number of variants must be between 1 and 6")
         
-        if mode == "task_specific_mode" and not task_type:
-            raise HTTPException(status_code=400, detail="Task type required for task_specific_mode")
+        # Optional mode validation for backwards compatibility
+        if mode and mode not in ["easy_mode", "custom_mode", "task_specific_mode"]:
+            raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
         
+        # Content-driven validation: task type is optional but if provided must be valid
         if task_type and task_type not in TASK_TYPES:
             raise HTTPException(status_code=400, detail=f"Invalid task type: {task_type}")
         
@@ -149,9 +152,27 @@ async def create_pipeline_run(
             # Normalize to lowercase
             language = language.lower()
         
-        # Basic validation for required inputs
-        if mode in ["easy_mode", "custom_mode"] and not prompt and not image_file:
-            raise HTTPException(status_code=400, detail=f"{mode} requires either prompt or image")
+        # NEW: Parse unified brief early for validation
+        parsed_unified_brief = None
+        if unified_brief:
+            try:
+                unified_brief_dict = json.loads(unified_brief)
+                # Import here to avoid circular imports
+                from churns.api.schemas import UnifiedBrief
+                parsed_unified_brief = UnifiedBrief(**unified_brief_dict)
+                logger.info(f"🔄 Parsed unified_brief: intentType={parsed_unified_brief.intentType}, generalBrief length={len(parsed_unified_brief.generalBrief)}")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Failed to parse unified_brief JSON: {e}")
+                raise HTTPException(status_code=400, detail="Invalid JSON format for unified_brief")
+            except Exception as e:
+                logger.error(f"❌ Failed to validate unified_brief: {e}")
+                raise HTTPException(status_code=400, detail="Invalid unified_brief data structure")
+        
+        # Content-driven validation (replaces mode-based validation)
+        # Require either a brief (legacy prompt or unified brief) or an image
+        has_prompt = prompt or (parsed_unified_brief and parsed_unified_brief.generalBrief)
+        if not has_prompt and not image_file:
+            raise HTTPException(status_code=400, detail="Please provide a creative brief or upload an image")
         
         logger.info("✅ Input validation passed")
         
@@ -206,9 +227,21 @@ async def create_pipeline_run(
                 logger.error(f"❌ Failed to parse brand_kit JSON: {e}")
                 raise HTTPException(status_code=400, detail="Invalid JSON format for brand_kit")
         
+
+        
+        # Compute derived mode for analytics (when mode not provided)
+        derived_mode = mode
+        if not mode:
+            if task_type:
+                derived_mode = "task_specific_mode"
+            elif marketing_goals:
+                derived_mode = "custom_mode"  
+            else:
+                derived_mode = "easy_mode"
+        
         # Create pipeline run request
         request = PipelineRunRequest(
-            mode=mode,
+            mode=derived_mode,
             platform_name=platform_name,
             creativity_level=creativity_level,
             num_variants=num_variants,
@@ -224,12 +257,15 @@ async def create_pipeline_run(
             preset_type=preset_type,
             template_overrides=parsed_template_overrides,
             adaptation_prompt=adaptation_prompt,
-            brand_kit=parsed_brand_kit
+            brand_kit=parsed_brand_kit,
+            # NEW: Include unified brief for dual-mode processing
+            unifiedBrief=parsed_unified_brief
         )
         
         logger.info(f"📋 Created pipeline run request object")
         
         # Create database record
+        # Note: mode may be derived from content when not explicitly provided
         run = PipelineRun(
             status=RunStatus.PENDING,
             mode=request.mode,
@@ -249,6 +285,9 @@ async def create_pipeline_run(
             marketing_niche=marketing_goals.niche if marketing_goals else None,
             language=language or 'en',
             brand_kit=json.dumps(parsed_brand_kit) if parsed_brand_kit else None,
+            
+            # NEW: Store unified brief
+            unified_brief=json.dumps(parsed_unified_brief.model_dump()) if parsed_unified_brief else None,
             
             # NEW: Store preset information
             preset_id=request.preset_id,
@@ -1107,7 +1146,10 @@ async def get_pipeline_run(
         language=run.language,
         
         # Brand Kit data (parse JSON if present)
-        brand_kit=json.loads(run.brand_kit) if run.brand_kit else None
+        brand_kit=json.loads(run.brand_kit) if run.brand_kit else None,
+        
+        # NEW: Unified brief data (parse JSON if present)
+        unified_brief=UnifiedBrief(**json.loads(run.unified_brief)) if run.unified_brief else None
     )
 
 

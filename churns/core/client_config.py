@@ -28,7 +28,8 @@ from .constants import (
     STYLE_ADAPTATION_MODEL_ID,
     CAPTION_MODEL_PROVIDER,
     CAPTION_MODEL_ID,
-    IMAGE_GENERATION_MODEL_ID
+    IMAGE_GENERATION_PROVIDER,
+    get_image_generation_model_id
 )
 
 # Import OpenAI and related libraries
@@ -40,6 +41,15 @@ except ImportError as e:
     print(f"❌ Error importing OpenAI/instructor libraries: {e}")
     OpenAI = None
     instructor = None
+
+# Import Google GenAI for image generation
+try:
+    from google import genai as google_genai
+    print("✅ Google GenAI library imported successfully")
+except ImportError as e:
+    print(f"⚠️ Google GenAI library not available: {e}")
+    print("   Install with: pip install google-genai")
+    google_genai = None
 
 
 class ClientConfig:
@@ -82,7 +92,7 @@ class ClientConfig:
             "CAPTION_MODEL_PROVIDER": CAPTION_MODEL_PROVIDER,
             "CAPTION_MODEL_ID": CAPTION_MODEL_ID,
             
-            "IMAGE_GENERATION_MODEL_ID": IMAGE_GENERATION_MODEL_ID
+            "IMAGE_GENERATION_PROVIDER": IMAGE_GENERATION_PROVIDER
         }
         
         # Initialize clients storage
@@ -141,7 +151,7 @@ class ClientConfig:
             "STYLE_ADAPTATION_MODEL_ID": "STYLE_ADAPTATION_MODEL_ID",
             "CAPTION_MODEL_PROVIDER": "CAPTION_MODEL_PROVIDER",
             "CAPTION_MODEL_ID": "CAPTION_MODEL_ID",
-            "IMAGE_GENERATION_MODEL_ID": "IMAGE_GENERATION_MODEL_ID"
+            "IMAGE_GENERATION_PROVIDER": "IMAGE_GENERATION_PROVIDER"
         }
         
         # Check each possible environment variable override
@@ -263,22 +273,48 @@ class ClientConfig:
             "Style Adaptation"
         )
         
-        # Configure Image Generation Client (typically OpenAI)
-        image_gen_client = None
+        # Configure Image Generation Clients (OpenAI and Gemini)
+        image_gen_client_openai = None
+        image_gen_client_gemini = None
+        
+        # Configure OpenAI image client
         if OpenAI and self.openai_api_key:
             try:
-                image_gen_client = OpenAI(
+                image_gen_client_openai = OpenAI(
                     api_key=self.openai_api_key,
                     max_retries=self.max_llm_retries
                 )
-                print(f"✅ Image Generation client (OpenAI) configured. Model: {self.model_config['IMAGE_GENERATION_MODEL_ID']}")
+                print(f"✅ OpenAI Image Generation client configured. Model: gpt-image-1")
             except Exception as e:
-                print(f"❌ Error initializing Image Generation client: {e}")
-                image_gen_client = None
+                print(f"❌ Error initializing OpenAI Image Generation client: {e}")
+                image_gen_client_openai = None
         elif not self.openai_api_key:
-            print("⚠️ OPENAI_API_KEY not found. Image Generation client not configured.")
+            print("⚠️ OPENAI_API_KEY not found. OpenAI Image Generation client not configured.")
         else:
-            print("⚠️ OpenAI library not available. Image Generation client not configured.")
+            print("⚠️ OpenAI library not available. OpenAI Image Generation client not configured.")
+        
+        # Configure Gemini image client (only if needed)
+        provider = self.model_config.get("IMAGE_GENERATION_PROVIDER", "OpenAI")
+        if provider == "Gemini":
+            if google_genai and self.gemini_api_key:
+                try:
+                    image_gen_client_gemini = google_genai.Client(api_key=self.gemini_api_key)
+                    model_id = get_image_generation_model_id()
+                    print(f"✅ Gemini Image Generation client configured. Model: {model_id}")
+                except Exception as e:
+                    print(f"❌ Error initializing Gemini Image Generation client: {e}")
+                    image_gen_client_gemini = None
+            elif not self.gemini_api_key:
+                print("⚠️ GEMINI_API_KEY not found. Gemini Image Generation client not configured.")
+                image_gen_client_gemini = None
+            else:
+                print("⚠️ Google GenAI library not available. Gemini Image Generation client not configured.")
+                image_gen_client_gemini = None
+        else:
+            image_gen_client_gemini = None
+        
+        # Set primary image generation client for backward compatibility
+        image_gen_client = image_gen_client_openai  # Default to OpenAI for backward compatibility
         
         # Store all clients
         self.clients = {
@@ -296,7 +332,9 @@ class ClientConfig:
             'instructor_client_caption': instructor_client_caption,
             'base_llm_client_style_adaptation': base_llm_client_style_adaptation,
             'instructor_client_style_adaptation': instructor_client_style_adaptation,
-            'image_gen_client': image_gen_client
+            'image_gen_client': image_gen_client,  # Backward compatibility (OpenAI)
+            'image_gen_client_openai': image_gen_client_openai,
+            'image_gen_client_gemini': image_gen_client_gemini
         }
         
         # Also store model configurations for stages to use

@@ -41,28 +41,41 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PipelineFormData, PipelineRunResponse, BrandPresetResponse, BrandKitInput, BrandColor } from '@/types/api';
+import { PipelineFormData, PipelineRunResponse, BrandPresetResponse, BrandKitInput, BrandColor, UnifiedBrief, TextOverlay } from '@/types/api';
 import { PipelineAPI } from '@/lib/api';
-import PresetManagementModal, { PresetManagementModalRef } from './PresetManagementModal';
-import BrandKitPresetModal from './BrandKitPresetModal';
-import StyleRecipeModal from './StyleRecipeModal';
-import EnhancedColorPaletteEditor from './EnhancedColorPaletteEditor';
+import dynamic from 'next/dynamic';
+import { PresetManagementModalRef } from './PresetManagementModal';
 import CompactColorPreview from './CompactColorPreview';
-import ColorPaletteModal from './ColorPaletteModal';
 import LogoUploader from './LogoUploader';
 import CompactLogoDisplay from './CompactLogoDisplay';
+// NEW: Unified input system components
+import CreativeBriefInput from './CreativeBriefInput';
+import EditModeSelector from './EditModeSelector';
+import TextOverlayComposer from './TextOverlayComposer';
+// Constants
+import { PLATFORMS, TASK_TYPES, CREATIVITY_LABELS, VALID_LANGUAGE_CODES } from '@/lib/constants';
 
-// Common ISO-639-1 language codes for validation
-const VALID_LANGUAGE_CODES = [
-  'en', 'zh', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 
-  'ar', 'hi', 'th', 'vi', 'nl', 'sv', 'no', 'da', 'fi', 'pl',
-  'tr', 'he', 'cs', 'hu', 'ro', 'bg', 'hr', 'sk', 'sl', 'et',
-  'lv', 'lt', 'mt', 'ga', 'cy', 'eu', 'ca', 'gl', 'is', 'fo'
-];
+// Dynamic imports for heavy components
+const PresetManagementModal = dynamic(() => import('./PresetManagementModal'), {
+  loading: () => <div>Loading...</div>
+});
+const BrandKitPresetModal = dynamic(() => import('./BrandKitPresetModal'), {
+  loading: () => <div>Loading...</div>
+});
+const StyleRecipeModal = dynamic(() => import('./StyleRecipeModal'), {
+  loading: () => <div>Loading...</div>
+});
+const ColorPaletteModal = dynamic(() => import('./ColorPaletteModal'), {
+  loading: () => <div>Loading...</div>
+});
+const CreativeCanvas = dynamic(() => import('./creativeCanvas/CreativeCanvas'), {
+  loading: () => <div>Loading Creative Canvas...</div>
+});
+
+
 
 // Form validation schema
 const formSchema = z.object({
-  mode: z.enum(['easy_mode', 'custom_mode', 'task_specific_mode']),
   platform_name: z.string().min(1, 'Platform is required'),
   creativity_level: z.number().min(1).max(3),
   num_variants: z.number().min(1).max(6),
@@ -104,15 +117,15 @@ const formSchema = z.object({
     }, {
       message: 'Please enter a valid 2-letter ISO-639-1 language code (e.g., es, fr, ja, de, it)',
     }),
-}).refine((data) => {
-  // Conditional validation: task_type is required when mode is task_specific_mode
-  if (data.mode === 'task_specific_mode' && (!data.task_type || data.task_type.trim() === '')) {
-    return false;
-  }
-  return true;
-}, {
-  message: 'Task type is required for task-specific mode',
-  path: ['task_type'], // This will show the error on the task_type field
+  // NEW: Unified input system validation (optional during transition)
+  unifiedBrief: z.object({
+    intentType: z.enum(['fullGeneration', 'defaultEdit', 'instructedEdit', 'styleAdaptation', 'logoOnly']),
+    generalBrief: z.string(),
+    editInstruction: z.string().optional(),
+    textOverlay: z.object({
+      raw: z.string().optional(),
+    }).optional(),
+  }).optional(),
 }).refine((data) => {
   // Conditional validation: brand kit data is required when apply_branding is true
   if (data.apply_branding) {
@@ -135,30 +148,9 @@ interface PipelineFormProps {
   onRunStarted: (run: PipelineRunResponse) => void;
 }
 
-const creativityLabels = {
-  1: 'Focused & Photorealistic',
-  2: 'Impressionistic & Stylized',
-  3: 'Abstract & Illustrative',
-};
 
-const platforms = [
-  'Instagram Post (1:1 Square)',
-  'Instagram Story/Reel (9:16 Vertical)',
-  'Facebook Post (Mixed)',
-  'Pinterest Pin (2:3 Vertical)',
-  'Xiaohongshu (Red Note) (3:4 Vertical)',
-];
 
-const taskTypes = [
-  '1. Product Photography',
-  '2. Promotional Graphics & Announcements',
-  '3. Store Atmosphere & Decor',
-  '4. Menu Spotlights',
-  '5. Cultural & Community Content',
-  '6. Recipes & Food Tips',
-  '7. Brand Story & Milestones',
-  '8. Behind the Scenes Imagery',
-];
+
 
 export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -166,6 +158,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showCustomLanguage, setShowCustomLanguage] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  
+  // Feature flag for unified canvas
+  const isUnifiedCanvasEnabled = process.env.NEXT_PUBLIC_UNIFIED_CANVAS === 'true';
   
   // Preset-related state
   const [activePreset, setActivePreset] = useState<BrandPresetResponse | null>(null);
@@ -187,9 +182,19 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
   // Style recipe modal state
   const [recipeModalOpen, setRecipeModalOpen] = useState(false);
 
+  // NEW: Unified input system state
+  const [unifiedBrief, setUnifiedBrief] = useState<UnifiedBrief>({
+    intentType: 'fullGeneration',
+    generalBrief: '',
+    editInstruction: '',
+    textOverlay: {
+      raw: '',
+    },
+  });
+
   // Store original default values to ensure reset always goes back to true defaults
   const originalDefaultValues: PipelineFormData = {
-    mode: 'easy_mode',
+    mode: 'easy_mode', // Keep for backward compatibility during transition
     platform_name: '',
     creativity_level: 1,
     num_variants: 3,
@@ -206,6 +211,15 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     marketing_niche: '',
     language: 'en',
     image_file: undefined,
+    // NEW: Unified input system default
+    unifiedBrief: {
+      intentType: 'fullGeneration',
+      generalBrief: '',
+      editInstruction: '',
+      textOverlay: {
+        raw: '',
+      },
+    },
   };
 
   const {
@@ -220,10 +234,30 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     defaultValues: originalDefaultValues,
   });
 
-  const selectedMode = watch('mode');
-  const requiresTaskType = selectedMode === 'task_specific_mode';
-  const showAdvancedFields = selectedMode !== 'easy_mode';
+  // Template selection and lens toggles will drive advanced field visibility
+  const requiresTaskType = watch('task_type') ? true : false; // Task type required when template selected
+  const showAdvancedFields = watch('apply_branding') || watch('render_text') || watch('marketing_audience'); // Show when lenses are active
   const applyBranding = watch('apply_branding');
+  const renderText = watch('render_text');
+  
+
+  
+  // Update intentType based on image upload state
+  useEffect(() => {
+    if (uploadedFile) {
+      // When image is uploaded, default to defaultEdit unless already instructedEdit
+      if (unifiedBrief.intentType === 'fullGeneration') {
+        const updatedBrief = { ...unifiedBrief, intentType: 'defaultEdit' as const };
+        setUnifiedBrief(updatedBrief);
+        setValue('unifiedBrief', updatedBrief);
+      }
+    } else {
+      // When no image, always fullGeneration
+      const updatedBrief = { ...unifiedBrief, intentType: 'fullGeneration' as const, editInstruction: '' };
+      setUnifiedBrief(updatedBrief);
+      setValue('unifiedBrief', updatedBrief);
+    }
+  }, [uploadedFile, setValue]);
   
   // Check if form is valid for template saving
   const isFormValidForTemplate = () => {
@@ -393,6 +427,36 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           image_file: hasUploadedImage ? currentImageFile : undefined,
         });
         
+        // Hydrate unifiedBrief from input_snapshot for Creative Canvas compatibility
+        // Order: Set toggles first to trigger lens expansion, then hydrate content
+        
+        // Auto-enable toggles based on template content
+        if (inputData.task_description && inputData.task_description.trim()) {
+          setValue('render_text', true);
+        }
+        // apply_branding is already set by the reset() call above based on inputData.apply_branding
+        
+        // Then hydrate Canvas state after toggles are set
+        const hydratedBrief: UnifiedBrief = {
+          // Restore generalBrief from prompt
+          intentType: 'fullGeneration', // Default intent
+          generalBrief: inputData.prompt || '',
+          editInstruction: '',
+          textOverlay: {
+            raw: inputData.task_description || '',
+          },
+        };
+        
+        // If image_instruction exists, set up for instructed edit
+        if (inputData.image_instruction && (hasUploadedImage || uploadedFile)) {
+          hydratedBrief.intentType = 'instructedEdit';
+          hydratedBrief.editInstruction = inputData.image_instruction;
+        }
+        
+        // Update unifiedBrief state and form (after toggles are set)
+        setUnifiedBrief(hydratedBrief);
+        setValue('unifiedBrief', hydratedBrief);
+        
         // Single consolidated success message with validation check
         setTimeout(() => {
           const newFormData = watch();
@@ -455,26 +519,21 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       return { isValid: false, error: 'Platform selection is required' };
     }
     
-    // Use the data's mode, not the current selectedMode, for accurate validation
-    const modeToValidate = data.mode || selectedMode;
-    const modeRequiresTaskType = modeToValidate === 'task_specific_mode';
+    // Task type validation is now content-driven, not mode-driven
+    const hasTaskTypeWhenRequired = !data.task_type || data.task_type.trim().length > 0;
     
-    // Universal validation: All modes require either a prompt or an image
-    const hasPrompt = data.prompt && data.prompt.trim().length > 0;
+    // Universal validation: All modes require either a prompt (legacy or unified brief) or an image
+    const hasLegacyPrompt = data.prompt && data.prompt.trim().length > 0;
+    const hasUnifiedBrief = data.unifiedBrief && data.unifiedBrief.generalBrief && data.unifiedBrief.generalBrief.trim().length > 0;
+    const hasPrompt = hasLegacyPrompt || hasUnifiedBrief;
     const hasImage = data.image_file || uploadedFile;
     if (!hasPrompt && !hasImage) {
-      const modeNames = {
-        'easy_mode': 'Easy mode',
-        'custom_mode': 'Custom mode', 
-        'task_specific_mode': 'Task-specific mode'
-      };
-      const modeName = modeNames[modeToValidate] || 'This mode';
-      return { isValid: false, error: `${modeName} requires either a prompt or an image` };
+      return { isValid: false, error: 'Please provide a creative brief or upload an image' };
     }
     
-    // Mode-specific validation
-    if (modeRequiresTaskType && (!data.task_type || data.task_type.trim().length === 0)) {
-      return { isValid: false, error: 'Task-specific mode requires a task type selection' };
+    // Content-driven validation: task type is optional but if provided should be non-empty
+    if (data.task_type && data.task_type.trim().length === 0) {
+      return { isValid: false, error: 'Please select a valid task type or leave empty' };
     }
 
     return { isValid: true };
@@ -488,15 +547,22 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     setIsSubmitting(true);
     
     try {
-      // Validate required fields using shared validation
+      // Validate required fields using shared validation (data now includes unifiedBrief)
       const validation = validateFormData(data);
       if (!validation.isValid) {
         throw new Error(validation.error);
       }
 
-      // Prepare submit data - don't overwrite form data with preset data
+      // Prepare submit data with back-compatibility mapping
       const submitData = {
         ...data,
+        // Remove mode from submission (deprecated)
+        mode: undefined,
+        // Map unified brief to legacy fields for back-compatibility
+        prompt: data.unifiedBrief?.generalBrief || data.prompt,
+        image_instruction: (uploadedFile && data.unifiedBrief?.intentType === 'instructedEdit') 
+          ? data.unifiedBrief?.editInstruction 
+          : data.image_instruction,
         // Exclude brand_kit from submission when apply_branding is false
         brand_kit: data.apply_branding ? data.brand_kit : undefined,
         // Add preset information if active (STYLE_RECIPE presets are handled by StyleRecipeModal)
@@ -538,6 +604,16 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
     
     // Clear custom language state
     setShowCustomLanguage(false);
+    
+    // NEW: Reset unified brief state
+    setUnifiedBrief({
+      intentType: 'fullGeneration',
+      generalBrief: '',
+      editInstruction: '',
+      textOverlay: {
+        raw: '',
+      },
+    });
     
     // Reset additional dialog states that aren't part of the form
     setSaveTemplateDialogOpen(false);
@@ -589,10 +665,11 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         throw new Error(validation.error);
       }
       
-      // Create input snapshot from current form state
+      // Create input snapshot from current form state with unifiedBrief mapping
       const inputSnapshot = {
-        mode: currentValues.mode, // Include mode field
-        prompt: currentValues.prompt || '',
+        mode: currentValues.mode || 'easy_mode', // Include mode field for compatibility
+        // Map unifiedBrief.generalBrief → prompt (fallback to legacy prompt)
+        prompt: currentValues.unifiedBrief?.generalBrief || currentValues.prompt || '',
         creativity_level: currentValues.creativity_level,
         platform_name: currentValues.platform_name,
         num_variants: currentValues.num_variants,
@@ -600,9 +677,13 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
         apply_branding: currentValues.apply_branding,
         language: currentValues.language || 'en',
         task_type: currentValues.task_type || null,
-        task_description: currentValues.task_description || null,
+        // Map unifiedBrief.textOverlay.raw → task_description (preserves legacy semantics)
+        task_description: currentValues.unifiedBrief?.textOverlay?.raw || currentValues.task_description || null,
         brand_kit: currentValues.brand_kit || null,
-        image_instruction: currentValues.image_instruction || null,
+        // Map unifiedBrief.editInstruction → image_instruction when instructedEdit
+        image_instruction: (currentValues.unifiedBrief?.intentType === 'instructedEdit' 
+          ? currentValues.unifiedBrief?.editInstruction 
+          : currentValues.image_instruction) || null,
         marketing_audience: currentValues.marketing_audience || null,
         marketing_objective: currentValues.marketing_objective || null,
         marketing_voice: currentValues.marketing_voice || null,
@@ -696,6 +777,8 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       toast.error(error.message || 'Failed to save brand kit');
     }
   };
+
+
 
   const handleApplyBrandKitPreset = (preset: BrandPresetResponse) => {
     if (preset.brand_kit) {
@@ -846,7 +929,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           {/* Header */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
             <Typography variant="h4" sx={{ fontWeight: 600, textAlign: 'center', letterSpacing: '-0.02em', flexGrow: 1 }}>
-              Create New Pipeline Run
+              Create Visual
             </Typography>
 
           </Box>
@@ -895,8 +978,33 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
           </Box>
           
           <form onSubmit={handleSubmit(onSubmit)}>
-            {/* Main Content - Left/Right Split */}
-            <Grid container spacing={4}>
+            {/* Conditional rendering based on feature flag */}
+            {isUnifiedCanvasEnabled ? (
+              /* NEW: Creative Canvas UI */
+              <CreativeCanvas
+                control={control}
+                watch={watch}
+                setValue={setValue}
+                errors={errors}
+                isSubmitting={isSubmitting}
+                uploadedFile={uploadedFile}
+                previewUrl={previewUrl}
+                unifiedBrief={unifiedBrief}
+                setUnifiedBrief={setUnifiedBrief}
+                applyBranding={applyBranding}
+                renderText={renderText}
+                onBrandKitPresetOpen={() => setBrandKitPresetModalOpen(true)}
+                onColorPaletteOpen={() => setColorPaletteModalOpen(true)}
+                onRecipeModalOpen={() => setRecipeModalOpen(true)}
+                onFileSelect={(file) => onDrop([file])}
+                onFileRemove={removeImage}
+                onLoadBrandKitPreset={handleLoadBrandKitPreset}
+                onSaveBrandKitPreset={handleSaveBrandKitPreset}
+                hasBrandKitData={hasBrandKitData}
+              />
+            ) : (
+              /* LEGACY: Original form layout */
+              <Grid container spacing={4}>
               {/* LEFT SIDE - All Basic Components */}
               <Grid item xs={12} lg={7}>
                 <Box sx={{ pr: { lg: 2 } }}>
@@ -927,7 +1035,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                           control={control}
                           render={({ field }) => (
                             <Select {...field} label="Target Platform" error={!!errors.platform_name}>
-                              {platforms.map((platform) => (
+                              {PLATFORMS.map((platform) => (
                                 <MenuItem key={platform} value={platform}>
                                   {platform}
                                 </MenuItem>
@@ -999,7 +1107,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                               control={control}
                               render={({ field }) => (
                                 <Select {...field} label="Task Type" error={!!errors.task_type}>
-                                  {taskTypes.map((taskType) => (
+                                  {TASK_TYPES.map((taskType) => (
                                     <MenuItem key={taskType} value={taskType}>
                                       {taskType}
                                     </MenuItem>
@@ -1049,7 +1157,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       {/* Creativity Level */}
                       <Grid item xs={12} md={6}>
                         <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 500, mb: 2 }}>
-                          Style: {creativityLabels[watch('creativity_level') as keyof typeof creativityLabels]}
+                          Style: {CREATIVITY_LABELS[watch('creativity_level') as keyof typeof CREATIVITY_LABELS]}
                         </Typography>
                         <Controller
                           name="creativity_level"
@@ -1124,26 +1232,24 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                     </Typography>
                   </Box>
 
-                  {/* Prompt */}
-                    <Box sx={{ mb: 4 }}>
-                      <Controller
-                        name="prompt"
-                        control={control}
-                        render={({ field }) => (
-                          <TextField
-                            {...field}
-                            key={`prompt-${activePreset?.id || 'default'}`} // Force re-render when preset changes
-                            fullWidth
-                            multiline
-                            rows={4}
-                            label="Prompt"
-                            placeholder="Describe your product or what you want to generate... (e.g., 'roti canai, cartoon style')"
-                            error={!!errors.prompt}
-                            helperText={errors.prompt?.message}
-                          />
-                        )}
+                  {/* NEW: Creative Brief Input */}
+                  <Controller
+                    name="unifiedBrief"
+                    control={control}
+                    render={({ field, fieldState }) => (
+                      <CreativeBriefInput
+                        value={field.value?.generalBrief || ''}
+                        onChange={(value) => {
+                          const updatedBrief = { ...unifiedBrief, generalBrief: value };
+                          setUnifiedBrief(updatedBrief);
+                          field.onChange(updatedBrief);
+                        }}
+                        disabled={isSubmitting}
+                        error={fieldState.error?.message}
+                        placeholder="Describe the visual style, mood, composition, or specific imagery you want to create..."
                       />
-                    </Box>
+                    )}
+                  />
 
                   {/* Image Upload */}
                     <Box sx={{ mb: 4 }}>
@@ -1219,21 +1325,35 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                           </Box>
                         </Paper>
 
-                        <Controller
-                          name="image_instruction"
-                          control={control}
-                          render={({ field }) => (
-                            <TextField
-                              {...field}
-                              key={`image_instruction-${activePreset?.id || 'default'}`}
-                              fullWidth
-                              multiline
-                              rows={2}
-                              label="Image Instruction"
-                              placeholder="e.g., 'Use the burger as the main subject', 'Enhance lighting'"
-                            />
-                          )}
-                        />
+                        {/* NEW: Edit Mode Selector (only visible when image is uploaded) */}
+                        {uploadedFile && (
+                          <Controller
+                            name="unifiedBrief"
+                            control={control}
+                            render={({ field }) => (
+                              <EditModeSelector
+                                mode={field.value?.intentType === 'instructedEdit' ? 'instructedEdit' : 'defaultEdit'}
+                                onModeChange={(mode) => {
+                                  const updatedBrief = {
+                                    ...unifiedBrief,
+                                    intentType: mode,
+                                    editInstruction: mode === 'defaultEdit' ? '' : unifiedBrief.editInstruction
+                                  };
+                                  setUnifiedBrief(updatedBrief);
+                                  field.onChange(updatedBrief);
+                                }}
+                                editInstruction={field.value?.editInstruction || ''}
+                                onEditInstructionChange={(instruction) => {
+                                  const updatedBrief = { ...unifiedBrief, editInstruction: instruction };
+                                  setUnifiedBrief(updatedBrief);
+                                  field.onChange(updatedBrief);
+                                }}
+                                disabled={isSubmitting}
+                                visible={!!uploadedFile}
+                              />
+                            )}
+                          />
+                        )}
                       </Box>
                     )}
                   </Box>
@@ -1273,6 +1393,29 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       />
                     </Box>
                   </Box>
+
+                  {/* NEW: Text Overlay Composer - Available in all modes when render_text is enabled */}
+                  {renderText && (
+                    <Controller
+                      name="unifiedBrief"
+                      control={control}
+                      render={({ field }) => (
+                        <TextOverlayComposer
+                          value={field.value?.textOverlay?.raw || ''}
+                          onChange={(text) => {
+                            const updatedBrief = {
+                              ...unifiedBrief,
+                              textOverlay: { ...unifiedBrief.textOverlay, raw: text }
+                            };
+                            setUnifiedBrief(updatedBrief);
+                            field.onChange(updatedBrief);
+                          }}
+                          disabled={isSubmitting}
+                          visible={renderText}
+                        />
+                      )}
+                    />
+                  )}
                 </Box>
               </Grid>
 
@@ -1429,26 +1572,6 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                       
                       <Paper sx={{ p: 2.5, backgroundColor: 'grey.50', borderRadius: 2, border: 1, borderColor: 'grey.200' }}>
                         <Grid container spacing={2.5}>
-                          {/* Task Description */}
-                          <Grid item xs={12}>
-                            <Controller
-                              name="task_description"
-                              control={control}
-                              render={({ field }) => (
-                                <TextField
-                                  {...field}
-                                  key={`task_description-${activePreset?.id || 'default'}`}
-                                  fullWidth
-                                  multiline
-                                  rows={2}
-                                  size="small"
-                                  label="Task Content/Description"
-                                  placeholder="e.g., 'Promo: 2-for-1 Coffee!', 'Menu: Signature Pasta'"
-                                />
-                              )}
-                            />
-                          </Grid>
-
                           {/* Marketing Goals */}
                           <Grid item xs={12}>
                             <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600, mb: 1.5, fontSize: '1rem' }}>
@@ -1545,6 +1668,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                 </Box>
               </Grid>
             </Grid>
+            )}
 
             {/* Actions Footer */}
             <Box sx={{ mt: 5 }}>
@@ -1562,9 +1686,9 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
                 </Button>
                 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  {selectedMode === 'easy_mode' && !watch('prompt') && !uploadedFile && (
+                  {!watch('prompt') && !watch('unifiedBrief.generalBrief') && !uploadedFile && (
                     <Alert severity="info" sx={{ py: 1 }}>
-                      Easy mode requires either a prompt or an image
+                      Please provide a creative brief or upload an image to get started
                     </Alert>
                   )}
                   
