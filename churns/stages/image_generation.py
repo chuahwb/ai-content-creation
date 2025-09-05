@@ -28,6 +28,7 @@ image_gen_client = None  # Backward compatibility (OpenAI)
 image_gen_client_openai = None
 image_gen_client_gemini = None
 IMAGE_GENERATION_PROVIDER = None
+IMAGE_GENERATION_MODEL_ID = None  # Deprecated: Use get_image_generation_model_id() instead
 
 
 # OpenAI-style response classes for Gemini normalization
@@ -177,8 +178,9 @@ async def _generate_with_no_input_image(
     ctx: Optional[PipelineContext] = None
 ) -> Tuple[str, Optional[str], Optional[int]]:
     """Handle text-to-image generation (no input images)."""
-    # Use global model ID (injected by pipeline executor)
-    model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"  # Fallback to default
+    # Use configured model ID from constants
+    from ..core.constants import get_image_generation_model_id
+    model_id = get_image_generation_model_id()
     
     def log_msg(msg: str):
         """Helper to log messages either via context or print."""
@@ -233,8 +235,9 @@ async def _generate_with_single_input_edit(
     ctx: Optional[PipelineContext] = None
 ) -> Tuple[str, Optional[str], Optional[int]]:
     """Handle single image editing (reference image OR logo only)."""
-    # Use global model ID (injected by pipeline executor)
-    model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"  # Fallback to default
+    # Use configured model ID from constants
+    from ..core.constants import get_image_generation_model_id
+    model_id = get_image_generation_model_id()
     
     def log_msg(msg: str):
         """Helper to log messages either via context or print."""
@@ -329,8 +332,9 @@ async def _generate_with_multiple_inputs(
     ctx: Optional[PipelineContext] = None
 ) -> Tuple[str, Optional[str], Optional[int]]:
     """Handle multi-modal image generation with reference image + logo."""
-    # Use global model ID (injected by pipeline executor)
-    model_id = IMAGE_GENERATION_MODEL_ID or "gpt-image-1"  # Fallback to default
+    # Use configured model ID from constants
+    from ..core.constants import get_image_generation_model_id
+    model_id = get_image_generation_model_id()
     
     def log_msg(msg: str):
         """Helper to log messages either via context or print."""
@@ -569,8 +573,9 @@ def _calculate_comprehensive_tokens_sync(
         else:
             print(msg)
     
-    # Use model_id parameter or fallback to global/default
-    model_for_calc = model_id or IMAGE_GENERATION_MODEL_ID or "gpt-image-1"
+    # Use model_id parameter or fallback to configured default
+    from ..core.constants import get_image_generation_model_id
+    model_for_calc = model_id or get_image_generation_model_id()
     
     try:
         token_manager = get_token_cost_manager()

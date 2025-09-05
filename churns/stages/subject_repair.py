@@ -245,8 +245,8 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
     Uses shared utilities for consistency with other refinement stages.
     """
     
-    from ..core.constants import IMAGE_GENERATION_MODEL_ID
-    logger.info(f"Performing subject repair using {IMAGE_GENERATION_MODEL_ID or 'gpt-image-1'}...")
+    from ..core.constants import IMAGE_REFINEMENT_MODEL_ID
+    logger.info(f"Performing subject repair using {IMAGE_REFINEMENT_MODEL_ID}...")
     logger.info("Starting subject repair with moderate enhancement approach")
     
     # Prepare enhanced prompt using shared utility
