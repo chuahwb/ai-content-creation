@@ -1,12 +1,13 @@
 """
 Stage 6: Image Generation
 
-Generates images using the gpt-image-1 model via OpenAI Images API.
-Handles both image generation and editing based on assembled prompts from
-the previous stage. Supports different qualities, aspect ratios, and 
-comprehensive error handling.
+Generates images using either OpenAI (gpt-image-1) or Gemini (gemini-2.5-flash-image-preview) 
+image generation models. Provider selection is driven by IMAGE_GENERATION_MODEL_PROVIDER 
+configuration. Handles both image generation and editing based on assembled prompts from
+the previous stage. Supports different qualities, aspect ratios, and comprehensive error handling.
 
 Extracted from original monolith: generate_image function (~line 2111)
+Enhanced with Gemini provider support via adapter pattern.
 """
 
 import os
@@ -23,8 +24,24 @@ from ..pipeline.context import PipelineContext
 from ..core.token_cost_manager import get_token_cost_manager
 
 # Global variables for API clients and configuration (injected by pipeline executor)
-image_gen_client = None
-IMAGE_GENERATION_MODEL_ID = None
+image_gen_client = None  # Backward compatibility (OpenAI)
+image_gen_client_openai = None
+image_gen_client_gemini = None
+IMAGE_GENERATION_PROVIDER = None
+
+
+# OpenAI-style response classes for Gemini normalization
+class _OpenAIStyleImageData:
+    """Normalized image data for reusing _process_image_response."""
+    def __init__(self, b64: str):
+        self.b64_json = b64
+        self.url = None
+
+
+class _OpenAIStyleResponse:
+    """Normalized response for reusing _process_image_response."""
+    def __init__(self, b64: str):
+        self.data = [_OpenAIStyleImageData(b64)]
 
 
 def map_aspect_ratio_to_size_for_api(aspect_ratio: str, ctx: Optional[PipelineContext] = None) -> Optional[str]:
@@ -89,37 +106,65 @@ async def generate_image(
         else:
             print(msg)
 
-    # Route to appropriate generation method based on available inputs
+    # Use configured provider
+    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+    
+    # Route to appropriate generation method based on available inputs and provider
     if reference_image_path and logo_image_path:
         # Complex multi-modal case: reference image + logo
-        log_msg("Routing to multi-modal generation (reference + logo)")
-        return await _generate_with_multiple_inputs(
-            final_prompt, platform_aspect_ratio, client, run_directory, 
-            strategy_index, reference_image_path, logo_image_path, 
-            image_quality_setting, ctx
-        )
+        log_msg(f"Routing to multi-modal generation (reference + logo) via {provider}")
+        if provider.lower() == "gemini":
+            return await _gemini_generate_with_multiple_inputs(
+                final_prompt, platform_aspect_ratio, run_directory, 
+                strategy_index, reference_image_path, logo_image_path, 
+                image_quality_setting, ctx
+            )
+        else:
+            return await _generate_with_multiple_inputs(
+                final_prompt, platform_aspect_ratio, client, run_directory, 
+                strategy_index, reference_image_path, logo_image_path, 
+                image_quality_setting, ctx
+            )
     elif reference_image_path:
         # Single image edit case
-        log_msg("Routing to single image edit")
-        return await _generate_with_single_input_edit(
-            final_prompt, platform_aspect_ratio, client, run_directory,
-            strategy_index, reference_image_path, image_quality_setting, ctx
-        )
+        log_msg(f"Routing to single image edit via {provider}")
+        if provider.lower() == "gemini":
+            return await _gemini_generate_with_single_input_edit(
+                final_prompt, platform_aspect_ratio, run_directory,
+                strategy_index, reference_image_path, image_quality_setting, ctx
+            )
+        else:
+            return await _generate_with_single_input_edit(
+                final_prompt, platform_aspect_ratio, client, run_directory,
+                strategy_index, reference_image_path, image_quality_setting, ctx
+            )
     else:
         # Generation case (no input images) or logo-only case
         input_image_path = logo_image_path if logo_image_path else None
         if input_image_path:
-            log_msg("Routing to logo-only edit")
-            return await _generate_with_single_input_edit(
-                final_prompt, platform_aspect_ratio, client, run_directory,
-                strategy_index, input_image_path, image_quality_setting, ctx
-            )
+            log_msg(f"Routing to logo-only edit via {provider}")
+            if provider.lower() == "gemini":
+                return await _gemini_generate_with_single_input_edit(
+                    final_prompt, platform_aspect_ratio, run_directory,
+                    strategy_index, input_image_path, image_quality_setting, ctx
+                )
+            else:
+                return await _generate_with_single_input_edit(
+                    final_prompt, platform_aspect_ratio, client, run_directory,
+                    strategy_index, input_image_path, image_quality_setting, ctx
+                )
         else:
-            log_msg("Routing to text-to-image generation")
-            return await _generate_with_no_input_image(
-                final_prompt, platform_aspect_ratio, client, run_directory,
-                strategy_index, image_quality_setting, ctx
-            )
+            log_msg(f"Routing to text-to-image generation via {provider}")
+            if provider.lower() == "gemini":
+                return await _gemini_generate_with_no_input_image(
+                    final_prompt, platform_aspect_ratio, run_directory,
+                    strategy_index, image_quality_setting, ctx
+                )
+            else:
+                return await _generate_with_no_input_image(
+                    final_prompt, platform_aspect_ratio, client, run_directory,
+                    strategy_index, image_quality_setting, ctx
+                )
 
 
 async def _generate_with_no_input_image(
@@ -637,6 +682,284 @@ async def _calculate_comprehensive_tokens(
     )
 
 
+# ================================
+# GEMINI IMAGE GENERATION FUNCTIONS
+# ================================
+
+async def _gemini_generate_with_no_input_image(
+    final_prompt: str,
+    platform_aspect_ratio: str,
+    run_directory: str,
+    strategy_index: int,
+    image_quality_setting: str,
+    ctx: Optional[PipelineContext] = None
+) -> Tuple[str, Optional[str], Optional[int]]:
+    """Handle text-to-image generation using Gemini."""
+    from ..core.constants import get_image_generation_model_id
+    model_id = get_image_generation_model_id()
+    
+    def log_msg(msg: str):
+        if ctx:
+            ctx.log(msg)
+        else:
+            print(msg)
+
+    # Calculate comprehensive token usage (text only for this case)
+    token_breakdown = await _calculate_comprehensive_tokens(
+        final_prompt, model_id=model_id, ctx=ctx
+    )
+    prompt_tokens_for_image_gen = token_breakdown["total_tokens"]
+
+    if not image_gen_client_gemini:
+        return "error", "Gemini image generation client not available.", prompt_tokens_for_image_gen
+    if not final_prompt or final_prompt.startswith("Error:"):
+        return "error", f"Invalid final prompt provided: {final_prompt}", prompt_tokens_for_image_gen
+    if not run_directory or not os.path.isdir(run_directory):
+        return "error", f"Invalid run_directory provided: {run_directory}", prompt_tokens_for_image_gen
+
+    try:
+        # Add aspect ratio directive to prompt for Gemini
+        aspect_prompt = _add_aspect_ratio_to_prompt(final_prompt, platform_aspect_ratio)
+        log_msg(f"--- Calling Gemini Image Generation API ({model_id}) ---")
+
+        # Build contents array for Gemini
+        contents = [aspect_prompt]
+        
+        response = await asyncio.to_thread(
+            image_gen_client_gemini.models.generate_content,
+            model=model_id,
+            contents=contents
+        )
+        
+        # Normalize Gemini response to OpenAI-like format
+        normalized_response = _normalize_gemini_response(response)
+        return await _process_image_response(normalized_response, "generation", run_directory, strategy_index, prompt_tokens_for_image_gen, ctx)
+
+    except Exception as e:
+        return _handle_gemini_api_error(e, "generation", prompt_tokens_for_image_gen, ctx)
+
+
+async def _gemini_generate_with_single_input_edit(
+    final_prompt: str,
+    platform_aspect_ratio: str,
+    run_directory: str,
+    strategy_index: int,
+    input_image_path: str,
+    image_quality_setting: str,
+    ctx: Optional[PipelineContext] = None
+) -> Tuple[str, Optional[str], Optional[int]]:
+    """Handle single image editing using Gemini."""
+    from ..core.constants import get_image_generation_model_id
+    model_id = get_image_generation_model_id()
+    
+    def log_msg(msg: str):
+        if ctx:
+            ctx.log(msg)
+        else:
+            print(msg)
+
+    # Calculate comprehensive token usage
+    token_breakdown = await _calculate_comprehensive_tokens(
+        final_prompt, model_id=model_id, reference_image_path=input_image_path, ctx=ctx
+    )
+    prompt_tokens_for_image_gen = token_breakdown["total_tokens"]
+
+    if not image_gen_client_gemini:
+        return "error", "Gemini image generation client not available.", prompt_tokens_for_image_gen
+    if not final_prompt or final_prompt.startswith("Error:"):
+        return "error", f"Invalid final prompt provided: {final_prompt}", prompt_tokens_for_image_gen
+    if not os.path.exists(input_image_path):
+        return "error", f"Input image not found: {input_image_path}", prompt_tokens_for_image_gen
+
+    try:
+        # Add aspect ratio directive to prompt
+        aspect_prompt = _add_aspect_ratio_to_prompt(final_prompt, platform_aspect_ratio)
+        log_msg(f"--- Calling Gemini Image Edit API ({model_id}) ---")
+
+        # Read and encode input image
+        with open(input_image_path, 'rb') as f:
+            image_data = f.read()
+        
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        # Determine MIME type
+        if input_image_path.lower().endswith('.png'):
+            mime_type = 'image/png'
+        elif input_image_path.lower().endswith(('.jpg', '.jpeg')):
+            mime_type = 'image/jpeg'
+        else:
+            mime_type = 'image/png'  # Default fallback
+        
+        # Build contents array for Gemini with image
+        contents = [
+            aspect_prompt,
+            {"inline_data": {"mime_type": mime_type, "data": image_base64}}
+        ]
+        
+        response = await asyncio.to_thread(
+            image_gen_client_gemini.models.generate_content,
+            model=model_id,
+            contents=contents
+        )
+        
+        # Normalize Gemini response to OpenAI-like format
+        normalized_response = _normalize_gemini_response(response)
+        return await _process_image_response(normalized_response, "editing", run_directory, strategy_index, prompt_tokens_for_image_gen, ctx)
+
+    except Exception as e:
+        return _handle_gemini_api_error(e, "edit", prompt_tokens_for_image_gen, ctx)
+
+
+async def _gemini_generate_with_multiple_inputs(
+    final_prompt: str,
+    platform_aspect_ratio: str,
+    run_directory: str,
+    strategy_index: int,
+    reference_image_path: str,
+    logo_image_path: str,
+    image_quality_setting: str,
+    ctx: Optional[PipelineContext] = None
+) -> Tuple[str, Optional[str], Optional[int]]:
+    """Handle multi-image editing using Gemini."""
+    from ..core.constants import get_image_generation_model_id
+    model_id = get_image_generation_model_id()
+    
+    def log_msg(msg: str):
+        if ctx:
+            ctx.log(msg)
+        else:
+            print(msg)
+
+    # Calculate comprehensive token usage
+    token_breakdown = await _calculate_comprehensive_tokens(
+        final_prompt, model_id=model_id, 
+        reference_image_path=reference_image_path, 
+        logo_image_path=logo_image_path, ctx=ctx
+    )
+    prompt_tokens_for_image_gen = token_breakdown["total_tokens"]
+
+    if not image_gen_client_gemini:
+        return "error", "Gemini image generation client not available.", prompt_tokens_for_image_gen
+    if not final_prompt or final_prompt.startswith("Error:"):
+        return "error", f"Invalid final prompt provided: {final_prompt}", prompt_tokens_for_image_gen
+    if not os.path.exists(reference_image_path):
+        return "error", f"Reference image not found: {reference_image_path}", prompt_tokens_for_image_gen
+    if not os.path.exists(logo_image_path):
+        return "error", f"Logo image not found: {logo_image_path}", prompt_tokens_for_image_gen
+
+    try:
+        # Add aspect ratio directive to prompt
+        aspect_prompt = _add_aspect_ratio_to_prompt(final_prompt, platform_aspect_ratio)
+        log_msg(f"--- Calling Gemini Multi-Image API ({model_id}) ---")
+
+        # Read and encode reference image
+        with open(reference_image_path, 'rb') as f:
+            ref_image_data = f.read()
+        ref_image_base64 = base64.b64encode(ref_image_data).decode('utf-8')
+        ref_mime_type = 'image/png' if reference_image_path.lower().endswith('.png') else 'image/jpeg'
+        
+        # Read and encode logo image
+        with open(logo_image_path, 'rb') as f:
+            logo_image_data = f.read()
+        logo_image_base64 = base64.b64encode(logo_image_data).decode('utf-8')
+        logo_mime_type = 'image/png' if logo_image_path.lower().endswith('.png') else 'image/jpeg'
+        
+        # Build contents array for Gemini with multiple images
+        contents = [
+            aspect_prompt,
+            {"inline_data": {"mime_type": ref_mime_type, "data": ref_image_base64}},
+            {"inline_data": {"mime_type": logo_mime_type, "data": logo_image_base64}}
+        ]
+        
+        response = await asyncio.to_thread(
+            image_gen_client_gemini.models.generate_content,
+            model=model_id,
+            contents=contents
+        )
+        
+        # Normalize Gemini response to OpenAI-like format
+        normalized_response = _normalize_gemini_response(response)
+        return await _process_image_response(normalized_response, "multimodal", run_directory, strategy_index, prompt_tokens_for_image_gen, ctx)
+
+    except Exception as e:
+        return _handle_gemini_api_error(e, "edit", prompt_tokens_for_image_gen, ctx)
+
+
+def _add_aspect_ratio_to_prompt(prompt: str, aspect_ratio: str) -> str:
+    """Add aspect ratio directive to prompt for Gemini (since it doesn't have size parameter)."""
+    aspect_directive_map = {
+        "1:1": "The image should be in a 1:1 aspect ratio (square).",
+        "9:16": "The image should be in a 9:16 aspect ratio (vertical).",
+        "16:9": "The image should be in a 16:9 aspect ratio (horizontal).",
+        "2:3": "The image should be in a 2:3 aspect ratio (vertical).",
+        "3:4": "The image should be in a 3:4 aspect ratio (vertical).",
+        "1.91:1": "The image should be in a 1.91:1 aspect ratio (horizontal)."
+    }
+    
+    directive = aspect_directive_map.get(aspect_ratio, "The image should be in a 1:1 aspect ratio (square).")
+    return f"{prompt} {directive}"
+
+
+def _normalize_gemini_response(response: Any) -> _OpenAIStyleResponse:
+    """Normalize Gemini response to OpenAI-like format for reusing _process_image_response."""
+    try:
+        # Extract first inline_data image part from response
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                for part in candidate.content.parts:
+                    if hasattr(part, 'inline_data') and hasattr(part.inline_data, 'data'):
+                        # Gemini's inline_data.data contains the image data
+                        gemini_data = part.inline_data.data
+                        
+                        # Handle different data formats from Gemini
+                        if isinstance(gemini_data, bytes):
+                            # Convert raw bytes to base64 for OpenAI compatibility
+                            gemini_base64_data = base64.b64encode(gemini_data).decode('utf-8')
+                        elif isinstance(gemini_data, str):
+                            # Assume it's already base64 encoded
+                            gemini_base64_data = gemini_data
+                        else:
+                            raise ValueError(f"Unexpected Gemini data type: {type(gemini_data)}")
+                        
+                        return _OpenAIStyleResponse(gemini_base64_data)
+        
+        # If we get here, no image data was found
+        raise ValueError("No image data found in Gemini response")
+        
+    except Exception as e:
+        raise ValueError(f"Failed to normalize Gemini response: {e}")
+
+
+def _handle_gemini_api_error(
+    error: Exception, 
+    operation_type: str, 
+    prompt_tokens: Optional[int], 
+    ctx: Optional[PipelineContext] = None
+) -> Tuple[str, str, Optional[int]]:
+    """Handle Gemini API errors and map to standardized error format."""
+    def log_msg(msg: str):
+        if ctx:
+            ctx.log(msg)
+        else:
+            print(msg)
+    
+    error_msg = str(error)
+    log_msg(f"Gemini API error during {operation_type}: {error_msg}")
+    
+    # Map common Gemini errors to user-friendly messages
+    if "quota" in error_msg.lower() or "limit" in error_msg.lower():
+        friendly_msg = "Gemini API quota exceeded. Please try again later."
+    elif "safety" in error_msg.lower() or "blocked" in error_msg.lower():
+        friendly_msg = "Content was blocked by Gemini safety filters. Please modify your prompt."
+    elif "invalid" in error_msg.lower():
+        friendly_msg = f"Invalid request to Gemini API: {error_msg}"
+    else:
+        friendly_msg = f"Gemini API error: {error_msg}"
+    
+    return "error", friendly_msg, prompt_tokens
+
+
 async def run(ctx: PipelineContext) -> None:
     """
     Stage 6: Image Generation
@@ -652,10 +975,23 @@ async def run(ctx: PipelineContext) -> None:
     # Get data from previous stages
     assembled_prompts = ctx.final_assembled_prompts or []
     
-    # Use global client variable (injected by pipeline executor)
-    if not image_gen_client:
-        ctx.log("ERROR: Image Generation Client not configured. Skipping image generation.")
-        ctx.generated_image_results = []
+    # Check if the required client is available based on provider
+    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+    has_client = (provider == "Gemini" and image_gen_client_gemini) or (provider == "OpenAI" and (image_gen_client or image_gen_client_openai))
+    
+    if not has_client:
+        ctx.log(f"ERROR: {provider} Image Generation Client not configured.")
+        # Generate error results for each assembled prompt
+        error_results = []
+        for i, prompt_data in enumerate(assembled_prompts):
+            error_results.append({
+                "index": i,
+                "status": "error",
+                "result_path": None,
+                "error_message": f"{provider} image generation client not available.",
+                "prompt_tokens": 0
+            })
+        ctx.generated_image_results = error_results
         return
         
     if not assembled_prompts:
@@ -793,13 +1129,28 @@ async def run(ctx: PipelineContext) -> None:
                     filename_only = os.path.basename(img_result_path_or_msg) if img_result_path_or_msg else None
                     
                     # Calculate comprehensive token breakdown for metadata
+                    from ..core.constants import get_image_generation_model_id
+                    breakdown_model_id = get_image_generation_model_id()
+                    
                     token_breakdown = await _calculate_comprehensive_tokens(
                         final_text_prompt,
                         reference_image_path=reference_image_path,
                         logo_image_path=logo_image_path,
-                        model_id=IMAGE_GENERATION_MODEL_ID,
+                        model_id=breakdown_model_id,
                         ctx=ctx
                     )
+                    
+                    # Use configured provider and get corresponding model ID
+                    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+                    actual_model_id = breakdown_model_id
+                    
+                    # Determine output resolution and quality based on provider
+                    if provider.lower() == "openai":
+                        output_resolution = map_aspect_ratio_to_size_for_api(platform_aspect_ratio, ctx) or "1024x1024"
+                        output_quality = "medium"  # Default for OpenAI
+                    else:  # Gemini
+                        output_resolution = "1024x1024"  # Gemini default (unless resized)
+                        output_quality = "default"  # Gemini uses "default" quality
                     
                     generated_image_results.append({
                         "index": strategy_index, 
@@ -814,6 +1165,13 @@ async def run(ctx: PipelineContext) -> None:
                             "total_tokens": token_breakdown.get("total_tokens", img_prompt_tokens),
                             "num_input_images": token_breakdown.get("num_input_images", 0),
                             "image_details": token_breakdown.get("image_details", [])
+                        },
+                        # Provider and model metadata for cost calculation
+                        "generation_metadata": {
+                            "provider": provider.lower(),
+                            "model_id": actual_model_id,
+                            "output_resolution": output_resolution,
+                            "output_quality": output_quality
                         }
                     })
                     ctx.log(f"   ✅ Image generated successfully: {img_result_path_or_msg}")

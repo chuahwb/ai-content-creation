@@ -26,6 +26,7 @@ from churns.core.json_parser import (
     TruncatedResponseError,
     should_use_manual_parsing
 )
+from churns.core.brand_kit_utils import build_brand_palette_prompt
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 instructor_client_creative_expert = None
@@ -185,7 +186,12 @@ You will be provided with specific `Style Guidance` for this concept. Your `visu
     # Add text and branding guidance based on flags
     text_branding_field_instruction_ce = "**Text & Branding Fields:**\n"
     if render_text_flag:
-        text_branding_field_instruction_ce += f"- `promotional_text_visuals`: {task_guidance['text_style']}. Describe text content, style, font, placement, and integration with the visual.\n"
+        text_branding_field_instruction_ce += (
+            f"- `promotional_text_visuals`: {task_guidance['text_style']}. The user will provide a 'Specific Task Content/Description' for text overlay. You MUST interpret this input as follows:\n"
+            "  - Text enclosed in **double quotes** (e.g., `\"Summer Special\"`) is **LITERAL CONTENT** that must appear on the image. Your description must specify this exact text.\n"
+            "  - Text **outside** of double quotes is a **CONTENT AND CREATIVE BRIEF**. Use it to understand the user's intent for the text's style, tone, placement, and **most importantly, to generate the specific text to be rendered if the user has not provided it in quotes.**\n"
+            "  - Your final output in the `promotional_text_visuals` field must be a cohesive description that synthesizes this brief and any literal text into a complete visual plan.\n"
+        )
     else:
         text_branding_field_instruction_ce += "- `promotional_text_visuals`: This field MUST be omitted (set to null) as text rendering is disabled.\n"
     
@@ -347,9 +353,17 @@ def _get_creative_expert_user_prompt(
         user_prompt_parts.append("\n**Brand Kit Integration (CRITICAL):**")
         user_prompt_parts.append("The following brand kit MUST be integrated into your visual concept. You must describe this integration in the `branding_visuals` field.")
         if brand_kit.get('colors'):
-            user_prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`.")
+            colors = brand_kit.get('colors')
+            if colors:
+                if isinstance(colors[0], str):
+                    user_prompt_parts.append("- **Brand Colors:**")
+                    user_prompt_parts.append(f"  `{colors}`")
+                else:
+                    # Use centralized builder with conditional usage inclusion for CREATIVE layer
+                    snippet = build_brand_palette_prompt(colors, layer="creative")
+                    user_prompt_parts.append(snippet)
         
-        user_prompt_parts.append(f"- In the `color_palette` field of your response, you MUST define a specific color scheme that prominently features or complements this full set of brand colors, guided by the overall style direction.")
+        user_prompt_parts.append(f"- In the `color_palette` field of your response, define a specific color scheme that prominently features or complements this full set of brand colors. Respect semantic roles; if a usage plan is given above, reflect it approximately, while using neutrals functionally for elements like text and backgrounds. The color scheme you define MUST be built from the provided Brand Colors. Non-brand colors should only be used sparingly as supporting functional shades (e.g., pure white for a background) if absolutely necessary. Adherence to the brand palette is a primary requirement.")
 
         if brand_kit.get('brand_voice_description'):
             user_prompt_parts.append(f"- **Brand Voice:** `'{brand_kit.get('brand_voice_description')}'`. The `lighting_and_mood` and overall `visual_style` must align with this voice.")

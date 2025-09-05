@@ -26,9 +26,33 @@ export interface MarketingGoalsInput {
   niche?: string;
 }
 
+// NEW: Unified input system types
+export interface TextOverlay {
+  raw?: string;
+  language?: "en" | "zh" | "auto";
+}
+
+export interface UnifiedBrief {
+  intentType: "fullGeneration" | "defaultEdit" | "instructedEdit" | "styleAdaptation" | "logoOnly";
+  generalBrief: string;
+  editInstruction?: string;
+  textOverlay?: TextOverlay;
+}
+
+// Brand Color interface with semantic roles
+export interface BrandColor {
+  hex: string;
+  role: string;
+  label?: string;
+  ratio?: number;
+  isAuto?: boolean; // Indicates if this is an auto-generated neutral
+  isCustomRatio?: boolean; // Indicates if user manually adjusted ratio
+  isLocked?: boolean; // Indicates if ratio is locked from normalization
+}
+
 // Brand Kit interface for unified brand management
 export interface BrandKitInput {
-  colors?: string[];
+  colors?: BrandColor[];
   brand_voice_description?: string;
   logo_file_base64?: string;
   // Runtime fields - populated during processing
@@ -94,6 +118,8 @@ export interface PipelineRunRequest {
   adaptation_prompt?: string;
   // Brand kit data (UPDATED: unified brand kit structure)
   brand_kit?: BrandKitInput;
+  // NEW: Unified input system
+  unifiedBrief?: UnifiedBrief;
 }
 
 export interface StageProgressUpdate {
@@ -155,6 +181,9 @@ export interface PipelineRunDetail extends PipelineRunResponse {
   
   // Brand Kit data (UPDATED: unified brand kit structure)
   brand_kit?: BrandKitInput;
+  
+  // NEW: Unified input system
+  unified_brief?: UnifiedBrief;
 }
 
 // NEW: Assessment data structure
@@ -247,9 +276,11 @@ export interface CaptionSettings {
   call_to_action?: string;
   include_emojis?: boolean;
   hashtag_strategy?: string;
+  user_instructions?: string;
+  caption_length?: 'Auto' | 'Short' | 'Medium' | 'Long';
   // New fields for mode tracking
-  generation_mode?: string;
-  processing_mode?: string;
+  generation_mode?: 'Auto' | 'Custom';
+  processing_mode?: 'Fast' | 'Analytical';
 }
 
 export interface CaptionModelOption {
@@ -366,6 +397,8 @@ export interface PipelineFormData {
   preset_type?: PresetType; // To distinguish between style recipes and templates
   template_overrides?: Record<string, any>;
   adaptation_prompt?: string;
+  // NEW: Unified input system
+  unifiedBrief?: UnifiedBrief;
 }
 
 // Configuration types

@@ -20,6 +20,7 @@ from churns.core.json_parser import (
     TruncatedResponseError,
     should_use_manual_parsing
 )
+from churns.core.brand_kit_utils import build_brand_palette_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +353,16 @@ Here is the `new_image_analysis` of the provided reference image:
     if brand_kit_override and is_override_event:
         override_parts = ["\n**CRITICAL: Adapt the base style recipe using this `brand_kit_override`:**"]
         if brand_kit_override.get('colors'):
-            override_parts.append(f"- **New Brand Colors:** `{brand_kit_override['colors']}`. The `color_palette` in your response MUST be adapted to harmonize with these colors.")
+            colors = brand_kit_override.get('colors')
+            if colors:
+                # Handle both old format (list of hex strings) and new semantic format
+                if isinstance(colors[0], str):
+                    override_parts.append(f"- **New Brand Colors:** `{colors}`. The `color_palette` in your response MUST be adapted to harmonize with these colors.")
+                else:
+                    # Use centralized builder with conditional usage inclusion for STYLE_ADAPTATION layer
+                    snippet = build_brand_palette_prompt(colors, layer="creative")
+                    override_parts.append(snippet.replace("**Brand Color Palette:**", "- **New Brand Color Palette:**"))
+                    override_parts.append("- The `color_palette` in your response MUST be adapted to harmonize with these colors and respect their semantic roles.")
         if brand_kit_override.get('brand_voice_description'):
             override_parts.append(f"- **New Brand Voice:** `'{brand_kit_override['brand_voice_description']}'`. The `lighting_and_mood` must be adapted to align with this voice.")
         if brand_kit_override.get('logo_analysis'):

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from churns.api.schemas import WebSocketMessage, WSMessageType, StageProgressUpdate
 from churns.api.database import RunStatus, StageStatus
+from churns.core.user_config import get_user_settings
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +88,35 @@ class ConnectionManager:
         for connection in disconnected_connections:
             self.disconnect(connection, run_id)
     
-    async def send_stage_update(self, run_id: str, stage_update: StageProgressUpdate):
+    async def send_stage_update(self, run_id: str, stage_update: StageProgressUpdate, pipeline_mode: str = "generation"):
         """Send a stage progress update"""
+        from churns.core.user_config import get_user_settings, obfuscate_stage_name
+        user_settings = get_user_settings()
+        
+        if user_settings.presentation_mode:
+            # Obfuscate the stage update for presentation mode
+            # The obfuscation function will handle fractional stage detection internally
+            stage_name, message = obfuscate_stage_name(stage_update.stage_order, pipeline_mode)
+            
+            obfuscated_update = StageProgressUpdate(
+                stage_name=stage_name,
+                stage_order=stage_update.stage_order,
+                status=stage_update.status,
+                started_at=stage_update.started_at,
+                completed_at=stage_update.completed_at,
+                duration_seconds=stage_update.duration_seconds,
+                message=message,
+                output_data=stage_update.output_data,  # KEEP stage outputs for developers
+                error_message=stage_update.error_message  # KEEP error messages for developers
+            )
+            update_to_send = obfuscated_update
+        else:
+            update_to_send = stage_update
+
         message = WebSocketMessage(
             type=WSMessageType.STAGE_UPDATE,
             run_id=run_id,
-            data=stage_update.model_dump()
+            data=update_to_send.model_dump()
         )
         await self.send_message_to_run(run_id, message)
     

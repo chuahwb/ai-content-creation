@@ -127,6 +127,9 @@ class PipelineRun(SQLModel, table=True):
 
     # Brand Kit data (UPDATED: unified brand kit structure)
     brand_kit: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of BrandKitInput including colors, voice, and logo analysis")
+    
+    # NEW: Unified input system storage
+    unified_brief: Optional[str] = Field(default=None, sa_column=Column(JSON), description="JSON string of UnifiedBrief for new input system")
 
     # NEW: Preset and Style Adaptation fields
     preset_id: Optional[str] = Field(default=None, description="ID of applied brand preset")

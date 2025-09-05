@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import traceback
 import base64
 
+
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlmodel import select
@@ -31,7 +32,8 @@ from churns.api.schemas import (
     CaptionRequest, CaptionResponse, CaptionRegenerateRequest, CaptionSettings,
     CaptionModelsResponse, CaptionModelOption,
     BrandPresetCreateRequest, BrandPresetUpdateRequest, BrandPresetResponse,
-    BrandPresetListResponse, SavePresetFromResultRequest, ParentPresetInfo
+    BrandPresetListResponse, SavePresetFromResultRequest, ParentPresetInfo,
+    UnifiedBrief
 )
 from churns.api.websocket import websocket_endpoint
 from churns.api.background_tasks import task_processor
@@ -41,6 +43,7 @@ from churns.core.constants import (
 )
 from churns.models.presets import StyleRecipeEnvelope, StyleRecipeData
 from churns.models import VisualConceptDetails, MarketingGoalSetFinal, StyleGuidance
+from churns.core.brand_kit_utils import extract_colors_from_image, generate_color_harmonies
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -51,6 +54,7 @@ runs_router = APIRouter(prefix="/runs", tags=["Pipeline Runs"])
 files_router = APIRouter(prefix="/files", tags=["File Operations"])
 ws_router = APIRouter(prefix="/ws", tags=["WebSocket"])
 presets_router = APIRouter(prefix="/brand-presets", tags=["Brand Presets"])
+brand_kit_utils_router = APIRouter(prefix="/brand-kit", tags=["Brand Kit Utilities"])
 
 
 @api_router.on_event("startup")
@@ -65,9 +69,9 @@ async def startup_event():
 # Pipeline Run Endpoints
 @runs_router.post("", response_model=PipelineRunResponse)
 async def create_pipeline_run(
-    # Required fields
-    mode: str = Form(..., description="Pipeline mode"),
+    # Core fields
     platform_name: str = Form(..., description="Target platform"),
+    mode: Optional[str] = Form(None, description="Pipeline mode (deprecated, optional)"),
     creativity_level: int = Form(2, description="Creativity level 1-3"),
     num_variants: int = Form(3, description="Number of variants to generate"),
     
@@ -104,6 +108,9 @@ async def create_pipeline_run(
     # Brand Kit data
     brand_kit: Optional[str] = Form(None, description="JSON string of BrandKitInput"),
     
+    # NEW: Unified input system
+    unified_brief: Optional[str] = Form(None, description="JSON string of UnifiedBrief"),
+    
     session: AsyncSession = Depends(get_session),
     executor: PipelineExecutor = Depends(get_executor)
 ):
@@ -111,9 +118,6 @@ async def create_pipeline_run(
     
     try:
         # Validate inputs
-        if mode not in ["easy_mode", "custom_mode", "task_specific_mode"]:
-            raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
-        
         if platform_name not in SOCIAL_MEDIA_PLATFORMS:
             raise HTTPException(status_code=400, detail=f"Invalid platform: {platform_name}")
         
@@ -123,9 +127,11 @@ async def create_pipeline_run(
         if num_variants < 1 or num_variants > 6:
             raise HTTPException(status_code=400, detail=f"Number of variants must be between 1 and 6")
         
-        if mode == "task_specific_mode" and not task_type:
-            raise HTTPException(status_code=400, detail="Task type required for task_specific_mode")
+        # Optional mode validation for backwards compatibility
+        if mode and mode not in ["easy_mode", "custom_mode", "task_specific_mode"]:
+            raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
         
+        # Content-driven validation: task type is optional but if provided must be valid
         if task_type and task_type not in TASK_TYPES:
             raise HTTPException(status_code=400, detail=f"Invalid task type: {task_type}")
         
@@ -146,9 +152,27 @@ async def create_pipeline_run(
             # Normalize to lowercase
             language = language.lower()
         
-        # Basic validation for required inputs
-        if mode in ["easy_mode", "custom_mode"] and not prompt and not image_file:
-            raise HTTPException(status_code=400, detail=f"{mode} requires either prompt or image")
+        # NEW: Parse unified brief early for validation
+        parsed_unified_brief = None
+        if unified_brief:
+            try:
+                unified_brief_dict = json.loads(unified_brief)
+                # Import here to avoid circular imports
+                from churns.api.schemas import UnifiedBrief
+                parsed_unified_brief = UnifiedBrief(**unified_brief_dict)
+                logger.info(f"🔄 Parsed unified_brief: intentType={parsed_unified_brief.intentType}, generalBrief length={len(parsed_unified_brief.generalBrief)}")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Failed to parse unified_brief JSON: {e}")
+                raise HTTPException(status_code=400, detail="Invalid JSON format for unified_brief")
+            except Exception as e:
+                logger.error(f"❌ Failed to validate unified_brief: {e}")
+                raise HTTPException(status_code=400, detail="Invalid unified_brief data structure")
+        
+        # Content-driven validation (replaces mode-based validation)
+        # Require either a brief (legacy prompt or unified brief) or an image
+        has_prompt = prompt or (parsed_unified_brief and parsed_unified_brief.generalBrief)
+        if not has_prompt and not image_file:
+            raise HTTPException(status_code=400, detail="Please provide a creative brief or upload an image")
         
         logger.info("✅ Input validation passed")
         
@@ -203,9 +227,21 @@ async def create_pipeline_run(
                 logger.error(f"❌ Failed to parse brand_kit JSON: {e}")
                 raise HTTPException(status_code=400, detail="Invalid JSON format for brand_kit")
         
+
+        
+        # Compute derived mode for analytics (when mode not provided)
+        derived_mode = mode
+        if not mode:
+            if task_type:
+                derived_mode = "task_specific_mode"
+            elif marketing_goals:
+                derived_mode = "custom_mode"  
+            else:
+                derived_mode = "easy_mode"
+        
         # Create pipeline run request
         request = PipelineRunRequest(
-            mode=mode,
+            mode=derived_mode,
             platform_name=platform_name,
             creativity_level=creativity_level,
             num_variants=num_variants,
@@ -221,12 +257,15 @@ async def create_pipeline_run(
             preset_type=preset_type,
             template_overrides=parsed_template_overrides,
             adaptation_prompt=adaptation_prompt,
-            brand_kit=parsed_brand_kit
+            brand_kit=parsed_brand_kit,
+            # NEW: Include unified brief for dual-mode processing
+            unifiedBrief=parsed_unified_brief
         )
         
         logger.info(f"📋 Created pipeline run request object")
         
         # Create database record
+        # Note: mode may be derived from content when not explicitly provided
         run = PipelineRun(
             status=RunStatus.PENDING,
             mode=request.mode,
@@ -246,6 +285,9 @@ async def create_pipeline_run(
             marketing_niche=marketing_goals.niche if marketing_goals else None,
             language=language or 'en',
             brand_kit=json.dumps(parsed_brand_kit) if parsed_brand_kit else None,
+            
+            # NEW: Store unified brief
+            unified_brief=json.dumps(parsed_unified_brief.model_dump()) if parsed_unified_brief else None,
             
             # NEW: Store preset information
             preset_id=request.preset_id,
@@ -963,6 +1005,23 @@ async def get_pipeline_run(
     stages = stages_result.scalars().all()
     
     # Convert stages to response format
+    # Apply selective masking: mask pipeline progress but preserve stage outputs for developers
+    from churns.core.user_config import get_user_settings, obfuscate_stage_name
+    user_settings = get_user_settings()
+    
+    # Determine if this run should be masked based on run type and presentation mode
+    should_mask_run = False
+    has_style_adaptation = False
+    if user_settings.presentation_mode:
+        # Mask generation runs and style adaptation runs (they reveal our proprietary pipeline)
+        # Don't mask simple refinement/caption runs (they're basic operations)
+        if run.preset_type == "STYLE_RECIPE" or not run.preset_type:
+            # Style adaptation runs or regular generation runs - mask them
+            should_mask_run = True
+            
+            # Check if any stage has fractional order (indicates style adaptation)
+            has_style_adaptation = any(getattr(stage, 'stage_order', 0) % 1 != 0 for stage in stages)
+    
     stage_updates = []
     for stage in stages:
         # Parse output data if present - use getattr for safe access
@@ -974,17 +1033,49 @@ async def get_pipeline_run(
             except:
                 pass
         
-        stage_updates.append({
-            "stage_name": getattr(stage, 'stage_name', ''),
-            "stage_order": getattr(stage, 'stage_order', 0),
-            "status": getattr(stage, 'status', StageStatus.PENDING),
-            "started_at": getattr(stage, 'started_at', None),
-            "completed_at": getattr(stage, 'completed_at', None),
-            "duration_seconds": getattr(stage, 'duration_seconds', None),
-            "message": f"Stage {getattr(stage, 'stage_name', 'unknown')} {getattr(stage, 'status', StageStatus.PENDING).value if hasattr(getattr(stage, 'status', StageStatus.PENDING), 'value') else getattr(stage, 'status', StageStatus.PENDING)}",
-            "output_data": output_data,
-            "error_message": getattr(stage, 'error_message', None)
-        })
+        stage_name = getattr(stage, 'stage_name', '')
+        stage_order = getattr(stage, 'stage_order', 0)
+        stage_status = getattr(stage, 'status', StageStatus.PENDING)
+        
+        # Apply masking to stage names and messages, but preserve output_data for developers
+        if should_mask_run:
+            # Determine pipeline mode for masking
+            pipeline_mode = "generation"
+            if run.preset_type == "STYLE_RECIPE":
+                pipeline_mode = "generation"  # Style adaptation uses generation pipeline
+            elif stage_name in ["load_base_image", "conditional_stage", "save_outputs"]:
+                pipeline_mode = "refinement"
+            elif stage_name == "caption":
+                pipeline_mode = "caption"
+            
+            # Mask stage name and message
+            masked_stage_name, message = obfuscate_stage_name(stage_order, pipeline_mode, has_style_adaptation)
+            
+            # Keep output_data for developers (stage outputs section) but mask stage names
+            stage_updates.append({
+                "stage_name": masked_stage_name,
+                "stage_order": stage_order,
+                "status": stage_status,
+                "started_at": getattr(stage, 'started_at', None),
+                "completed_at": getattr(stage, 'completed_at', None),
+                "duration_seconds": getattr(stage, 'duration_seconds', None),
+                "message": message,
+                "output_data": output_data,  # KEEP for developers - this is the "stage outputs" section
+                "error_message": getattr(stage, 'error_message', None)  # KEEP for developers
+            })
+        else:
+            message = f"Stage {stage_name} {stage_status.value if hasattr(stage_status, 'value') else stage_status}"
+            stage_updates.append({
+                "stage_name": stage_name,
+                "stage_order": stage_order,
+                "status": stage_status,
+                "started_at": getattr(stage, 'started_at', None),
+                "completed_at": getattr(stage, 'completed_at', None),
+                "duration_seconds": getattr(stage, 'duration_seconds', None),
+                "message": message,
+                "output_data": output_data,
+                "error_message": getattr(stage, 'error_message', None)
+            })
     
     # NEW: Handle parent preset for STYLE_RECIPE runs
     parent_preset_info = None
@@ -1055,7 +1146,10 @@ async def get_pipeline_run(
         language=run.language,
         
         # Brand Kit data (parse JSON if present)
-        brand_kit=json.loads(run.brand_kit) if run.brand_kit else None
+        brand_kit=json.loads(run.brand_kit) if run.brand_kit else None,
+        
+        # NEW: Unified brief data (parse JSON if present)
+        unified_brief=UnifiedBrief(**json.loads(run.unified_brief)) if run.unified_brief else None
     )
 
 
@@ -2042,8 +2136,72 @@ def _convert_preset_to_response(preset: BrandPreset) -> BrandPresetResponse:
         )
 
 
+# Brand Kit Utility Endpoints
+@brand_kit_utils_router.post("/extract-colors-from-image")
+async def extract_colors_from_image_endpoint(
+    image_file: UploadFile = File(..., description="Image file to extract colors from")
+):
+    """Extract a color palette from an uploaded image using color analysis."""
+    try:
+        # Validate file type
+        if not image_file.content_type or not image_file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        
+        # Read image data
+        image_data = await image_file.read()
+        
+        # Use utility function to extract colors
+        brand_colors = extract_colors_from_image(image_data)
+        
+        return {
+            "success": True,
+            "colors": brand_colors,
+            "message": f"Extracted {len(brand_colors)} colors from image"
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error extracting colors from image: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error extracting colors from image: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract colors: {str(e)}")
+
+
+@brand_kit_utils_router.post("/color-harmonies")
+async def get_color_harmonies_endpoint(
+    base_color: str = Form(..., description="Base hex color (e.g., #FF5733)"),
+    target_role: Optional[str] = Form(None, description="Target role for curated suggestions (e.g., accent, secondary)"),
+    offset: str = Form("0", description="Offset for pagination of suggestions")
+):
+    """Generate color harmony suggestions based on a base color, optionally curated for a specific role."""
+    try:
+        # Convert offset to int (FastAPI Form params come as strings)
+        try:
+            offset_int = int(offset) if offset else 0
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid offset value '{offset}': {e}. Using 0.")
+            offset_int = 0
+        
+        # Use utility function to generate harmonies
+        result = generate_color_harmonies(base_color, target_role, offset_int)
+        
+        return {
+            "success": True,
+            **result,
+            "message": f"Generated color harmony suggestions{f' for {target_role}' if target_role else ''}"
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error generating color harmonies: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error generating color harmonies: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate harmonies: {str(e)}")
+
+
 # Include routers in main API router
 api_router.include_router(runs_router)
 api_router.include_router(files_router)
 api_router.include_router(ws_router)
-api_router.include_router(presets_router) 
+api_router.include_router(presets_router)
+api_router.include_router(brand_kit_utils_router) 

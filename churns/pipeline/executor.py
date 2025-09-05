@@ -120,9 +120,13 @@ class PipelineExecutor:
         if hasattr(stage_module, 'base_llm_client_creative_expert'):
             stage_module.base_llm_client_creative_expert = self.clients.get('base_llm_client_creative_expert')
         
-        # Inject image generation client
+        # Inject image generation clients
         if hasattr(stage_module, 'image_gen_client'):
             stage_module.image_gen_client = self.clients.get('image_gen_client')
+        if hasattr(stage_module, 'image_gen_client_openai'):
+            stage_module.image_gen_client_openai = self.clients.get('image_gen_client_openai')
+        if hasattr(stage_module, 'image_gen_client_gemini'):
+            stage_module.image_gen_client_gemini = self.clients.get('image_gen_client_gemini')
         
         # Inject image assessment clients (dedicated clients)
         if hasattr(stage_module, 'instructor_client_image_assessment'):
@@ -159,8 +163,8 @@ class PipelineExecutor:
         if hasattr(stage_module, 'IMAGE_ASSESSMENT_MODEL_ID'):
             stage_module.IMAGE_ASSESSMENT_MODEL_ID = model_config.get('IMAGE_ASSESSMENT_MODEL_ID')
             stage_module.IMAGE_ASSESSMENT_MODEL_PROVIDER = model_config.get('IMAGE_ASSESSMENT_MODEL_PROVIDER')
-        if hasattr(stage_module, 'IMAGE_GENERATION_MODEL_ID'):
-            stage_module.IMAGE_GENERATION_MODEL_ID = model_config.get('IMAGE_GENERATION_MODEL_ID')
+        if hasattr(stage_module, 'IMAGE_GENERATION_PROVIDER'):
+            stage_module.IMAGE_GENERATION_PROVIDER = model_config.get('IMAGE_GENERATION_PROVIDER')
         if hasattr(stage_module, 'CAPTION_MODEL_ID'):
             # Use dynamic model from context if available, otherwise use default from config
             if ctx and hasattr(ctx, 'caption_model_id') and ctx.caption_model_id:

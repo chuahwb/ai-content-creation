@@ -23,6 +23,7 @@ from churns.api.schemas import (
 )
 from churns.api.websocket import connection_manager
 from churns.pipeline.context import PipelineContext
+from churns.core.input_normalizer import normalize_unified_brief_into_context
 from churns.core.constants import (
     MODEL_PRICING, 
     IMAGE_ASSESSMENT_MODEL_ID,
@@ -30,7 +31,8 @@ from churns.core.constants import (
     STRATEGY_MODEL_ID, 
     STYLE_GUIDER_MODEL_ID,
     CREATIVE_EXPERT_MODEL_ID,
-    IMAGE_GENERATION_MODEL_ID,
+    IMAGE_GENERATION_PROVIDER,
+    get_image_generation_model_id,
     CAPTION_MODEL_ID,
     CAPTION_MODEL_PROVIDER,
     STYLE_ADAPTATION_MODEL_ID
@@ -227,6 +229,12 @@ class PipelineTaskProcessor:
             logger.info(f"Creating pipeline context for run {run_id}")
             context = PipelineContext.from_dict(pipeline_data)
             
+            # NEW: Apply unified brief normalization if present
+            if request.unifiedBrief:
+                logger.info(f"🔄 Applying unified brief normalization for run {run_id}")
+                normalize_unified_brief_into_context(request.unifiedBrief, context)
+                logger.info(f"✅ Unified brief normalized - prompt: '{context.prompt[:100] if context.prompt else None}...', task_description: '{context.task_description[:50] if context.task_description else None}...'")
+            
             # Set the output directory for stages to use
             context.output_directory = str(output_dir)
             
@@ -291,6 +299,10 @@ class PipelineTaskProcessor:
                                 else:
                                     logger.info(f"Text-to-image generation tokens: {total_tokens_including_images} total")
                                 
+                                # Use configured provider and get corresponding model ID
+                                provider = IMAGE_GENERATION_PROVIDER.lower() if IMAGE_GENERATION_PROVIDER else "openai"
+                                actual_model_id = get_image_generation_model_id()
+                                
                                 usage = TokenUsage(
                                     prompt_tokens=total_tokens_including_images,
                                     completion_tokens=0,  # Image generation doesn't have completion tokens
@@ -298,14 +310,18 @@ class PipelineTaskProcessor:
                                     image_tokens=total_input_image_tokens,
                                     text_tokens=total_text_tokens,
                                     image_count=num_input_images,
-                                    model=IMAGE_GENERATION_MODEL_ID,
-                                    provider="openai"
+                                    model=actual_model_id,
+                                    provider=provider
                                 )
+                                
+                                # Extract resolution and quality from result metadata if available
+                                first_result = next((r for r in image_results if r.get("status") == "success"), {})
+                                generation_metadata = first_result.get("generation_metadata", {})
                                 
                                 image_details = {
                                     "count": actual_images,
-                                    "resolution": "1024x1024",  # Assume standard resolution for output
-                                    "quality": "medium",  # Assume medium quality
+                                    "resolution": generation_metadata.get("output_resolution", "1024x1024"),
+                                    "quality": generation_metadata.get("output_quality", "medium"),
                                     "input_images": num_input_images
                                 }
                                 
@@ -314,15 +330,15 @@ class PipelineTaskProcessor:
                                 
                                 # Enhanced logging for multi-modal scenarios
                                 if num_input_images > 1:
-                                    logger.info(f"Multi-modal image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID}")
+                                    logger.info(f"Multi-modal image generation cost: ${stage_cost:.6f} using {actual_model_id}")
                                     logger.info(f"  - Text tokens: {total_text_tokens}, Input image tokens: {total_input_image_tokens} ({num_input_images} images)")
                                     logger.info(f"  - {cost_breakdown.notes}")
                                 elif num_input_images == 1:
-                                    logger.info(f"Single-input image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID}")
+                                    logger.info(f"Single-input image generation cost: ${stage_cost:.6f} using {actual_model_id}")
                                     logger.info(f"  - Text tokens: {total_text_tokens}, Input image tokens: {total_input_image_tokens}")
                                     logger.info(f"  - {cost_breakdown.notes}")
                                 else:
-                                    logger.info(f"Text-to-image generation cost: ${stage_cost:.6f} using {IMAGE_GENERATION_MODEL_ID} - {cost_breakdown.notes}")
+                                    logger.info(f"Text-to-image generation cost: ${stage_cost:.6f} using {actual_model_id} - {cost_breakdown.notes}")
                             else:
                                 stage_cost = 0.0  # No successful generation
                                 
@@ -1063,9 +1079,16 @@ class PipelineTaskProcessor:
             error_message=error_message
         )
         
+        # Determine pipeline mode based on context
+        pipeline_mode = "refinement" if is_refinement_job else "generation"
+        
+        # Check if this is a caption generation (stage_name is "caption")
+        if stage_name == "caption":
+            pipeline_mode = "caption"
+        
         # For refinements, send WebSocket updates to the parent run
         websocket_run_id = parent_run_id if is_refinement_job else run_id
-        await connection_manager.send_stage_update(websocket_run_id, update)
+        await connection_manager.send_stage_update(websocket_run_id, update, pipeline_mode)
     
     def _convert_request_to_pipeline_data(self, request: PipelineRunRequest, 
                                         output_dir: str, image_path: Optional[Path] = None, 
@@ -1600,18 +1623,26 @@ class PipelineTaskProcessor:
                         token_manager = get_token_cost_manager()
                         from churns.core.token_cost_manager import TokenUsage
                         
+                        # Use configured provider and get corresponding model ID
+                        provider = IMAGE_GENERATION_PROVIDER.lower() if IMAGE_GENERATION_PROVIDER else "openai"
+                        actual_model_id = get_image_generation_model_id()
+                        
                         usage = TokenUsage(
                             prompt_tokens=total_prompt_tokens,
                             completion_tokens=0,
                             total_tokens=total_prompt_tokens,
-                            model=IMAGE_GENERATION_MODEL_ID,
-                            provider="openai"
+                            model=actual_model_id,
+                            provider=provider
                         )
+                        
+                        # Extract resolution and quality from result metadata if available
+                        first_result = next((r for r in image_results if r.get("status") == "success"), {})
+                        generation_metadata = first_result.get("generation_metadata", {})
                         
                         image_details = {
                             "count": actual_images,
-                            "resolution": "1024x1024",
-                            "quality": "medium"
+                            "resolution": generation_metadata.get("output_resolution", "1024x1024"),
+                            "quality": generation_metadata.get("output_quality", "medium")
                         }
                         
                         cost_breakdown = token_manager.calculate_cost(usage, image_details)

@@ -21,6 +21,7 @@ from churns.core.json_parser import (
     TruncatedResponseError,
     should_use_manual_parsing
 )
+from churns.core.brand_kit_utils import build_brand_palette_prompt
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 instructor_client_style_guide = None
@@ -132,7 +133,18 @@ def _get_style_guider_user_prompt(
         prompt_parts.append("\n**Brand Kit Context for Style Generation:**")
         prompt_parts.append("A brand kit has been provided. All style suggestions MUST be compatible with this kit.")
         if brand_kit.get('colors'):
-            prompt_parts.append(f"- **Brand Colors:** `{brand_kit.get('colors')}`. Your style suggestions should be inspired by these colors.")
+            colors = brand_kit.get('colors')
+            if colors:
+                # Handle both old format (list of hex strings) and new semantic format
+                if isinstance(colors[0], str):
+                    prompt_parts.append("\n**Brand Color Palette:**")
+                    prompt_parts.append(f"- **Colors:** {colors}")
+                    prompt_parts.append("Honor semantic roles if known; avoid over‑specifying percentages.")
+                else:
+                    snippet = build_brand_palette_prompt(colors, layer="style")
+                    prompt_parts.append(snippet)
+                
+                prompt_parts.append("Your style suggestions must strictly adhere to this brand color palette. The provided semantic roles and usage plans are not optional guidelines; they are constraints that must be followed to ensure brand consistency.")
         if brand_kit.get('brand_voice_description'):
             prompt_parts.append(f"- **Brand Voice:** `'{brand_kit.get('brand_voice_description')}'`. Your style descriptions must reflect this voice.")
         if brand_kit.get('logo_analysis') and brand_kit['logo_analysis'].get('logo_style'):
@@ -247,7 +259,7 @@ async def run(ctx: PipelineContext) -> None:
             {"role": "user", "content": user_prompt_sg}
         ],
         "temperature": 0.8, 
-        "max_tokens": 1500 * num_strategies, 
+        "max_tokens": 2000 * num_strategies, 
         "extra_body": {}
     }
     

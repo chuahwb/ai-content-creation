@@ -184,7 +184,7 @@ export default function BrandKitPresetModal({
                           sx={{
                             width: 20,
                             height: 20,
-                            backgroundColor: color,
+                            backgroundColor: typeof color === 'string' ? color : color.hex,
                             borderRadius: '50%',
                             border: 1,
                             borderColor: 'divider',

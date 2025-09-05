@@ -2798,26 +2798,70 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                       Content Input
                     </Typography>
                     <Grid container spacing={2}>
-                      {runDetails.prompt && (
-                        <Grid item xs={12}>
-                          <Typography variant="caption" color="textSecondary">User Prompt</Typography>
-                          <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
-                              {runDetails.prompt}
-                            </Typography>
-                          </Paper>
-                        </Grid>
-                      )}
+                      {/* NEW: Display unified brief if available, otherwise fall back to legacy fields */}
+                      {runDetails.unified_brief ? (
+                        <>
+                          {/* Creative Brief */}
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="textSecondary">Creative Brief</Typography>
+                            <Paper sx={{ p: 2, mt: 1, backgroundColor: 'primary.50', border: 1, borderColor: 'primary.200', borderRadius: 1 }}>
+                              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                                {runDetails.unified_brief.generalBrief}
+                              </Typography>
+                            </Paper>
+                          </Grid>
 
-                      {runDetails.task_description && (
-                        <Grid item xs={12}>
-                          <Typography variant="caption" color="textSecondary">Task Description</Typography>
-                          <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
-                              {runDetails.task_description}
-                            </Typography>
-                          </Paper>
-                        </Grid>
+                          {/* Edit Instruction (if present) */}
+                          {runDetails.unified_brief.editInstruction && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="textSecondary">Edit Instructions</Typography>
+                              <Paper sx={{ p: 2, mt: 1, backgroundColor: 'warning.50', border: 1, borderColor: 'warning.200', borderRadius: 1 }}>
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                                  {runDetails.unified_brief.editInstruction}
+                                </Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+
+                          {/* Text Overlay (if present) */}
+                          {runDetails.unified_brief.textOverlay?.raw && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="textSecondary">Text Overlay</Typography>
+                              <Paper sx={{ p: 2, mt: 1, backgroundColor: 'info.50', border: 1, borderColor: 'info.200', borderRadius: 1 }}>
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                                  {runDetails.unified_brief.textOverlay.raw}
+                                </Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+
+
+                        </>
+                      ) : (
+                        <>
+                          {/* Legacy field display */}
+                          {runDetails.prompt && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="textSecondary">User Prompt (Legacy)</Typography>
+                              <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                                  {runDetails.prompt}
+                                </Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+
+                          {runDetails.task_description && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="textSecondary">Task Description (Legacy)</Typography>
+                              <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>
+                                  {runDetails.task_description}
+                                </Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+                        </>
                       )}
 
                       {runDetails.has_image_reference && (
@@ -2831,9 +2875,10 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                 </Typography>
                               </Grid>
                             </Grid>
-                            {runDetails.image_instruction && (
+                            {/* Image instruction - only show for legacy runs (unified brief shows edit instruction separately) */}
+                            {!runDetails.unified_brief && runDetails.image_instruction && (
                               <Paper sx={{ p: 2, mt: 1, backgroundColor: 'grey.50', border: 1, borderColor: 'divider', borderRadius: 1 }}>
-                                <Typography variant="caption" color="textSecondary">Image Instruction:</Typography>
+                                <Typography variant="caption" color="textSecondary">Image Instruction (Legacy):</Typography>
                                 <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', mt: 0.5 }}>
                                   {runDetails.image_instruction}
                                 </Typography>
@@ -2904,7 +2949,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                       sx={{
                                         width: 20,
                                         height: 20,
-                                        backgroundColor: color,
+                                        backgroundColor: typeof color === 'string' ? color : color.hex,
                                         borderRadius: '50%',
                                         border: 1,
                                         borderColor: 'grey.300',
@@ -2918,7 +2963,7 @@ export default function RunResults({ runId, onNewRun }: RunResultsProps) {
                                       fontWeight: 500,
                                       color: 'text.primary'
                                     }}>
-                                      {color.toUpperCase()}
+                                      {(typeof color === 'string' ? color : color.hex).toUpperCase()}
                                     </Typography>
                                   </Box>
                                 ))}

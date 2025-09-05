@@ -14,6 +14,27 @@ class ParentPresetInfo(BaseModel):
     source_run_id: Optional[str] = Field(None, description="ID of the run that created this preset")
 
 
+class TextOverlay(BaseModel):
+    """Text overlay configuration for the unified input system"""
+    raw: Optional[str] = None
+    
+    class Config:
+        extra = 'ignore'  # Ignore extra fields from older clients
+
+
+class UnifiedBrief(BaseModel):
+    """Unified brief that replaces the three legacy user inputs (prompt, imageInstruction, taskDescription)"""
+    intentType: Literal[
+        "fullGeneration", "defaultEdit", "instructedEdit", "styleAdaptation", "logoOnly"
+    ]
+    generalBrief: str
+    editInstruction: Optional[str] = None
+    textOverlay: Optional[TextOverlay] = None
+    
+    class Config:
+        extra = 'ignore'  # Ignore extra fields from older clients
+
+
 class ImageReferenceInput(BaseModel):
     """Image reference input data"""
     filename: str
@@ -64,6 +85,9 @@ class PipelineRunRequest(BaseModel):
     
     # Brand Kit data (UPDATED: replaced legacy fields with unified brand_kit)
     brand_kit: Optional[BrandKitInput] = Field(default=None, description="Brand kit with colors, voice, and logo")
+    
+    # NEW: Unified input system
+    unifiedBrief: Optional[UnifiedBrief] = Field(default=None, description="Unified brief replacing prompt, imageInstruction, taskDescription")
 
 
 class RefinementRequest(BaseModel):
@@ -176,6 +200,9 @@ class PipelineRunDetail(PipelineRunResponse):
 
     # Brand Kit data (UPDATED: unified brand kit structure)
     brand_kit: Optional[Dict[str, Any]] = None
+    
+    # NEW: Unified input system
+    unified_brief: Optional[UnifiedBrief] = None
 
 
 class GeneratedImageResult(BaseModel):
@@ -273,6 +300,8 @@ class CaptionSettings(BaseModel):
     call_to_action: Optional[str] = Field(None, description="User-defined call to action text")
     include_emojis: Optional[bool] = Field(True, description="Whether to include emojis in the caption")
     hashtag_strategy: Optional[str] = Field(None, description="Hashtag strategy ('None', 'Niche & Specific', 'Broad & Trending', 'Balanced Mix')")
+    user_instructions: Optional[str] = Field(None, description="Direct user instructions for the caption generation")
+    caption_length: Optional[Literal["Auto", "Short", "Medium", "Long"]] = Field("Auto", description="Desired caption length")
     generation_mode: Literal['Auto', 'Custom'] = Field('Auto', description="Auto or Custom - indicates how the settings were determined")
     processing_mode: Optional[Literal['Fast', 'Analytical']] = Field(None, description="Fast (quick response) or Analytical (thoughtful analysis) - determines model selection")
 

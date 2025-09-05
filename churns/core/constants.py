@@ -80,7 +80,23 @@ CAPTION_MODEL_OPTIONS = {
 # Default caption model
 CAPTION_MODEL_ID = "openai/gpt-4.1"  # Default model ID
 
-IMAGE_GENERATION_MODEL_ID = "gpt-image-1"
+# Image Generation Configuration
+# User-friendly: specify provider, model ID is automatically mapped
+IMAGE_GENERATION_PROVIDER = "Gemini"  # Options: "OpenAI" or "Gemini"
+
+# Model mapping for each provider
+IMAGE_GENERATION_MODEL_MAP = {
+    "OpenAI": "gpt-image-1",
+    "Gemini": "gemini-2.5-flash-image-preview"
+}
+
+def get_image_generation_model_id() -> str:
+    """Get the model ID for the configured provider."""
+    return IMAGE_GENERATION_MODEL_MAP.get(IMAGE_GENERATION_PROVIDER, "gpt-image-1")
+
+# Image Refinement Configuration (separate from generation)
+# Refinements use a dedicated model for consistency and reliability
+IMAGE_REFINEMENT_MODEL_ID = "gpt-image-1"  # Always OpenAI for refinements
 
 # Models known to have issues with instructor's default TOOLS mode via OpenRouter
 INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS = ["openai/o4-mini", "google/gemini-2.5-pro", "openai/o4-mini-high"]
@@ -227,6 +243,19 @@ MODEL_PRICING = {
             }
         },
         "notes": "Token-based pricing for gpt-image-1 via OpenAI Responses SDK. All billing is per token: $5/1M text input, $10/1M image input, $40/1M image output tokens."
+    },
+    "gemini-2.5-flash-image-preview": {
+        "provider": "Google",
+        "currency": "USD",
+        "input_text_cost_per_mtok": 0.30,
+        "input_image_cost_per_mtok": 0.30,
+        "output_image_cost_per_mtok": 30.00,
+        "token_counts_by_quality": {
+            "default": {
+                "1024x1024": 1290
+            }
+        },
+        "notes": "Output images up to 1024x1024 consume ~1290 tokens (~$0.039 per image at $30/1M)."
     },
 }
 
