@@ -126,7 +126,7 @@ class TestBrandKitE2EWorkflows:
                 "lighting_and_mood": "Warm, appetizing lighting reflecting friendly brand voice",
                 "color_palette": "Rich browns and golds complementing brand colors #FF6B35 and #004E89",
                 "visual_style": "Professional food photography with sophisticated aesthetic",
-                "branding_visuals": "CHURNS wordmark logo placed in bottom-right corner, scaled to 5% of image width in white color",
+                "logo_visuals": "CHURNS wordmark logo placed in bottom-right corner, scaled to 5% of image width in white color",
                 "suggested_alt_text": "Gourmet burger with CHURNS branding"
             }
             mock_generate.return_value = mock_visual_concept
@@ -140,7 +140,7 @@ class TestBrandKitE2EWorkflows:
             
             visual_concept = ctx.generated_image_prompts[0]['visual_concept']
             assert "#FF6B35" in visual_concept['color_palette'] or "#004E89" in visual_concept['color_palette']
-            assert "CHURNS" in visual_concept['branding_visuals']
+            assert "CHURNS" in visual_concept['logo_visuals']
             assert "friendly" in visual_concept['lighting_and_mood']
     
     def test_brand_kit_logo_analysis_workflow(self, sample_logo_file):
@@ -253,7 +253,7 @@ class TestStyleRecipeE2EWorkflows:
                 "lighting_and_mood": "Warm, appetizing lighting with soft shadows",
                 "color_palette": "Rich browns, golden yellows, deep reds",
                 "visual_style": "Professional food photography with high contrast",
-                "branding_visuals": "Logo placed in bottom-right corner",
+                "logo_visuals": "Logo placed in bottom-right corner",
                 "suggested_alt_text": "Gourmet burger with crispy bacon"
             },
             "strategy": {
@@ -299,7 +299,7 @@ class TestStyleRecipeE2EWorkflows:
         visual_concept = style_recipe_preset["preset_data"]["visual_concept"]
         required_fields = [
             "main_subject", "composition_and_framing", "background_environment",
-            "lighting_and_mood", "color_palette", "visual_style", "branding_visuals"
+            "lighting_and_mood", "color_palette", "visual_style", "logo_visuals"
         ]
         
         for field in required_fields:
@@ -390,7 +390,7 @@ class TestStyleRecipeE2EWorkflows:
                 lighting_and_mood="Warm, appetizing lighting with soft shadows",
                 color_palette="Rich browns, golden yellows, cream whites",
                 visual_style="Professional food photography with high contrast",
-                branding_visuals="Logo placed in bottom-right corner",
+                logo_visuals="Logo placed in bottom-right corner",
                 suggested_alt_text="Gourmet coffee cup with latte art"
             )
             mock_adapt.return_value = mock_adapted_concept
@@ -477,7 +477,7 @@ class TestStyleRecipeE2EWorkflows:
                 "lighting_and_mood": "Warm lighting",
                 "color_palette": "Rich browns and golds",
                 "visual_style": "Professional food photography",
-                "branding_visuals": "Logo in corner",
+                "logo_visuals": "Logo in corner",
                 "suggested_alt_text": "Gourmet burger"
             },
             "strategy": {
@@ -555,7 +555,7 @@ class TestBrandKitStyleRecipeIntegration:
                 "lighting_and_mood": "Warm lighting",
                 "color_palette": "Rich browns and golds",
                 "visual_style": "Professional food photography",
-                "branding_visuals": "Logo in corner",
+                "logo_visuals": "Logo in corner",
                 "suggested_alt_text": "Gourmet burger"
             }
         }
@@ -583,7 +583,7 @@ class TestBrandKitStyleRecipeIntegration:
                 lighting_and_mood="Warm lighting reflecting friendly brand voice",
                 color_palette="Rich browns complementing brand colors #FF6B35 and #004E89",
                 visual_style="Professional food photography",
-                branding_visuals="CHURNS wordmark logo in corner, white color for contrast",
+                logo_visuals="CHURNS wordmark logo in corner, white color for contrast",
                 suggested_alt_text="Gourmet coffee cup with CHURNS branding"
             )
             mock_adapt.return_value = mock_adapted_concept
@@ -595,7 +595,7 @@ class TestBrandKitStyleRecipeIntegration:
             # Verify brand kit integration
             assert ctx.adapted_visual_concept is not None
             assert "#FF6B35" in ctx.adapted_visual_concept.color_palette or "#004E89" in ctx.adapted_visual_concept.color_palette
-            assert "CHURNS" in ctx.adapted_visual_concept.branding_visuals
+            assert "CHURNS" in ctx.adapted_visual_concept.logo_visuals
             assert "friendly" in ctx.adapted_visual_concept.lighting_and_mood
     
     def test_brand_kit_precedence_in_style_recipe(self):
@@ -607,7 +607,7 @@ class TestBrandKitStyleRecipeIntegration:
             "visual_concept": {
                 "main_subject": "A gourmet burger",
                 "color_palette": "Rich browns, golden yellows, deep reds",  # Original recipe colors
-                "branding_visuals": "Generic logo placement"
+                "logo_visuals": "Generic logo placement"
             }
         }
         
@@ -632,7 +632,7 @@ class TestBrandKitStyleRecipeIntegration:
                 lighting_and_mood="Professional lighting reflecting brand voice",
                 color_palette="Rich browns with brand accent colors #00FF00 and #0000FF",  # Brand kit colors integrated
                 visual_style="Professional food photography",
-                branding_visuals="CHURNS wordmark logo placement",  # Brand kit logo takes precedence
+                logo_visuals="CHURNS wordmark logo placement",  # Brand kit logo takes precedence
                 suggested_alt_text="Gourmet burger with CHURNS branding"
             )
             mock_adapt.return_value = mock_adapted_concept
@@ -644,7 +644,7 @@ class TestBrandKitStyleRecipeIntegration:
             # Verify brand kit took precedence
             assert ctx.adapted_visual_concept is not None
             assert "#00FF00" in ctx.adapted_visual_concept.color_palette or "#0000FF" in ctx.adapted_visual_concept.color_palette
-            assert "CHURNS" in ctx.adapted_visual_concept.branding_visuals
+            assert "CHURNS" in ctx.adapted_visual_concept.logo_visuals
             assert "professional" in ctx.adapted_visual_concept.lighting_and_mood.lower()
     
     def test_complete_brand_kit_style_recipe_e2e(self):
@@ -673,7 +673,7 @@ class TestBrandKitStyleRecipeIntegration:
                 "lighting_and_mood": "Warm, appetizing lighting reflecting friendly brand voice",
                 "color_palette": "Rich browns and golds complementing brand colors #FF6B35 and #004E89",
                 "visual_style": "Professional food photography with sophisticated aesthetic",
-                "branding_visuals": "CHURNS wordmark logo placed in bottom-right corner",
+                "logo_visuals": "CHURNS wordmark logo placed in bottom-right corner",
                 "suggested_alt_text": "Gourmet burger with CHURNS branding"
             }
         }
@@ -705,7 +705,7 @@ class TestBrandKitStyleRecipeIntegration:
                 lighting_and_mood="Warm, appetizing lighting reflecting friendly brand voice",
                 color_palette="Rich browns and golds complementing brand colors #FF6B35 and #004E89",
                 visual_style="Professional food photography with sophisticated aesthetic",
-                branding_visuals="CHURNS wordmark logo placed in bottom-right corner",
+                logo_visuals="CHURNS wordmark logo placed in bottom-right corner",
                 suggested_alt_text="Gourmet pizza with CHURNS branding"
             )
             mock_adapt.return_value = mock_adapted_concept
@@ -726,5 +726,5 @@ class TestBrandKitStyleRecipeIntegration:
             
             # Check brand kit integration
             assert "#FF6B35" in new_ctx.adapted_visual_concept.color_palette or "#004E89" in new_ctx.adapted_visual_concept.color_palette
-            assert "CHURNS" in new_ctx.adapted_visual_concept.branding_visuals
+            assert "CHURNS" in new_ctx.adapted_visual_concept.logo_visuals
             assert "friendly" in new_ctx.adapted_visual_concept.lighting_and_mood 

@@ -35,7 +35,7 @@ class TestStyleAdaptationIntegration:
                 "lighting_and_mood": "Warm, appetizing lighting with soft shadows",
                 "color_palette": "Rich browns, golden yellows, deep reds",
                 "visual_style": "Professional food photography with high contrast",
-                "branding_visuals": "Logo placed in bottom-right corner",
+                "logo_visuals": "Logo placed in bottom-right corner",
                 "suggested_alt_text": "Gourmet burger with crispy bacon"
             },
             "strategy": {
@@ -102,7 +102,7 @@ class TestStyleAdaptationIntegration:
             lighting_and_mood="Warm, appetizing lighting with soft shadows",
             color_palette="Rich browns, golden yellows, deep reds",
             visual_style="Professional food photography with high contrast",
-            branding_visuals="Logo placed in bottom-right corner",
+            logo_visuals="Logo placed in bottom-right corner",
             suggested_alt_text="Gourmet pizza with artisan toppings"
         )
         
@@ -140,7 +140,7 @@ class TestStyleAdaptationIntegration:
             lighting_and_mood="Warm, appetizing lighting reflecting friendly brand voice",
             color_palette="Rich browns complementing brand colors #FF6B35 and #004E89",
             visual_style="Professional food photography with high contrast",
-            branding_visuals="CHURNS wordmark logo placed in bottom-right corner, white color for contrast",
+            logo_visuals="CHURNS wordmark logo placed in bottom-right corner, white color for contrast",
             suggested_alt_text="Gourmet coffee cup with CHURNS branding"
         )
         
@@ -159,7 +159,7 @@ class TestStyleAdaptationIntegration:
         # Verify brand kit was integrated
         assert ctx.adapted_visual_concept is not None
         assert "#FF6B35" in ctx.adapted_visual_concept.color_palette or "#004E89" in ctx.adapted_visual_concept.color_palette
-        assert "CHURNS" in ctx.adapted_visual_concept.branding_visuals
+        assert "CHURNS" in ctx.adapted_visual_concept.logo_visuals
         assert "friendly" in ctx.adapted_visual_concept.lighting_and_mood
     
     @patch('churns.stages.style_adaptation.StyleAdaptationAgent.adapt_style')
@@ -173,7 +173,7 @@ class TestStyleAdaptationIntegration:
             lighting_and_mood="Bright, fresh lighting with vibrant colors",
             color_palette="Fresh greens, vibrant vegetables, clean whites",
             visual_style="Healthy lifestyle photography with clean aesthetic",
-            branding_visuals="Logo placed in bottom-right corner",
+            logo_visuals="Logo placed in bottom-right corner",
             suggested_alt_text="Fresh salad bowl with mixed greens"
         )
         
@@ -221,7 +221,7 @@ class TestStyleAdaptationIntegration:
                 lighting_and_mood="Dark, moody nighttime atmosphere",  # User prompt takes precedence
                 color_palette="Deep blues, dark purples, neon accents",
                 visual_style="Cinematic nighttime photography",
-                branding_visuals="Logo placed in bottom-right corner",
+                logo_visuals="Logo placed in bottom-right corner",
                 suggested_alt_text="Moody nighttime street scene"
             )
             
@@ -260,7 +260,7 @@ class TestStyleAdaptationIntegration:
                     lighting_and_mood="Natural lighting",
                     color_palette="Natural food colors",
                     visual_style="Simple food photography",
-                    branding_visuals="Logo placement",
+                    logo_visuals="Logo placement",
                     suggested_alt_text="Simple burger"
                 )
                 
@@ -329,7 +329,7 @@ class TestStyleAdaptationIntegration:
                 lighting_and_mood="Warm, appetizing lighting with soft shadows",
                 color_palette="Rich browns, golden yellows, deep reds, vibrant greens",
                 visual_style="Professional food photography with high contrast",
-                branding_visuals="Logo placed in bottom-right corner",
+                logo_visuals="Logo placed in bottom-right corner",
                 suggested_alt_text="Gourmet pizza with melted cheese and fresh basil"
             )
             
@@ -362,7 +362,7 @@ class TestStyleAdaptationIntegration:
                 lighting_and_mood="Warm, appetizing lighting with soft shadows",
                 color_palette="Rich browns, golden yellows, deep reds",
                 visual_style="Professional food photography with high contrast",
-                branding_visuals="Logo placed in bottom-right corner",
+                logo_visuals="Logo placed in bottom-right corner",
                 suggested_alt_text="Gourmet sandwich"
             )
             
@@ -408,7 +408,7 @@ class TestStyleAdaptationIntegration:
                 lighting_and_mood="Complex lighting setup",
                 color_palette="Complex color scheme",
                 visual_style="Detailed photography style",
-                branding_visuals="Logo placement",
+                logo_visuals="Logo placement",
                 suggested_alt_text="Complex detailed image"
             )
             
@@ -437,7 +437,7 @@ class TestStyleAdaptationPipelineIntegration:
                 "lighting_and_mood": "Warm lighting",
                 "color_palette": "Rich browns and golds",
                 "visual_style": "Professional food photography",
-                "branding_visuals": "Logo in corner",
+                "logo_visuals": "Logo in corner",
                 "suggested_alt_text": "Gourmet burger"
             }
         }
@@ -458,7 +458,7 @@ class TestStyleAdaptationPipelineIntegration:
                     lighting_and_mood="Warm lighting",
                     color_palette="Rich browns and golds",
                     visual_style="Professional food photography",
-                    branding_visuals="Logo in corner",
+                    logo_visuals="Logo in corner",
                     suggested_alt_text="Gourmet pizza"
                 )
                 
@@ -501,7 +501,7 @@ class TestStyleAdaptationPipelineIntegration:
                 "lighting_and_mood": "Warm lighting",
                 "color_palette": "Rich browns and golds",
                 "visual_style": "Professional food photography",
-                "branding_visuals": "Logo in corner",
+                "logo_visuals": "Logo in corner",
                 "suggested_alt_text": "Gourmet burger"
             }
         }

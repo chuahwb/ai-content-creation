@@ -103,7 +103,7 @@ Your goal is to provide concepts that are significantly value-added, pushing bey
     lang_note = (
         f"\n**Language Control (VERY IMPORTANT):**\n"
         f"- The `suggested_alt_text` field's entire content MUST be written in {language_display}.\n"
-        f"- For `promotional_text_visuals` and `branding_visuals` fields: The description of *how* the text/logo should look (e.g., 'A bold, sans-serif font placed at the top', 'A subtle watermark in the corner') MUST remain in ENGLISH. Only the actual text content to be displayed in the image (e.g., the headline '夏日特惠' or brand name '元気森林') should be written in {language_display}.\n"
+        f"- For `promotional_text_visuals` and `logo_visuals` fields: The description of *how* the text/logo should look (e.g., 'A bold, sans-serif font placed at the top', 'A subtle watermark in the corner') MUST remain in ENGLISH. Only the actual text content to be displayed in the image (e.g., the headline '夏日特惠' or brand name '元気森林') should be written in {language_display}.\n"
         f"- All other fields MUST be in ENGLISH to optimize LLM comprehension.\n"
     )
     
@@ -196,9 +196,9 @@ You will be provided with specific `Style Guidance` for this concept. Your `visu
         text_branding_field_instruction_ce += "- `promotional_text_visuals`: This field MUST be omitted (set to null) as text rendering is disabled.\n"
     
     if apply_branding_flag:
-        text_branding_field_instruction_ce += f"- `branding_visuals`: {task_guidance['branding_style']}. If no guidelines are provided, derive branding style from the marketing strategy and task. The description MUST detail placement, style, and integration of brand elements (logo, colors, etc.) based on the provided Brand Kit context.\n"
+        text_branding_field_instruction_ce += f"- `logo_visuals`: {task_guidance['branding_style']}. If no guidelines are provided, derive the branding style from the marketing strategy and task. The description MUST detail placement, scale, and integration of the brand logo based on the provided Brand Kit context.\n"
     else:
-        text_branding_field_instruction_ce += "- `branding_visuals`: This field MUST be omitted (set to null) as branding application is disabled.\n"
+        text_branding_field_instruction_ce += "- `logo_visuals`: This field MUST be omitted (set to null) as branding application is disabled.\n"
     
     # Creativity level instructions
     creativity_instruction_ce = ""
@@ -256,7 +256,7 @@ Ensure concepts are memorable while aligning with the marketing strategy and tas
     # Output format instructions
     adherence_ce = ""
     if use_instructor_parsing and CREATIVE_EXPERT_MODEL_ID not in INSTRUCTOR_TOOL_MODE_PROBLEM_MODELS:
-        adherence_ce = "Adhere strictly to the requested Pydantic JSON output format (`ImageGenerationPrompt` containing `VisualConceptDetails`). Note that `main_subject`, `promotional_text_visuals`, and `branding_visuals` are optional and should be omitted (set to null) if the specific scenario instructs it. The `suggested_alt_text` field is mandatory. Ensure all other required descriptions are detailed enough to guide image generation effectively."
+        adherence_ce = "Adhere strictly to the requested Pydantic JSON output format (`ImageGenerationPrompt` containing `VisualConceptDetails`). Note that `main_subject`, `promotional_text_visuals`, and `logo_visuals` are optional and should be omitted (set to null) if the specific scenario instructs it. The `suggested_alt_text` field is mandatory. Ensure all other required descriptions are detailed enough to guide image generation effectively."
     else:
         adherence_ce = """
 VERY IMPORTANT: Format your entire response *only* as a valid JSON object conforming to the structure described below. Do not include any introductory text, explanations, or markdown formatting outside the JSON structure itself.
@@ -271,7 +271,7 @@ JSON Structure:
     "color_palette": "string",
     "visual_style": "string", // Must elaborate on provided Style Guidance
     "promotional_text_visuals": "string | null", // Omit (set to null) if render_text_flag is false
-    "branding_visuals": "string | null", // Omit (set to null) if apply_branding_flag is false
+    "logo_visuals": "string | null", // Omit (set to null) if apply_branding_flag is false
     "texture_and_details": "string | null",
     "negative_elements": "string | null",
     "creative_reasoning": "string | null",
@@ -351,7 +351,7 @@ def _get_creative_expert_user_prompt(
 
     if apply_branding_flag and brand_kit:
         user_prompt_parts.append("\n**Brand Kit Integration (CRITICAL):**")
-        user_prompt_parts.append("The following brand kit MUST be integrated into your visual concept. You must describe this integration in the `branding_visuals` field.")
+        user_prompt_parts.append("The following brand kit MUST be integrated into your visual concept. You must describe logo placement in the `logo_visuals` field.")
         if brand_kit.get('colors'):
             colors = brand_kit.get('colors')
             if colors:
@@ -371,13 +371,13 @@ def _get_creative_expert_user_prompt(
             user_prompt_parts.append(f"- **Logo Details:** The user has provided a logo. Your task is to describe its placement and integration. The logo's style is: `'{brand_kit['logo_analysis']['logo_style']}'`.")
         
         # Add a more specific instruction for logo placement
-        user_prompt_parts.append("\n**Your `branding_visuals` description should be specific and prioritize a watermark-style placement, such as:**")
+        user_prompt_parts.append("\n**Your `logo_visuals` description should be specific and prioritize a watermark-style placement, such as:**")
         user_prompt_parts.append("- 'Subtly place the logo in the bottom-right corner, scaled to 5% of the image width. It should be rendered as a semi-transparent watermark to avoid distracting from the main subject.'")
         user_prompt_parts.append("- 'Position the brand logo as a discreet watermark in the top-left corner, using a color that complements the background.'")
         user_prompt_parts.append("**Avoid instructions that replace or alter the main subject with the logo unless explicitly requested by the user.**")
         
     elif apply_branding_flag:
-        user_prompt_parts.append(f"\n- Branding Guidelines: Not Provided, but branding application is enabled. Derive branding style from strategy/task and describe visualization in `branding_visuals` field of JSON output, following task-specific branding guidance from system prompt.")
+        user_prompt_parts.append(f"\n- Branding Guidelines: Not provided, but branding application is enabled. Derive branding style from strategy/task and describe visualization in the `logo_visuals` field of the JSON output, following task-specific branding guidance from the system prompt.")
     else:
         user_prompt_parts.append("\n- Branding application DISABLED by user.")
 
@@ -413,7 +413,7 @@ def _get_creative_expert_user_prompt(
         f"\n**Language Reminder (CRITICAL):**\n"
         f"For the text-based fields, follow these rules precisely:\n"
         f"- `suggested_alt_text`: Write the entire description in **{language_display}**.\n"
-        f"- `promotional_text_visuals` & `branding_visuals`: Describe the visual style (font, color, placement) in **ENGLISH**. Write the actual text content (e.g., a headline) in **{language_display}**.\n"
+        f"- `promotional_text_visuals` & `logo_visuals`: Describe the visual style (font, color, placement) in **ENGLISH**. Write the actual text content (e.g., a headline or brand name) in **{language_display}**.\n"
         f"- All other fields must be in English.\n"
     )
     user_prompt_parts.append(lang_reminder)
@@ -437,9 +437,9 @@ Ensure the nested `VisualConceptDetails` object is fully populated with rich, de
         final_instruction += "- `promotional_text_visuals`: This field MUST be omitted (set to null) as text rendering is disabled.\n"
     
     if apply_branding_flag:
-        final_instruction += "- `branding_visuals`: Describe the branding elements and their integration.\n"
+        final_instruction += "- `logo_visuals`: Describe the branding logo elements and their integration.\n"
     else:
-        final_instruction += "- `branding_visuals`: This field MUST be omitted (set to null) as branding application is disabled.\n"
+        final_instruction += "- `logo_visuals`: This field MUST be omitted (set to null) as branding application is disabled.\n"
     
     final_instruction += """
 - `texture_and_details`: Add notes on texture and fine details if relevant.
@@ -633,8 +633,8 @@ async def _generate_visual_concept_for_strategy(
             vc_ce["main_subject"] = None
         if not render_text_flag and vc_ce.get("promotional_text_visuals") is not None:
             vc_ce["promotional_text_visuals"] = None
-        if not apply_branding_flag and vc_ce.get("branding_visuals") is not None:
-            vc_ce["branding_visuals"] = None
+        if not apply_branding_flag and vc_ce.get("logo_visuals") is not None:
+            vc_ce["logo_visuals"] = None
         prompt_data_ce["visual_concept"] = vc_ce
         prompt_data_ce['source_strategy_index'] = strategy_index
 

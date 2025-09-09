@@ -184,17 +184,17 @@ async def run(ctx: PipelineContext) -> None:
                                 parts.append(f"Placement: {ptv_dict['placement']}")
                             data['promotional_text_visuals'] = ". ".join(parts) if parts else str(ptv_dict)
                         
-                        # Handle branding_visuals as nested object
-                        if 'branding_visuals' in data and isinstance(data['branding_visuals'], dict):
-                            bv_dict = data['branding_visuals']
+                        # Handle logo_visuals as nested object
+                        if 'logo_visuals' in data and isinstance(data['logo_visuals'], dict):
+                            lv_dict = data['logo_visuals']
                             parts = []
-                            if 'logo_description' in bv_dict:
-                                parts.append(f"Logo: {bv_dict['logo_description']}")
-                            if 'placement' in bv_dict:
-                                parts.append(f"Placement: {bv_dict['placement']}")
-                            if 'style' in bv_dict:
-                                parts.append(f"Style: {bv_dict['style']}")
-                            data['branding_visuals'] = ". ".join(parts) if parts else str(bv_dict)
+                            if 'logo_description' in lv_dict:
+                                parts.append(f"Logo: {lv_dict['logo_description']}")
+                            if 'placement' in lv_dict:
+                                parts.append(f"Placement: {lv_dict['placement']}")
+                            if 'style' in lv_dict:
+                                parts.append(f"Style: {lv_dict['style']}")
+                            data['logo_visuals'] = ". ".join(parts) if parts else str(lv_dict)
                     
                     return data
                 
@@ -298,9 +298,9 @@ def _build_system_prompt(render_text_enabled: bool, apply_branding_enabled: bool
         text_instruction = """- **Omit Text**: `render_text` is disabled. You MUST OMIT the `promotional_text_visuals` field from your JSON output."""
 
     if apply_branding_enabled:
-        branding_instruction = """- **Adapt Branding**: `apply_branding` is enabled. You MUST generate a `branding_visuals` field. Your description MUST be a specific instruction for logo placement, prioritizing a watermark-style integration (e.g., 'Subtly place the logo in the bottom-right corner'). Avoid instructions that replace the main subject. If a `brand_kit_override` is provided, adapt to it; otherwise, adapt the original recipe's branding."""
+        branding_instruction = """- **Adapt Branding**: `apply_branding` is enabled. You MUST generate a `logo_visuals` field. Your description MUST be a specific instruction for logo placement, prioritizing a watermark-style integration (e.g., 'Subtly place the logo in the bottom-right corner'). Avoid instructions that replace the main subject. If a `brand_kit_override` is provided, adapt to it; otherwise, adapt the original recipe's branding."""
     else:
-        branding_instruction = """- **Omit Branding**: `apply_branding` is disabled. You MUST OMIT the `branding_visuals` field from your JSON output."""
+        branding_instruction = """- **Omit Branding**: `apply_branding` is disabled. You MUST OMIT the `logo_visuals` field from your JSON output."""
         
     language_display = "SIMPLIFIED CHINESE" if language == 'zh' else language.upper()
     lang_instruction = f"""- **Language Control**: The target language is {language_display}.
@@ -366,7 +366,7 @@ Here is the `new_image_analysis` of the provided reference image:
         if brand_kit_override.get('brand_voice_description'):
             override_parts.append(f"- **New Brand Voice:** `'{brand_kit_override['brand_voice_description']}'`. The `lighting_and_mood` must be adapted to align with this voice.")
         if brand_kit_override.get('logo_analysis'):
-            override_parts.append(f"- **New Logo Details:** A new logo is provided. Describe its placement and integration in the `branding_visuals` field. Logo style is: `'{brand_kit_override['logo_analysis'].get('logo_style', 'N/A')}'`.")
+            override_parts.append(f"- **New Logo Details:** A new logo is provided. Describe its placement and integration in the `logo_visuals` field. Logo style is: `'{brand_kit_override['logo_analysis'].get('logo_style', 'N/A')}'`.")
         prompt_parts.append("\n".join(override_parts))
 
     # --- NEW: CONSISTENCY CHECKLIST ---

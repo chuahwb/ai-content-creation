@@ -63,7 +63,7 @@ class TestLanguageControl:
         assert "Language Control (IMPORTANT)" in prompt
         assert "Write the following JSON fields **only** in EN:" in prompt
         assert "promotional_text_visuals" in prompt
-        assert "branding_visuals" in prompt
+        assert "logo_visuals" in prompt
         assert "suggested_alt_text" in prompt
 
     def test_creative_expert_system_prompt_chinese(self):

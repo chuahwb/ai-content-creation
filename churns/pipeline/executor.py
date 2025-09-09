@@ -128,6 +128,10 @@ class PipelineExecutor:
         if hasattr(stage_module, 'image_gen_client_gemini'):
             stage_module.image_gen_client_gemini = self.clients.get('image_gen_client_gemini')
         
+        # Inject dedicated image refinement client
+        if hasattr(stage_module, 'image_refinement_client'):
+            stage_module.image_refinement_client = self.clients.get('image_refinement_client')
+        
         # Inject image assessment clients (dedicated clients)
         if hasattr(stage_module, 'instructor_client_image_assessment'):
             stage_module.instructor_client_image_assessment = self.clients.get('instructor_client_image_assessment')

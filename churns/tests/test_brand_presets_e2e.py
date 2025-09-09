@@ -176,7 +176,7 @@ class TestBrandPresetsE2E:
                     "color_palette": "Rich browns, golden yellows, deep reds, warm oranges",
                     "visual_style": "Professional food photography with high contrast",
                     "promotional_text_visuals": None,
-                    "branding_visuals": "Subtle logo placement in bottom right",
+                    "logo_visuals": "Subtle logo placement in bottom right",
                     "texture_and_details": "Crispy bacon texture, melted cheese, sesame seed bun",
                     "negative_elements": "No plastic appearance, no artificial lighting",
                     "creative_reasoning": "Focused on appetite appeal with warm, inviting colors",

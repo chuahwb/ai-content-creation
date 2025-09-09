@@ -44,8 +44,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("prompt_refine")
 
-# Setup Image Generation Client (injected by PipelineExecutor)
-image_gen_client = None
+# Setup Image Generation Clients (injected by PipelineExecutor)
+image_gen_client = None  # Legacy compatibility
+image_refinement_client = None  # Dedicated refinement client
 
 
 def _get_optional_reference_image(ctx: PipelineContext) -> Optional[str]:
@@ -136,12 +137,18 @@ async def run(ctx: PipelineContext) -> None:
         ctx.reference_image_path = original_reference_image_path
         logger.info(f"Original Reference Image Path = {original_reference_image_path}")
 
+        # Use dedicated refinement client (prioritize over legacy client)
+        global image_refinement_client, image_gen_client
+        client_to_use = image_refinement_client or image_gen_client
+        if client_to_use is None:
+            raise RuntimeError("Neither image_refinement_client nor image_gen_client properly injected by PipelineExecutor")
+
         result_image_path = await call_openai_images_edit(
             ctx=ctx,
             enhanced_prompt=refined_prompt,
             image_size=image_size,
             mask_path=mask_path,
-            image_gen_client=image_gen_client,
+            image_gen_client=client_to_use,
             image_quality_setting="high",  # Use same quality as original generation to maintain consistency
             input_fidelity="low"  # High fidelity for all refinement operations
         )

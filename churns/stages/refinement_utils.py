@@ -156,7 +156,7 @@ def get_image_ctx_and_main_object(ctx: PipelineContext):
                 'texture_and_details': 'Standard details',
                 'creative_reasoning': 'Standard approach',
                 'promotional_text_visuals': 'No text elements',
-                'branding_visuals': 'No branding elements'
+                'logo_visuals': 'No logo elements'
             }
         
         # Get Main Object from Image Analysis Result

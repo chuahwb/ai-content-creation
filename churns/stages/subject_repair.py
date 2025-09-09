@@ -37,8 +37,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("prompt_refine")
 
-# Global variables for API clients are handled by refinement_utils and image_generation.py
-image_gen_client = None
+# Global variables for API clients (injected by PipelineExecutor)
+image_gen_client = None  # Legacy compatibility
+image_refinement_client = None  # Dedicated refinement client
 
 async def run(ctx: PipelineContext) -> None:
     """
@@ -259,10 +260,11 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
     # Store API image size in context for metadata
     ctx._api_image_size = image_size
     
-    # Use injected client (initialized by PipelineExecutor)
-    global image_gen_client
-    if image_gen_client is None:
-        raise RuntimeError("image_gen_client not properly injected by PipelineExecutor")
+    # Use dedicated refinement client (prioritize over legacy client)
+    global image_refinement_client, image_gen_client
+    client_to_use = image_refinement_client or image_gen_client
+    if client_to_use is None:
+        raise RuntimeError("Neither image_refinement_client nor image_gen_client properly injected by PipelineExecutor")
     
     # Call OpenAI API using shared utility (no mask for subject repair)
     result_image_path = await call_openai_images_edit(
@@ -270,7 +272,7 @@ async def _perform_subject_repair_api(ctx: PipelineContext) -> str:
         enhanced_prompt=enhanced_prompt,
         image_size=image_size,
         mask_path=None,
-        image_gen_client=image_gen_client,
+        image_gen_client=client_to_use,
         image_quality_setting="high",  # Use same quality as original generation to maintain consistency
         input_fidelity="low"  # Low fidelity for all refinement operations
     )
@@ -312,7 +314,7 @@ def _prepare_subject_repair_prompt(ctx: PipelineContext) -> str:
         
         # For text and branding, provide safe defaults to maintain original functionality
         text_visuals = safe_get('promotional_text_visuals', 'No text elements')
-        branding_visuals = safe_get('branding_visuals', 'No branding elements')
+        logo_visuals = safe_get('logo_visuals', 'No logo elements')
 
         # Marketing and branding image
         logo_dir = ''
@@ -362,7 +364,7 @@ def _prepare_subject_repair_prompt(ctx: PipelineContext) -> str:
             - Texture & Details: {texture_details}
             - Creative Reasoning: {creative_reasoning}
             - Text Visuals: {text_visuals}
-            - Branding Visuals: {branding_visuals}
+            - Logo Integration: {logo_visuals}
 
             Marketing Goals: {marketing_goals_str}
 
@@ -376,7 +378,7 @@ def _prepare_subject_repair_prompt(ctx: PipelineContext) -> str:
         # Include prompt for logo recreation if logo directory exists
         if logo_dir:
             enhanced_prompt += f"""\n
-        8. Recreate the logo in the base image using the logo reference and ensure the logo is visually integrated and aligned with the `branding_visuals` described in the visual concept.
+        8. Recreate the logo in the base image using the logo reference and ensure the logo is visually integrated and aligned with the `logo_visuals` described in the visual concept.
         9. Ensure the logo is transparent and opaque, not colorful and scaled to about 4-5% of the image's total width.
         """  
 

@@ -156,7 +156,7 @@ class TestBrandKitIntegration:
             "lighting_and_mood": "Warm, appetizing lighting reflecting brand voice",
             "color_palette": "Rich browns and golds complementing brand colors #FF6B35 and #004E89",
             "visual_style": "Professional food photography with sophisticated aesthetic",
-            "branding_visuals": "CHURNS wordmark logo placed in bottom-right corner, scaled to 5% of image width in white color to contrast with dark background",
+            "logo_visuals": "CHURNS wordmark logo placed in bottom-right corner, scaled to 5% of image width in white color to contrast with dark background",
             "suggested_alt_text": "Gourmet burger with CHURNS branding"
         }
         
@@ -174,8 +174,8 @@ class TestBrandKitIntegration:
         assert "#FF6B35" in visual_concept['color_palette'] or "#004E89" in visual_concept['color_palette']
         
         # Check that logo is properly integrated
-        assert "CHURNS" in visual_concept['branding_visuals']
-        assert "wordmark" in visual_concept['branding_visuals'] or "logo" in visual_concept['branding_visuals']
+        assert "CHURNS" in visual_concept['logo_visuals']
+        assert "wordmark" in visual_concept['logo_visuals'] or "logo" in visual_concept['logo_visuals']
     
     @patch('churns.stages.style_guide.StyleGuider.generate_style_guidance')
     def test_brand_kit_integration_in_style_guide(self, mock_generate, sample_brand_kit, sample_logo_analysis):

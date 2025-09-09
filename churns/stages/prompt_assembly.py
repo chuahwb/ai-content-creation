@@ -10,24 +10,27 @@ Extracted from original monolith: assemble_final_prompt function (~line 2063)
 
 from typing import Dict, Any, Optional, List
 from ..pipeline.context import PipelineContext
+from ..core.aspect_ratio_utils import resolveAspectRatio
+from ..core.constants import IMAGE_GENERATION_PROVIDER, get_image_generation_model_id
 
 
 def map_to_supported_aspect_ratio_for_prompt(aspect_ratio: str, ctx: Optional[PipelineContext] = None) -> str:
-    """Maps input aspect ratio to a supported aspect ratio string (1:1, 2:3, 3:2) for use in the image generation prompt."""
-    # This mapping is for the textual prompt, not necessarily the API size parameter
-    if aspect_ratio == "1:1": 
-        return "1:1"
-    elif aspect_ratio in ["9:16", "3:4", "2:3"]: 
-        return "2:3"  # Vertical
-    elif aspect_ratio == "16:9" or aspect_ratio == "1.91:1": 
-        return "3:2"  # Horizontal
-    else:
-        warning_msg = f"WARNING: Unsupported aspect ratio '{aspect_ratio}' for prompt text. Defaulting to '1:1'."
-        if ctx:
-            ctx.log(warning_msg)
-        else:
-            print(warning_msg)
-        return "1:1"
+    """
+    DEPRECATED: Maps input aspect ratio to a supported aspect ratio string for use in the image generation prompt.
+    
+    This is a backward compatibility wrapper around the centralized resolveAspectRatio utility.
+    New code should use resolveAspectRatio directly.
+    """
+    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+    model_id = get_image_generation_model_id()
+    
+    resolution = resolveAspectRatio(aspect_ratio, provider, model_id)
+    
+    # Log fallback reason if present
+    if resolution.fallbackReason and ctx:
+        ctx.log(f"WARNING: {resolution.fallbackReason}")
+    
+    return resolution.promptAspect
 
 
 def _get_prompt_prefix(is_style_adaptation: bool, has_reference: bool, has_logo: bool, has_instruction: bool, instruction_text: str) -> str:
@@ -65,7 +68,7 @@ def _get_prompt_prefix(is_style_adaptation: bool, has_reference: bool, has_logo:
     return "Create an image based on the following detailed visual concept: "
 
 
-def _assemble_core_description(vc: Dict[str, Any], user_inputs: Dict[str, Any], include_main_subject: bool) -> str:
+def _assemble_core_description(vc: Dict[str, Any], user_inputs: Dict[str, Any], include_main_subject: bool, has_logo: bool = False) -> str:
     """Assembles the core descriptive parts of the prompt."""
     parts = []
     
@@ -88,8 +91,8 @@ def _assemble_core_description(vc: Dict[str, Any], user_inputs: Dict[str, Any], 
     if user_inputs.get("render_text", False) and vc.get("promotional_text_visuals"):
         parts.append(f"Promotional Text Visuals: {vc.get('promotional_text_visuals')}")
         
-    if user_inputs.get("apply_branding", False) and vc.get("branding_visuals"):
-        parts.append(f"Branding Visuals: {vc.get('branding_visuals')}")
+    if user_inputs.get("apply_branding", False) and has_logo and vc.get("logo_visuals"):
+        parts.append(f"Logo Integration: {vc.get('logo_visuals')}")
         
     if vc.get("negative_elements"):
         parts.append(f"Negative Elements to Avoid: {vc.get('negative_elements')}")
@@ -97,7 +100,7 @@ def _assemble_core_description(vc: Dict[str, Any], user_inputs: Dict[str, Any], 
     return " ".join(filter(None, parts))
 
 
-def assemble_final_prompt(structured_prompt_data: Dict[str, Any], user_inputs: Dict[str, Any], platform_aspect_ratio: str) -> str:
+def assemble_final_prompt(structured_prompt_data: Dict[str, Any], user_inputs: Dict[str, Any], platform_aspect_ratio: str, ctx: Optional[PipelineContext] = None) -> str:
     """Assembles the final text prompt string from the structured visual concept details."""
     if not structured_prompt_data:
         return "Error: Invalid structured prompt data for assembly."
@@ -133,12 +136,20 @@ def assemble_final_prompt(structured_prompt_data: Dict[str, Any], user_inputs: D
     core_description = _assemble_core_description(
         vc=vc,
         user_inputs=user_inputs,
-        include_main_subject=include_main_subject
+        include_main_subject=include_main_subject,
+        has_logo=has_logo
     )
 
-    supported_aspect_ratio_for_prompt = map_to_supported_aspect_ratio_for_prompt(platform_aspect_ratio)
+    # Use resolver directly for better provider awareness
+    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+    model_id = get_image_generation_model_id()
+    resolution = resolveAspectRatio(platform_aspect_ratio, provider, model_id)
     
-    suffix = f" IMPORTANT: Ensure the image strictly adheres to a {supported_aspect_ratio_for_prompt} aspect ratio."
+    # Log fallback reason if present
+    if resolution.fallbackReason and ctx:
+        ctx.log(f"Aspect ratio mapping: {resolution.fallbackReason}")
+    
+    suffix = f" IMPORTANT: Ensure the image strictly adheres to a {resolution.promptAspect} aspect ratio."
     
     final_prompt_str = f"{prefix}{core_description}{suffix}"
     
@@ -217,7 +228,8 @@ async def run(ctx: PipelineContext) -> None:
         final_prompt = assemble_final_prompt(
             struct_prompt, 
             user_inputs, 
-            platform_aspect_ratio
+            platform_aspect_ratio,
+            ctx
         )
         
         # Store the assembled prompt with metadata
@@ -226,7 +238,7 @@ async def run(ctx: PipelineContext) -> None:
             "prompt": final_prompt,
             "assembly_type": assembly_type,
             "platform_aspect_ratio": platform_aspect_ratio,
-            "supported_aspect_ratio": map_to_supported_aspect_ratio_for_prompt(platform_aspect_ratio),
+            "supported_aspect_ratio": resolveAspectRatio(platform_aspect_ratio, IMAGE_GENERATION_PROVIDER or "OpenAI", get_image_generation_model_id()).promptAspect,
             "has_reference": has_reference,
             "has_logo": has_logo,
             "has_instruction": has_instruction,

@@ -29,6 +29,8 @@ from .constants import (
     CAPTION_MODEL_PROVIDER,
     CAPTION_MODEL_ID,
     IMAGE_GENERATION_PROVIDER,
+    IMAGE_REFINEMENT_PROVIDER,
+    IMAGE_REFINEMENT_MODEL_ID,
     get_image_generation_model_id
 )
 
@@ -293,6 +295,23 @@ class ClientConfig:
         else:
             print("⚠️ OpenAI library not available. OpenAI Image Generation client not configured.")
         
+        # Configure dedicated Image Refinement Client (always OpenAI)
+        image_refinement_client = None
+        if OpenAI and self.openai_api_key:
+            try:
+                image_refinement_client = OpenAI(
+                    api_key=self.openai_api_key,
+                    max_retries=self.max_llm_retries
+                )
+                print(f"✅ OpenAI Image Refinement client configured. Model: {IMAGE_REFINEMENT_MODEL_ID}")
+            except Exception as e:
+                print(f"❌ Error initializing OpenAI Image Refinement client: {e}")
+                image_refinement_client = None
+        elif not self.openai_api_key:
+            print("⚠️ OPENAI_API_KEY not found. OpenAI Image Refinement client not configured.")
+        else:
+            print("⚠️ OpenAI library not available. OpenAI Image Refinement client not configured.")
+        
         # Configure Gemini image client (only if needed)
         provider = self.model_config.get("IMAGE_GENERATION_PROVIDER", "OpenAI")
         if provider == "Gemini":
@@ -334,7 +353,8 @@ class ClientConfig:
             'instructor_client_style_adaptation': instructor_client_style_adaptation,
             'image_gen_client': image_gen_client,  # Backward compatibility (OpenAI)
             'image_gen_client_openai': image_gen_client_openai,
-            'image_gen_client_gemini': image_gen_client_gemini
+            'image_gen_client_gemini': image_gen_client_gemini,
+            'image_refinement_client': image_refinement_client  # Dedicated refinement client
         }
         
         # Also store model configurations for stages to use

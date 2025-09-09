@@ -26,7 +26,7 @@ def mock_context():
             "lighting_and_mood": "dark and moody",
             "visual_style": "photorealistic",
             "promotional_text_visuals": "bold text at the bottom",
-            "branding_visuals": "logo in top-right corner"
+            "logo_visuals": "logo in top-right corner"
         }
     }
     return ctx

@@ -79,7 +79,7 @@ class TestRefinementStageBase:
                             "texture_and_details": "sleek smooth surfaces",
                             "creative_reasoning": "emphasizing product features",
                             "promotional_text_visuals": "clean sans-serif typography",
-                            "branding_visuals": "subtle logo placement"
+                            "logo_visuals": "subtle logo placement"
                         }
                     }
                 ],

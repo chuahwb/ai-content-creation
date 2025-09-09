@@ -22,6 +22,8 @@ from PIL import Image
 
 from ..pipeline.context import PipelineContext
 from ..core.token_cost_manager import get_token_cost_manager
+from ..core.aspect_ratio_utils import resolveAspectRatio
+from ..core.constants import IMAGE_GENERATION_PROVIDER as CONFIGURED_PROVIDER, get_image_generation_model_id
 
 # Global variables for API clients and configuration (injected by pipeline executor)
 image_gen_client = None  # Backward compatibility (OpenAI)
@@ -46,25 +48,27 @@ class _OpenAIStyleResponse:
 
 
 def map_aspect_ratio_to_size_for_api(aspect_ratio: str, ctx: Optional[PipelineContext] = None) -> Optional[str]:
-    """Maps aspect ratio string to size parameter supported (1024x1024, 1792x1024, 1024x1792)."""
-    def log_msg(msg: str):
-        """Helper to log messages either via context or print."""
-        if ctx:
-            ctx.log(msg)
-        else:
-            print(msg)
-            
-    if aspect_ratio == "1:1": 
-        return "1024x1024"
-    elif aspect_ratio in ["9:16", "3:4", "2:3"]:  # Vertical
-        log_msg(f"Warning: Mapping aspect ratio '{aspect_ratio}' to supported vertical size '1024x1536' (2:3).")
-        return "1024x1536"
-    elif aspect_ratio in ["16:9", "1.91:1"]:  # Horizontal
-        log_msg(f"Warning: Mapping aspect ratio '16:9' to supported horizontal size '1536x1024' (3:2).")
-        return "1536x1024"
+    """
+    DEPRECATED: Maps aspect ratio string to OpenAI size parameter.
+    
+    This is a backward compatibility wrapper around the centralized resolveAspectRatio utility.
+    New code should use resolveAspectRatio directly.
+    """
+    provider = CONFIGURED_PROVIDER or "OpenAI"
+    model_id = get_image_generation_model_id()
+    
+    resolution = resolveAspectRatio(aspect_ratio, provider, model_id)
+    
+    # Log fallback reason if present
+    if resolution.fallbackReason and ctx:
+        ctx.log(f"Size mapping: {resolution.fallbackReason}")
+    
+    # Return OpenAI size only for OpenAI provider
+    if provider.lower() == "openai":
+        return resolution.openaiSize
     else:
-        log_msg(f"Warning: Unsupported aspect ratio '{aspect_ratio}'. Defaulting to '1024x1024'.")
-        return "1024x1024"
+        # For non-OpenAI providers, return None (no size parameter needed)
+        return None
 
 
 async def generate_image(
@@ -108,7 +112,7 @@ async def generate_image(
             print(msg)
 
     # Use configured provider
-    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+    provider = CONFIGURED_PROVIDER or "OpenAI"
     
     # Route to appropriate generation method based on available inputs and provider
     if reference_image_path and logo_image_path:
@@ -203,9 +207,18 @@ async def _generate_with_no_input_image(
         return "error", f"Invalid run_directory provided: {run_directory}", prompt_tokens_for_image_gen
 
     try:
-        image_api_size = map_aspect_ratio_to_size_for_api(platform_aspect_ratio, ctx)
+        # Use resolver to get OpenAI size parameter
+        provider = CONFIGURED_PROVIDER or "OpenAI"
+        model_id = get_image_generation_model_id()
+        resolution = resolveAspectRatio(platform_aspect_ratio, provider, model_id)
+        
+        # Log fallback reason if present
+        if resolution.fallbackReason:
+            log_msg(f"Aspect ratio resolution: {resolution.fallbackReason}")
+        
+        image_api_size = resolution.openaiSize
         if not image_api_size:
-            return "error", f"Unsupported aspect ratio '{platform_aspect_ratio}' for image API.", prompt_tokens_for_image_gen
+            return "error", f"No size parameter available for aspect ratio '{platform_aspect_ratio}' with provider '{provider}'.", prompt_tokens_for_image_gen
 
         log_msg(f"--- Calling Image Generation API ({model_id}) ---")
 
@@ -267,10 +280,19 @@ async def _generate_with_single_input_edit(
         return "error", "No input image path provided for editing.", prompt_tokens_for_image_gen
 
     try:
-        image_api_size = map_aspect_ratio_to_size_for_api(platform_aspect_ratio, ctx)
+        # Use resolver to get OpenAI size parameter
+        provider = CONFIGURED_PROVIDER or "OpenAI" 
+        model_id = get_image_generation_model_id()
+        resolution = resolveAspectRatio(platform_aspect_ratio, provider, model_id)
+        
+        # Log fallback reason if present
+        if resolution.fallbackReason:
+            log_msg(f"Aspect ratio resolution: {resolution.fallbackReason}")
+        
+        image_api_size = resolution.openaiSize
         if not image_api_size:
-            log_msg(f"❌ ERROR: Unsupported aspect ratio: {platform_aspect_ratio}")
-            return "error", f"Unsupported aspect ratio '{platform_aspect_ratio}' for image API.", prompt_tokens_for_image_gen
+            log_msg(f"❌ ERROR: No size parameter available for provider '{provider}' with aspect ratio: {platform_aspect_ratio}")
+            return "error", f"No size parameter available for aspect ratio '{platform_aspect_ratio}' with provider '{provider}'.", prompt_tokens_for_image_gen
 
         if not os.path.exists(input_image_path):
             log_msg(f"❌ ERROR: Input image file not found: {input_image_path}")
@@ -372,10 +394,19 @@ async def _generate_with_multiple_inputs(
         return "error", f"Logo image not found at path: {logo_image_path}", prompt_tokens_for_image_gen
 
     try:
-        image_api_size = map_aspect_ratio_to_size_for_api(platform_aspect_ratio, ctx)
+        # Use resolver to get OpenAI size parameter
+        provider = CONFIGURED_PROVIDER or "OpenAI" 
+        model_id = get_image_generation_model_id()
+        resolution = resolveAspectRatio(platform_aspect_ratio, provider, model_id)
+        
+        # Log fallback reason if present
+        if resolution.fallbackReason:
+            log_msg(f"Aspect ratio resolution: {resolution.fallbackReason}")
+        
+        image_api_size = resolution.openaiSize
         if not image_api_size:
-            log_msg(f"❌ ERROR: Unsupported aspect ratio: {platform_aspect_ratio}")
-            return "error", f"Unsupported aspect ratio '{platform_aspect_ratio}' for image API.", prompt_tokens_for_image_gen
+            log_msg(f"❌ ERROR: No size parameter available for provider '{provider}' with aspect ratio: {platform_aspect_ratio}")
+            return "error", f"No size parameter available for aspect ratio '{platform_aspect_ratio}' with provider '{provider}'.", prompt_tokens_for_image_gen
 
         log_msg(f"--- Calling Multi-Modal Image Edit API ({model_id}) ---")
         log_msg(f"   Reference Image: {reference_image_path}")
@@ -723,12 +754,10 @@ async def _gemini_generate_with_no_input_image(
         return "error", f"Invalid run_directory provided: {run_directory}", prompt_tokens_for_image_gen
 
     try:
-        # Add aspect ratio directive to prompt for Gemini
-        aspect_prompt = _add_aspect_ratio_to_prompt(final_prompt, platform_aspect_ratio)
         log_msg(f"--- Calling Gemini Image Generation API ({model_id}) ---")
 
-        # Build contents array for Gemini
-        contents = [aspect_prompt]
+        # Build contents array for Gemini (prompt already contains aspect ratio info from assembly stage)
+        contents = [final_prompt]
         
         response = await asyncio.to_thread(
             image_gen_client_gemini.models.generate_content,
@@ -777,8 +806,6 @@ async def _gemini_generate_with_single_input_edit(
         return "error", f"Input image not found: {input_image_path}", prompt_tokens_for_image_gen
 
     try:
-        # Add aspect ratio directive to prompt
-        aspect_prompt = _add_aspect_ratio_to_prompt(final_prompt, platform_aspect_ratio)
         log_msg(f"--- Calling Gemini Image Edit API ({model_id}) ---")
 
         # Read and encode input image
@@ -795,9 +822,9 @@ async def _gemini_generate_with_single_input_edit(
         else:
             mime_type = 'image/png'  # Default fallback
         
-        # Build contents array for Gemini with image
+        # Build contents array for Gemini with image (prompt already contains aspect ratio info)
         contents = [
-            aspect_prompt,
+            final_prompt,
             {"inline_data": {"mime_type": mime_type, "data": image_base64}}
         ]
         
@@ -853,8 +880,6 @@ async def _gemini_generate_with_multiple_inputs(
         return "error", f"Logo image not found: {logo_image_path}", prompt_tokens_for_image_gen
 
     try:
-        # Add aspect ratio directive to prompt
-        aspect_prompt = _add_aspect_ratio_to_prompt(final_prompt, platform_aspect_ratio)
         log_msg(f"--- Calling Gemini Multi-Image API ({model_id}) ---")
 
         # Read and encode reference image
@@ -869,9 +894,9 @@ async def _gemini_generate_with_multiple_inputs(
         logo_image_base64 = base64.b64encode(logo_image_data).decode('utf-8')
         logo_mime_type = 'image/png' if logo_image_path.lower().endswith('.png') else 'image/jpeg'
         
-        # Build contents array for Gemini with multiple images
+        # Build contents array for Gemini with multiple images (prompt already contains aspect ratio info)
         contents = [
-            aspect_prompt,
+            final_prompt,
             {"inline_data": {"mime_type": ref_mime_type, "data": ref_image_base64}},
             {"inline_data": {"mime_type": logo_mime_type, "data": logo_image_base64}}
         ]
@@ -890,19 +915,6 @@ async def _gemini_generate_with_multiple_inputs(
         return _handle_gemini_api_error(e, "edit", prompt_tokens_for_image_gen, ctx)
 
 
-def _add_aspect_ratio_to_prompt(prompt: str, aspect_ratio: str) -> str:
-    """Add aspect ratio directive to prompt for Gemini (since it doesn't have size parameter)."""
-    aspect_directive_map = {
-        "1:1": "The image should be in a 1:1 aspect ratio (square).",
-        "9:16": "The image should be in a 9:16 aspect ratio (vertical).",
-        "16:9": "The image should be in a 16:9 aspect ratio (horizontal).",
-        "2:3": "The image should be in a 2:3 aspect ratio (vertical).",
-        "3:4": "The image should be in a 3:4 aspect ratio (vertical).",
-        "1.91:1": "The image should be in a 1.91:1 aspect ratio (horizontal)."
-    }
-    
-    directive = aspect_directive_map.get(aspect_ratio, "The image should be in a 1:1 aspect ratio (square).")
-    return f"{prompt} {directive}"
 
 
 def _normalize_gemini_response(response: Any) -> _OpenAIStyleResponse:
@@ -981,7 +993,7 @@ async def run(ctx: PipelineContext) -> None:
     assembled_prompts = ctx.final_assembled_prompts or []
     
     # Check if the required client is available based on provider
-    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+    provider = CONFIGURED_PROVIDER or "OpenAI"
     has_client = (provider == "Gemini" and image_gen_client_gemini) or (provider == "OpenAI" and (image_gen_client or image_gen_client_openai))
     
     if not has_client:
@@ -1146,15 +1158,25 @@ async def run(ctx: PipelineContext) -> None:
                     )
                     
                     # Use configured provider and get corresponding model ID
-                    provider = IMAGE_GENERATION_PROVIDER or "OpenAI"
+                    provider = CONFIGURED_PROVIDER or "OpenAI"
                     actual_model_id = breakdown_model_id
                     
                     # Determine output resolution and quality based on provider
                     if provider.lower() == "openai":
-                        output_resolution = map_aspect_ratio_to_size_for_api(platform_aspect_ratio, ctx) or "1024x1024"
+                        resolution = resolveAspectRatio(platform_aspect_ratio, provider, get_image_generation_model_id())
+                        output_resolution = resolution.openaiSize or "1024x1024"
                         output_quality = "medium"  # Default for OpenAI
                     else:  # Gemini
-                        output_resolution = "1024x1024"  # Gemini default (unless resized)
+                        resolution = resolveAspectRatio(platform_aspect_ratio, provider, get_image_generation_model_id())
+                        # Map Gemini aspect ratios to representative resolutions for logging/metadata
+                        gemini_resolution_map = {
+                            "1:1": "1024x1024",
+                            "9:16": "1024x1824",  # Approximate 9:16
+                            "16:9": "1824x1024",  # Approximate 16:9
+                            "3:4": "1024x1365",   # Approximate 3:4
+                            "4:3": "1365x1024"    # Approximate 4:3
+                        }
+                        output_resolution = gemini_resolution_map.get(resolution.promptAspect, "1024x1024")
                         output_quality = "default"  # Gemini uses "default" quality
                     
                     generated_image_results.append({

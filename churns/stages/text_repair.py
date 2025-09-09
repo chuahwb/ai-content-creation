@@ -100,8 +100,9 @@ except RuntimeError:
     # If no running loop, we'll use lazy loading when first requested
     logger.info("No running event loop - model will be loaded on first request")
 
-# Setup Image Generation Client
-image_gen_client = None
+# Setup Image Generation Clients (injected by PipelineExecutor)
+image_gen_client = None  # Legacy compatibility
+image_refinement_client = None  # Dedicated refinement client
 
 async def run(ctx: PipelineContext) -> None:
     """
@@ -543,10 +544,11 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
     # Only call if prompt exists 
     if final_prompt.strip():
         logger.info(f"Calling OpenAI Text Repair API.")
-        # Use injected client (initialized by PipelineExecutor)
-        global image_gen_client
-        if image_gen_client is None:
-            raise RuntimeError("image_gen_client not properly injected by PipelineExecutor")
+        # Use dedicated refinement client (prioritize over legacy client)
+        global image_refinement_client, image_gen_client
+        client_to_use = image_refinement_client or image_gen_client
+        if client_to_use is None:
+            raise RuntimeError("Neither image_refinement_client nor image_gen_client properly injected by PipelineExecutor")
         
         # Pass in reference image here
         reference_image_path = get_reference_image_path(ctx)
@@ -557,7 +559,7 @@ async def _perform_text_repair(ctx: PipelineContext, analysis_result_json: Dict,
             enhanced_prompt=final_prompt,
             image_size=image_size,
             mask_path=None,  # Text repair uses global editing
-            image_gen_client=image_gen_client,
+            image_gen_client=client_to_use,
             image_quality_setting="medium",  # Use same quality as original generation to prevent quality leap
             input_fidelity="high"  # High fidelity for all refinement operations
         )

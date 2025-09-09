@@ -98,7 +98,7 @@ class TestCreativeExpertStage:
                     "color_palette": "Warm browns and greens with clean white background",
                     "visual_style": "Modern minimalist food photography with clean lines and natural textures",
                     "promotional_text_visuals": None,
-                    "branding_visuals": None,
+                    "logo_visuals": None,
                     "texture_and_details": "Visible sesame seeds on bun, glistening lettuce, juicy beef texture",
                     "negative_elements": "Avoid cluttered backgrounds, harsh lighting, or oversaturated colors",
                     "creative_reasoning": "The minimalist style aligns with the young professional audience's preference for clean aesthetics while the natural lighting enhances the burger's appeal.",
@@ -144,7 +144,7 @@ class TestCreativeExpertStage:
                         "color_palette": "Rich browns, golds, and deep reds",
                         "visual_style": "Sophisticated food photography with dramatic lighting and elegant styling",
                         "promotional_text_visuals": None,
-                        "branding_visuals": None,
+                        "logo_visuals": None,
                         "texture_and_details": "Smooth sauces, crispy garnishes, polished surfaces",
                         "negative_elements": "Avoid casual presentation or bright lighting",
                         "creative_reasoning": "The sophisticated style conveys luxury dining experience that appeals to foodie bloggers.",
@@ -538,7 +538,7 @@ class TestCreativeExpertStage:
                 "main_subject",  # Can be None in default edit scenarios
                 "foreground_elements",
                 "promotional_text_visuals",  # Should be None when render_text=False
-                "branding_visuals",  # Should be None when apply_branding=False
+                "logo_visuals",  # Should be None when apply_branding=False
                 "texture_and_details",
                 "negative_elements",
                 "creative_reasoning"
@@ -552,8 +552,8 @@ class TestCreativeExpertStage:
             # Since render_text=False and apply_branding=False in default test
             if "promotional_text_visuals" in vc:
                 assert vc["promotional_text_visuals"] is None, "promotional_text_visuals should be None when render_text=False"
-            if "branding_visuals" in vc:
-                assert vc["branding_visuals"] is None, "branding_visuals should be None when apply_branding=False"
+            if "logo_visuals" in vc:
+                assert vc["logo_visuals"] is None, "logo_visuals should be None when apply_branding=False"
 
     async def test_alt_text_generation(self):
         """Test that alt text is generated for SEO and accessibility."""

@@ -66,7 +66,7 @@ class VisualConceptDetails(BaseModel):
     color_palette: str = Field(..., description="Description of the key colors, color harmony (e.g., analogous, complementary), and overall color tone.")
     visual_style: str = Field(..., description="Description of the artistic or visual style (e.g., photorealistic, illustration, graphic design, vintage). This should include key style descriptors and be highly creative if user input is minimal.")
     promotional_text_visuals: Optional[str] = Field(None, description="Description of how promotional text (from task_description) should be visualized, including content, style, font characteristics, and placement suggestions. Omit (set to null) if user input 'render_text' is false.")
-    branding_visuals: Optional[str] = Field(None, description="Description of how branding elements (logo placeholders, taglines, specific brand fonts/colors mentioned in branding_elements input) should be visually incorporated. Omit (set to null) if user input 'apply_branding' is false.")
+    logo_visuals: Optional[str] = Field(None, description="Description of how the brand logo should be visually incorporated (placement, size, color treatment). Omit (set to null) if user input 'apply_branding' is false or no logo is provided.")
     texture_and_details: Optional[str] = Field(None, description="Specific notes on textures, materials, or fine details.")
     negative_elements: Optional[str] = Field(None, description="Specific elements or concepts to actively avoid in the image.")
     creative_reasoning: Optional[str] = Field(None, description="Brief explanation connecting the key visual choices (style, mood, composition, subject focus) back to the marketing strategy (audience, niche, objective, voice) and user inputs.")

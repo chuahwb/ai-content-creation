@@ -57,7 +57,7 @@ class TestPromptAssemblyStage:
                     "color_palette": "Rich reds, warm golds, and deep greens",
                     "visual_style": "Festive food photography with holiday styling",
                     "promotional_text_visuals": "Bold '50% OFF' text in festive red font" if render_text else None,
-                    "branding_visuals": "Logo in top-right corner with subtle holiday wreath" if apply_branding else None,
+                    "logo_visuals": "Logo in top-right corner with subtle holiday wreath" if apply_branding else None,
                     "texture_and_details": "Crispy lettuce, melted cheese, rustic bun texture",
                     "negative_elements": "Avoid clutter, no artificial decorations",
                     "creative_reasoning": "Holiday styling supports promotional objective"
@@ -74,7 +74,7 @@ class TestPromptAssemblyStage:
                     "color_palette": "Fresh greens, warm browns, bright reds",
                     "visual_style": "Clean product photography with premium feel",
                     "promotional_text_visuals": "Elegant 'Holiday Special' text in serif font" if render_text else None,
-                    "branding_visuals": "Minimalist logo placement bottom-left" if apply_branding else None,
+                    "logo_visuals": "Minimalist logo placement bottom-left" if apply_branding else None,
                     "texture_and_details": "Fresh ingredients, artisan bun texture",
                     "negative_elements": "No busy backgrounds",
                     "creative_reasoning": "Clean style appeals to quality-conscious audience"
@@ -201,6 +201,8 @@ class TestPromptAssemblyStage:
     
     def test_prompt_assembly_aspect_ratio_handling(self):
         """Test prompt assembly with different aspect ratios."""
+        from churns.core.constants import IMAGE_GENERATION_PROVIDER
+        
         ctx = self.create_test_context()
         
         # Test vertical aspect ratio
@@ -211,11 +213,16 @@ class TestPromptAssemblyStage:
         # Run the stage
         run(ctx)
         
-        # Validate aspect ratio mapping
+        # Validate aspect ratio mapping based on provider
         prompt1 = ctx.final_assembled_prompts[0]
         assert prompt1["platform_aspect_ratio"] == "9:16"
-        assert prompt1["supported_aspect_ratio"] == "2:3"
-        assert "2:3 aspect ratio" in prompt1["prompt"]
+        
+        if IMAGE_GENERATION_PROVIDER == "Gemini":
+            assert prompt1["supported_aspect_ratio"] == "9:16"  # Exact match for Gemini
+            assert "9:16 aspect ratio" in prompt1["prompt"]
+        else:  # OpenAI
+            assert prompt1["supported_aspect_ratio"] == "2:3"   # Nearest match for OpenAI
+            assert "2:3 aspect ratio" in prompt1["prompt"]
     
     def test_prompt_assembly_error_handling(self):
         """Test prompt assembly error handling for malformed data."""
@@ -247,21 +254,36 @@ class TestPromptAssemblyHelperFunctions:
     """Test the helper functions used in prompt assembly."""
     
     def test_map_aspect_ratio_for_prompt(self):
-        """Test aspect ratio mapping for prompt text."""
-        # Test square aspect ratio
+        """Test aspect ratio mapping for prompt text (provider-aware)."""
+        from churns.core.constants import IMAGE_GENERATION_PROVIDER
+        
+        # Test square aspect ratio (supported by both providers)
         assert map_to_supported_aspect_ratio_for_prompt("1:1") == "1:1"
         
-        # Test vertical aspect ratios
-        assert map_to_supported_aspect_ratio_for_prompt("9:16") == "2:3"
-        assert map_to_supported_aspect_ratio_for_prompt("3:4") == "2:3"
-        assert map_to_supported_aspect_ratio_for_prompt("2:3") == "2:3"
+        if IMAGE_GENERATION_PROVIDER == "Gemini":
+            # Test Gemini mappings
+            assert map_to_supported_aspect_ratio_for_prompt("9:16") == "9:16"  # Exact match
+            assert map_to_supported_aspect_ratio_for_prompt("16:9") == "16:9"  # Exact match
+            assert map_to_supported_aspect_ratio_for_prompt("3:4") == "3:4"    # Exact match
+            assert map_to_supported_aspect_ratio_for_prompt("4:3") == "4:3"    # Exact match
+            # Fallback cases
+            assert map_to_supported_aspect_ratio_for_prompt("2:3") == "3:4"    # Nearest match
+            assert map_to_supported_aspect_ratio_for_prompt("1.91:1") == "16:9" # Nearest match
+        else:  # OpenAI
+            # Test OpenAI mappings
+            assert map_to_supported_aspect_ratio_for_prompt("9:16") == "2:3"   # Nearest match
+            assert map_to_supported_aspect_ratio_for_prompt("3:4") == "2:3"    # Nearest match
+            assert map_to_supported_aspect_ratio_for_prompt("2:3") == "2:3"    # Exact match
+            assert map_to_supported_aspect_ratio_for_prompt("16:9") == "3:2"   # Nearest match
+            assert map_to_supported_aspect_ratio_for_prompt("1.91:1") == "3:2" # Nearest match
         
-        # Test horizontal aspect ratios
-        assert map_to_supported_aspect_ratio_for_prompt("16:9") == "3:2"
-        assert map_to_supported_aspect_ratio_for_prompt("1.91:1") == "3:2"
-        
-        # Test unsupported aspect ratio
-        assert map_to_supported_aspect_ratio_for_prompt("4:5") == "1:1"
+        # Test unsupported aspect ratio - should use nearest match
+        if IMAGE_GENERATION_PROVIDER == "Gemini":
+            # 4:5 (0.8) is closest to 3:4 (0.75) in Gemini's supported aspects
+            assert map_to_supported_aspect_ratio_for_prompt("4:5") == "3:4"
+        else:  # OpenAI
+            # 4:5 (0.8) is closest to 1:1 (1.0) in OpenAI's supported aspects
+            assert map_to_supported_aspect_ratio_for_prompt("4:5") == "1:1"
     
     def test_assemble_final_prompt_function(self):
         """Test the core assemble_final_prompt function directly."""
@@ -328,7 +350,7 @@ class TestPromptAssemblyIntegration:
                     "color_palette": "Fresh greens and colorful vegetables",
                     "visual_style": "Healthy lifestyle photography",
                     "promotional_text_visuals": "Fresh & Healthy text overlay",
-                    "branding_visuals": "Subtle logo watermark"
+                    "logo_visuals": "Subtle logo watermark"
                 },
                 "source_strategy_index": 0
             }
@@ -342,8 +364,13 @@ class TestPromptAssemblyIntegration:
         prompt_data = ctx.final_assembled_prompts[0]
         
         # Check metadata
+        from churns.core.constants import IMAGE_GENERATION_PROVIDER
+        
         assert prompt_data["platform_aspect_ratio"] == "9:16"
-        assert prompt_data["supported_aspect_ratio"] == "2:3"
+        if IMAGE_GENERATION_PROVIDER == "Gemini":
+            assert prompt_data["supported_aspect_ratio"] == "9:16"  # Exact match for Gemini
+        else:  # OpenAI
+            assert prompt_data["supported_aspect_ratio"] == "2:3"   # Nearest match for OpenAI
         assert prompt_data["assembly_type"] == "full_generation"
         
         # Check prompt content includes all elements
@@ -412,7 +439,7 @@ class TestPromptAssemblyMigrationFidelity:
                     "color_palette": "Rich browns, fresh greens, vibrant reds",
                     "visual_style": "Food photography with shallow depth of field",
                     "promotional_text_visuals": "Special Price: $12.99",
-                    "branding_visuals": "Restaurant logo in bottom-right corner",
+                    "logo_visuals": "Restaurant logo in bottom-right corner",
                     "texture_and_details": "Crispy lettuce, melted cheese details",
                     "negative_elements": "No artificial lighting, no plastic appearance"
                 },
@@ -438,7 +465,7 @@ class TestPromptAssemblyMigrationFidelity:
             "Visual Style: Food photography",        # visual_style
             "Textures & Details: Crispy lettuce",    # texture_and_details (comes before text/branding)
             "Promotional Text Visuals: Special Price", # promotional_text_visuals
-            "Branding Visuals: Restaurant logo",     # branding_visuals
+            "Branding Visuals: Restaurant logo",     # logo_visuals
             "Avoid the following elements: No artificial", # negative_elements
             "1:1 aspect ratio"                       # aspect ratio constraint
         ]

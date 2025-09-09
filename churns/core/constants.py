@@ -96,6 +96,7 @@ def get_image_generation_model_id() -> str:
 
 # Image Refinement Configuration (separate from generation)
 # Refinements use a dedicated model for consistency and reliability
+IMAGE_REFINEMENT_PROVIDER = "OpenAI"  # Always OpenAI for refinements
 IMAGE_REFINEMENT_MODEL_ID = "gpt-image-1"  # Always OpenAI for refinements
 
 # Models known to have issues with instructor's default TOOLS mode via OpenRouter
