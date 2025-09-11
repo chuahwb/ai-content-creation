@@ -203,9 +203,9 @@ export default function StyleRecipeModal({
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     if (file) {
-      // Validate file size (10MB max)
-      if (file.size > 10 * 1024 * 1024) {
-        toast.error('File size must be less than 10MB');
+      // Validate file size (50MB max)
+      if (file.size > 50 * 1024 * 1024) {
+        toast.error('File size must be less than 50MB');
         return;
       }
       setSelectedFile(file);
@@ -227,7 +227,7 @@ export default function StyleRecipeModal({
         if (file.errors.some(error => error.code === 'file-invalid-type')) {
           toast.error('Please upload a valid image file (JPG, PNG, WebP, or GIF)');
         } else if (file.errors.some(error => error.code === 'file-too-large')) {
-          toast.error('File size must be less than 10MB');
+          toast.error('File size must be less than 50MB');
         } else {
           toast.error('Invalid file. Please try again.');
         }
@@ -529,7 +529,7 @@ export default function StyleRecipeModal({
                           {dragActive || isDragActive ? 'Drop here' : 'Drop or browse'}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          JPG, PNG, WebP • Max 10MB
+                          JPG, PNG, WebP • Max 50MB
                         </Typography>
                       </Paper>
                     </motion.div>

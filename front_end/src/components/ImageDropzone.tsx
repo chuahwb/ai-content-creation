@@ -18,6 +18,7 @@ import {
 } from '@mui/icons-material';
 import { TOOLTIP_CONFIG, INFO_ICON_STYLE } from '@/lib/ui-tooltips';
 import { useDropzone } from 'react-dropzone';
+import toast from 'react-hot-toast';
 import EditModeSelector from './EditModeSelector';
 
 interface ImageDropzoneProps {
@@ -61,12 +62,39 @@ export default function ImageDropzone({
     }
   };
 
+  const onDropRejected = (rejectedFiles: any[]) => {
+    if (rejectedFiles.length > 0) {
+      const rejection = rejectedFiles[0];
+      const file = rejection.file;
+      const errors = rejection.errors || [];
+      
+      if (errors.some((e: any) => e.code === 'file-too-large')) {
+        const fileSizeMB = file?.size ? (file.size / (1024 * 1024)).toFixed(1) : 'unknown';
+        toast.error(
+          `File "${file?.name}" is too large (${fileSizeMB}MB). Maximum size allowed is 50MB.`,
+          { duration: 5000 }
+        );
+      } else if (errors.some((e: any) => e.code === 'file-invalid-type')) {
+        toast.error(
+          `File "${file?.name}" has an unsupported format (${file?.type}). Please use JPG, PNG, GIF, WebP, BMP, or TIFF files.`,
+          { duration: 5000 }
+        );
+      } else {
+        toast.error(
+          `Failed to upload "${file?.name}". Please try again or check the file format and size.`,
+          { duration: 4000 }
+        );
+      }
+    }
+  };
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected,
     accept: {
       'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp', '.bmp', '.tiff']
     },
-    maxSize: 10 * 1024 * 1024, // 10MB
+    maxSize: 50 * 1024 * 1024, // 50MB
     multiple: false,
     disabled
   });
@@ -128,7 +156,7 @@ export default function ImageDropzone({
             or click to select from your computer
           </Typography>
           <Typography variant="caption" color="textSecondary" sx={{ mt: 1 }}>
-            JPEG, PNG, GIF, WebP (max 10MB)
+            JPG, PNG, GIF, WebP, BMP, TIFF • Maximum 50MB
           </Typography>
         </Paper>
       ) : (

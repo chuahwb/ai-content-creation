@@ -187,8 +187,8 @@ async def create_pipeline_run(
             
             # Read image data
             image_data = await image_file.read()
-            if len(image_data) > 10 * 1024 * 1024:  # 10MB limit
-                raise HTTPException(status_code=400, detail="Image file too large (max 10MB)")
+            if len(image_data) > 50 * 1024 * 1024:  # 50MB limit
+                raise HTTPException(status_code=400, detail="Image file too large (max 50MB)")
             
             image_reference = ImageReferenceInput(
                 filename=image_file.filename or "uploaded_image",
@@ -393,8 +393,8 @@ async def create_refinement(
         
         # Read image data
         reference_image_data = await reference_image.read()
-        if len(reference_image_data) > 10 * 1024 * 1024:  # 10MB limit
-            raise HTTPException(status_code=400, detail="Reference image file too large (max 10MB)")
+        if len(reference_image_data) > 50 * 1024 * 1024:  # 50MB limit
+            raise HTTPException(status_code=400, detail="Reference image file too large (max 50MB)")
     
     # Process mask file if provided
     mask_file_data = None

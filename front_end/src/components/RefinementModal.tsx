@@ -77,8 +77,8 @@ export default function RefinementModal({
   const handleReferenceImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      if (file.size > 10 * 1024 * 1024) { // 10MB limit
-        toast.error('Reference image must be smaller than 10MB');
+      if (file.size > 50 * 1024 * 1024) { // 50MB limit
+        toast.error('Reference image must be smaller than 50MB');
         return;
       }
       setReferenceImage(file);
