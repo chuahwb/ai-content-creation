@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from datetime import datetime
 from churns.api.database import RunStatus, StageStatus, RefinementType, PresetType
 from churns.models import BrandKitInput
@@ -407,3 +407,37 @@ class SavePresetFromResultRequest(BaseModel):
     
     # Brand Kit (UPDATED: unified brand kit structure)
     brand_kit: Optional[BrandKitInput] = Field(None, description="Brand kit with colors, voice, and logo")
+
+class ImageAgentInput(BaseModel):
+    """Input model for image processing"""
+    image_path: str = Field(..., description="Path to the overlay image file")
+    base_path: str = Field(..., description="Path to the base image file")
+
+class ImageAgentOutput(BaseModel):
+    """Output model for image processing"""
+    image_path: str = Field(..., description="Path to the processed image file")
+    message: str = Field(..., description="Message")
+
+class PlanStep(BaseModel):
+    """A single step in the tool execution plan."""
+    tool: str = Field(..., description="Name of the tool to execute")
+    args: Dict[str, Any] = Field(default_factory=dict, description="Arguments for the tool call")
+
+class PromptOutput(BaseModel):
+    """Output model for prompt generation agent."""
+    prompt: str = Field(..., description="The generated prompt for image processing")
+    hex_color: Optional[str] = Field(None, description="Hex color code for image processing")
+    alpha_value: Optional[int] = Field(None, description="Transparency level (0-255)")
+    position: Optional[List[int]] = Field(None, description="Position [x, y] for overlay")
+    scale: Optional[float] = Field(None, description="Scale factor for the overlay")
+
+    @field_validator('position')
+    def validate_position(cls, v):
+        if v is not None and (len(v) != 2 or not all(isinstance(i, int) for i in v)):
+            raise ValueError("Position must be a list of two integers [x, y]")
+        return v
+
+class PlannerOutput(BaseModel):
+    """Structured plan produced by the planner agent."""
+    rationale: str
+    steps: List[PlanStep]
