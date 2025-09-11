@@ -10,11 +10,17 @@ from churns.api.lifespan import lifespan
 
 
 # Configure logging
+log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+numeric_level = getattr(logging, log_level, logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=numeric_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Log the logging configuration for debugging
+print(f"🔧 Logging configured: LOG_LEVEL={log_level}, numeric_level={numeric_level}")
+logger.info(f"🔧 API Logger initialized with level: {log_level}")
 
 
 # Create FastAPI application

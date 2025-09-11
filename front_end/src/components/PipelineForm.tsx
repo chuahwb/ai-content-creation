@@ -294,7 +294,7 @@ export default function PipelineForm({ onRunStarted }: PipelineFormProps) {
       'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp'],
     },
     multiple: false,
-    maxSize: 10 * 1024 * 1024, // 10MB
+    maxSize: 50 * 1024 * 1024, // 50MB
   });
 
   const removeImage = () => {
